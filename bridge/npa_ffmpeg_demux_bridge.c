@@ -23,6 +23,7 @@
  */
 
 #include "ffmpeg-demux-abi.h"
+#include "ffmpeg-demux-enum-map.h"
 
 #include <errno.h>
 #include <pthread.h>
@@ -277,7 +278,12 @@ static void shadow_rebuild_streams(npa_shadow *s)
         if (!mp)
             continue;
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_CODEC_TYPE, (uint32_t)mp->codec_type);
-        npa_st_u32(lp, NPA_LEGACY_CODECPAR_CODEC_ID, (uint32_t)mp->codec_id);
+        /*
+         * libavcodec/avutil renumber AVCodecID and AVPixelFormat across major
+         * versions; the app matches codec ids and pixel formats against 4.4.x
+         * values, so translate before copying.
+         */
+        npa_st_u32(lp, NPA_LEGACY_CODECPAR_CODEC_ID, (uint32_t)npa_codec_id_to_legacy(mp->codec_id));
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_CODEC_TAG, (uint32_t)mp->codec_tag);
         /*
          * The shadow owns its extradata copy. The app frees extradata through
@@ -293,7 +299,7 @@ static void shadow_rebuild_streams(npa_shadow *s)
                 npa_st_u32(lp, NPA_LEGACY_CODECPAR_EXTRADATA_SIZE, (uint32_t)mp->extradata_size);
             }
         }
-        npa_st_u32(lp, NPA_LEGACY_CODECPAR_FORMAT, (uint32_t)mp->format);
+        npa_st_u32(lp, NPA_LEGACY_CODECPAR_FORMAT, (uint32_t)npa_pix_fmt_to_legacy(mp->format));
         npa_st_u64(lp, NPA_LEGACY_CODECPAR_BIT_RATE, (uint64_t)mp->bit_rate);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_BITS_PER_CODED_SAMPLE, (uint32_t)mp->bits_per_coded_sample);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_BITS_PER_RAW_SAMPLE, (uint32_t)mp->bits_per_raw_sample);
@@ -340,10 +346,11 @@ static void diag_streams(const char *where, npa_shadow *s)
         snprintf(
             line,
             sizeof(line),
-            "st%u type=%d id=%d tag=%08x extra=%u prof=%d lvl=%d %dx%d sr=%d ch=%d lay=%llx",
+            "st%u type=%d id=%d fmt=%d tag=%08x extra=%u prof=%d lvl=%d %dx%d sr=%d ch=%d lay=%llx",
             i,
             (int)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_CODEC_TYPE),
             (int)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_CODEC_ID),
+            (int)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_FORMAT),
             (unsigned)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_CODEC_TAG),
             es,
             (int)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_PROFILE),

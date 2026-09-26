@@ -353,7 +353,7 @@ static npa_shadow *shadow_create(AVFormatContext *modern)
     return s;
 }
 
-NPA_EXPORT AVFormatContext *npa_avformat_alloc_context(void)
+NPA_EXPORT AVFormatContext *npa_demux_avformat_alloc_context(void)
 {
     AVFormatContext *modern = avformat_alloc_context();
     npa_shadow *s;
@@ -368,7 +368,7 @@ NPA_EXPORT AVFormatContext *npa_avformat_alloc_context(void)
     return (AVFormatContext *)s->shadow;
 }
 
-NPA_EXPORT int npa_avformat_open_input(
+NPA_EXPORT int npa_demux_avformat_open_input(
     AVFormatContext **ps, const char *url, const AVInputFormat *fmt, AVDictionary **options
 )
 {
@@ -402,7 +402,7 @@ NPA_EXPORT int npa_avformat_open_input(
     return ret;
 }
 
-NPA_EXPORT int npa_avformat_find_stream_info(AVFormatContext *ctx, AVDictionary **options)
+NPA_EXPORT int npa_demux_avformat_find_stream_info(AVFormatContext *ctx, AVDictionary **options)
 {
     npa_shadow *s = shadow_lookup((void *)ctx);
     int ret;
@@ -418,7 +418,7 @@ NPA_EXPORT int npa_avformat_find_stream_info(AVFormatContext *ctx, AVDictionary 
     return ret;
 }
 
-NPA_EXPORT int npa_av_seek_frame(
+NPA_EXPORT int npa_demux_av_seek_frame(
     AVFormatContext *ctx, int stream_index, int64_t timestamp, int flags
 )
 {
@@ -430,7 +430,7 @@ NPA_EXPORT int npa_av_seek_frame(
     return av_seek_frame(s->modern, stream_index, timestamp, flags);
 }
 
-NPA_EXPORT void npa_avformat_close_input(AVFormatContext **ps)
+NPA_EXPORT void npa_demux_avformat_close_input(AVFormatContext **ps)
 {
     npa_shadow *s;
 
@@ -445,7 +445,7 @@ NPA_EXPORT void npa_avformat_close_input(AVFormatContext **ps)
     shadow_destroy(s);
 }
 
-NPA_EXPORT void npa_avformat_free_context(AVFormatContext *ctx)
+NPA_EXPORT void npa_demux_avformat_free_context(AVFormatContext *ctx)
 {
     npa_shadow *s = shadow_lookup((void *)ctx);
 
@@ -456,7 +456,7 @@ NPA_EXPORT void npa_avformat_free_context(AVFormatContext *ctx)
     shadow_destroy(s);
 }
 
-NPA_EXPORT AVIOContext *npa_avio_alloc_context(
+NPA_EXPORT AVIOContext *npa_demux_avio_alloc_context(
     unsigned char *buffer,
     int buffer_size,
     int write_flag,
@@ -469,12 +469,12 @@ NPA_EXPORT AVIOContext *npa_avio_alloc_context(
     return avio_alloc_context(buffer, buffer_size, write_flag, opaque, read_packet, write_packet, seek);
 }
 
-NPA_EXPORT int64_t npa_avio_size(AVIOContext *s)
+NPA_EXPORT int64_t npa_demux_avio_size(AVIOContext *s)
 {
     return avio_size(s);
 }
 
-NPA_EXPORT int npa_av_index_search_timestamp(AVStream *st, int64_t timestamp, int flags)
+NPA_EXPORT int npa_demux_av_index_search_timestamp(AVStream *st, int64_t timestamp, int flags)
 {
     unsigned index = 0;
     npa_shadow *s = shadow_of_stream((void *)st, &index);
@@ -484,7 +484,7 @@ NPA_EXPORT int npa_av_index_search_timestamp(AVStream *st, int64_t timestamp, in
     return av_index_search_timestamp(s->modern->streams[index], timestamp, flags);
 }
 
-NPA_EXPORT int npa_av_read_frame(AVFormatContext *ctx, AVPacket *pkt)
+NPA_EXPORT int npa_demux_av_read_frame(AVFormatContext *ctx, AVPacket *pkt)
 {
     npa_shadow *s = shadow_lookup((void *)ctx);
     AVPacket *tmp;

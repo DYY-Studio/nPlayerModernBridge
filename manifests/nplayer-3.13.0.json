@@ -224,27 +224,27 @@
           "apis": [
             {
               "symbol": "npa_avformat_alloc_context",
-              "call_sites": ["0x100A3E390", "0x100AB4DF4", "0x100AED780", "0x100AEF684", "0x100B95010"],
+              "call_sites": ["0x100AB4DF4", "0x100B95010"],
               "old_target": "0x1007DCCF8"
             },
             {
               "symbol": "npa_avformat_open_input",
-              "call_sites": ["0x100A3E900", "0x100AB451C", "0x100AB4E1C", "0x100AED878", "0x100AEF778", "0x100B950F8"],
+              "call_sites": ["0x100AB451C", "0x100AB4E1C", "0x100B950F8"],
               "old_target": "0x10081FADC"
             },
             {
               "symbol": "npa_avformat_find_stream_info",
-              "call_sites": ["0x100A3E910", "0x100AB4E2C", "0x100AED8E8", "0x100AEF7A8", "0x100B95130"],
+              "call_sites": ["0x100AB4E2C", "0x100B95130"],
               "old_target": "0x100824C8C"
             },
             {
               "symbol": "npa_av_read_frame",
-              "call_sites": ["0x100A46964", "0x100AB4934", "0x100AB4FE0", "0x100AEE510", "0x100AEEC60", "0x100AEFE28", "0x100B954FC", "0x100B9929C"],
+              "call_sites": ["0x100AB4934", "0x100AB4FE0", "0x100B954FC", "0x100B9929C"],
               "old_target": "0x100821298"
             },
             {
               "symbol": "npa_av_seek_frame",
-              "call_sites": ["0x100A46944", "0x100AEFC4C", "0x100AEFCB4", "0x100AEFCCC", "0x100B98C54", "0x100B98CA4", "0x100B98CBC"],
+              "call_sites": ["0x100B98C54", "0x100B98CA4", "0x100B98CBC"],
               "old_target": "0x10082357C"
             },
             {
@@ -284,7 +284,7 @@
             },
             {
               "symbol": "npa_avformat_free_context",
-              "call_sites": ["0x100A415D4", "0x100B30404", "0x100B96CE4", "0x100B98E8C"],
+              "call_sites": ["0x100B30404", "0x100B96CE4", "0x100B98E8C"],
               "old_target": "0x10082020C"
             },
             {
@@ -304,7 +304,7 @@
             },
             {
               "symbol": "npa_avio_alloc_context",
-              "call_sites": ["0x100A3E388", "0x100AB4DCC", "0x100AED778", "0x100B30234", "0x100B95008"],
+              "call_sites": ["0x100AB4DCC", "0x100B30234", "0x100B95008"],
               "old_target": "0x10073AD30"
             },
             {
@@ -334,7 +334,7 @@
             },
             {
               "symbol": "npa_avio_size",
-              "call_sites": ["0x100A46874", "0x100AEFC18", "0x100B98C28"],
+              "call_sites": ["0x100B98C28"],
               "old_target": "0x10073B834"
             },
             {
@@ -374,12 +374,12 @@
             },
             {
               "symbol": "npa_av_index_search_timestamp",
-              "call_sites": ["0x100AECEE0"],
+              "call_sites": [],
               "old_target": "0x10082295C"
             },
             {
               "symbol": "npa_avformat_close_input",
-              "call_sites": ["0x100A415B4", "0x100AB4470", "0x100AEFA04", "0x100B96C70"],
+              "call_sites": ["0x100AB4470", "0x100B96C70"],
               "old_target": "0x100827B08"
             },
             {
@@ -737,52 +737,52 @@
             "id": "ffmpeg-demux",
             "apis": [
           {
-            "symbol": "npa_avformat_alloc_context",
+            "symbol": "npa_demux_avformat_alloc_context",
             "call_sites": ["0x100A3E390", "0x100AED780", "0x100AEF684"],
             "old_target": "0x1007DCCF8"
           },
           {
-            "symbol": "npa_avformat_open_input",
+            "symbol": "npa_demux_avformat_open_input",
             "call_sites": ["0x100A3E900", "0x100AED878", "0x100AEF778"],
             "old_target": "0x10081FADC"
           },
           {
-            "symbol": "npa_avformat_find_stream_info",
+            "symbol": "npa_demux_avformat_find_stream_info",
             "call_sites": ["0x100A3E910", "0x100AED8E8", "0x100AEF7A8"],
             "old_target": "0x100824C8C"
           },
           {
-            "symbol": "npa_av_read_frame",
+            "symbol": "npa_demux_av_read_frame",
             "call_sites": ["0x100A46964", "0x100AEE510", "0x100AEEC60", "0x100AEFE28"],
             "old_target": "0x100821298"
           },
           {
-            "symbol": "npa_av_seek_frame",
+            "symbol": "npa_demux_av_seek_frame",
             "call_sites": ["0x100A46944", "0x100AEFC4C", "0x100AEFCB4", "0x100AEFCCC"],
             "old_target": "0x10082357C"
           },
           {
-            "symbol": "npa_avformat_close_input",
+            "symbol": "npa_demux_avformat_close_input",
             "call_sites": ["0x100A415B4", "0x100AEFA04"],
             "old_target": "0x100827B08"
           },
           {
-            "symbol": "npa_avformat_free_context",
+            "symbol": "npa_demux_avformat_free_context",
             "call_sites": ["0x100A415D4"],
             "old_target": "0x10082020C"
           },
           {
-            "symbol": "npa_avio_alloc_context",
+            "symbol": "npa_demux_avio_alloc_context",
             "call_sites": ["0x100A3E388", "0x100AED778"],
             "old_target": "0x10073AD30"
           },
           {
-            "symbol": "npa_avio_size",
+            "symbol": "npa_demux_avio_size",
             "call_sites": ["0x100A46874", "0x100AEFC18"],
             "old_target": "0x10073B834"
           },
           {
-            "symbol": "npa_av_index_search_timestamp",
+            "symbol": "npa_demux_av_index_search_timestamp",
             "call_sites": ["0x100AECEE0"],
             "old_target": "0x10082295C"
           }

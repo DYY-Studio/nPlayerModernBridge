@@ -21,6 +21,10 @@ BRIDGE = BUILD / "LibASSBridge.dylib"
 BASENAME = "LibASSBridge.dylib"
 # the main member of the device-accepted bridge.ipa, signed under the name nPlayer
 PACKAGED_MAIN_SHA256 = "e84ef5b5e10cb10940ecffe73c3509f932a4aa6d2cba053052a7d9e7549792fe"
+# the default four-unit selection (libass + ffmpeg + ffmpeg-core + ffmpeg-demux)
+CLASS_A_PACKAGED_MAIN_SHA256 = (
+    "33a664a68f069415c11cd52192dff344dbd1e9db0e1d6d3ae7ad7524ac3d63df"
+)
 
 
 def _patched(source, output, work, **keywords):
@@ -72,13 +76,15 @@ class PatchFlowTests(unittest.TestCase):
 
     def test_default_run_installs_and_names_every_dylib(self):
         expected = SOURCE_IPA.with_name(
-            f"{SOURCE_IPA.stem}-libass0.17.5-ffmpeg9.0.2-ffmpeg-core4.4.8.ipa"
+            f"{SOURCE_IPA.stem}-libass0.17.5-ffmpeg9.0.2-ffmpeg-core4.4.8-ffmpeg-demux9.0.2.ipa"
         )
         expected.unlink(missing_ok=True)
         try:
             result = _patched(SOURCE_IPA, None, self.work / "both")
             self.assertEqual(result.output, expected.resolve())
-            self.assertEqual(result.dylibs, ("libass", "ffmpeg", "ffmpeg-core"))
+            self.assertEqual(
+                result.dylibs, ("libass", "ffmpeg", "ffmpeg-core", "ffmpeg-demux")
+            )
             self.assertEqual(result.state_initial, 0)
             self.assertEqual(
                 set(result.bridge_sha256s),
@@ -86,6 +92,7 @@ class PatchFlowTests(unittest.TestCase):
                     "LibASSBridge.dylib",
                     "LibFFmpegBridge.dylib",
                     "LibFFmpegCoreBridge.dylib",
+                    "LibFFmpegDemuxBridge.dylib",
                 },
             )
             with ZipFile(result.output) as archive:
@@ -94,12 +101,16 @@ class PatchFlowTests(unittest.TestCase):
                 "LibASSBridge.dylib",
                 "LibFFmpegBridge.dylib",
                 "LibFFmpegCoreBridge.dylib",
+                "LibFFmpegDemuxBridge.dylib",
             ):
                 self.assertEqual(
                     names.count(f"{package.APP_DIR}/Frameworks/{basename}"), 1
                 )
             self.assertNotEqual(
                 result.packaged_main_sha256, PACKAGED_MAIN_SHA256
+            )
+            self.assertEqual(
+                result.packaged_main_sha256, CLASS_A_PACKAGED_MAIN_SHA256
             )
         finally:
             expected.unlink(missing_ok=True)
@@ -118,7 +129,7 @@ class PatchFlowTests(unittest.TestCase):
         manifest = _manifest_with_an_extra_dylib()
         self.assertEqual(
             patch.default_output_name(SOURCE_IPA, manifest, manifest.units()).name,
-            "nPlayer_3.13.0-libass0.17.5-ffmpeg9.0.2-ffmpeg-core4.4.8-other1.0.0.ipa",
+            "nPlayer_3.13.0-libass0.17.5-ffmpeg9.0.2-ffmpeg-core4.4.8-ffmpeg-demux9.0.2-other1.0.0.ipa",
         )
         self.assertEqual(
             patch.default_output_name(

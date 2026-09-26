@@ -76,6 +76,7 @@ class ManifestTests(unittest.TestCase):
                 "ffmpeg/libswscale",
                 "ffmpeg/libswresample",
                 "ffmpeg-core/ffmpeg-core",
+                "ffmpeg-demux/ffmpeg-demux",
             ],
         )
         self.assertEqual(self.unit.dylib_id, "libass")

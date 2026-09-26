@@ -198,10 +198,16 @@ static void shadow_free_streams(npa_shadow *s)
     unsigned i;
 
     for (i = 0; i < s->nb_streams; i++) {
+        void *codecpar;
+
         if (!s->streams[i])
             continue;
         legacy_packet_release((char *)s->streams[i] + NPA_LEGACY_STREAM_ATTACHED_PIC);
-        free(npa_ld_ptr(s->streams[i], NPA_LEGACY_STREAM_CODECPAR));
+        codecpar = npa_ld_ptr(s->streams[i], NPA_LEGACY_STREAM_CODECPAR);
+        if (codecpar) {
+            av_free(npa_ld_ptr(codecpar, NPA_LEGACY_CODECPAR_EXTRADATA));
+            free(codecpar);
+        }
         free(s->streams[i]);
     }
     free(s->streams);
@@ -270,8 +276,20 @@ static void shadow_rebuild_streams(npa_shadow *s)
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_CODEC_TYPE, (uint32_t)mp->codec_type);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_CODEC_ID, (uint32_t)mp->codec_id);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_CODEC_TAG, (uint32_t)mp->codec_tag);
-        npa_st_ptr(lp, NPA_LEGACY_CODECPAR_EXTRADATA, mp->extradata);
-        npa_st_u32(lp, NPA_LEGACY_CODECPAR_EXTRADATA_SIZE, (uint32_t)mp->extradata_size);
+        /*
+         * The shadow owns its extradata copy. The app frees extradata through
+         * the shadow for attachment streams (sub_100AEDD90, 0x100AEE36C), so
+         * aliasing the modern buffer would make the modern close free it a
+         * second time.
+         */
+        if (mp->extradata && mp->extradata_size > 0) {
+            void *copy = av_malloc((size_t)mp->extradata_size);
+            if (copy) {
+                memcpy(copy, mp->extradata, (size_t)mp->extradata_size);
+                npa_st_ptr(lp, NPA_LEGACY_CODECPAR_EXTRADATA, copy);
+                npa_st_u32(lp, NPA_LEGACY_CODECPAR_EXTRADATA_SIZE, (uint32_t)mp->extradata_size);
+            }
+        }
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_FORMAT, (uint32_t)mp->format);
         npa_st_u64(lp, NPA_LEGACY_CODECPAR_BIT_RATE, (uint64_t)mp->bit_rate);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_WIDTH, (uint32_t)mp->width);

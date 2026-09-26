@@ -21,9 +21,14 @@ BRIDGE = BUILD / "LibASSBridge.dylib"
 BASENAME = "LibASSBridge.dylib"
 # the main member of the device-accepted bridge.ipa, signed under the name nPlayer
 PACKAGED_MAIN_SHA256 = "e84ef5b5e10cb10940ecffe73c3509f932a4aa6d2cba053052a7d9e7549792fe"
-# the default four-unit selection (libass + ffmpeg + ffmpeg-core + ffmpeg-demux)
-CLASS_A_PACKAGED_MAIN_SHA256 = (
-    "33a664a68f069415c11cd52192dff344dbd1e9db0e1d6d3ae7ad7524ac3d63df"
+# the default selection: libass plus the whole FFmpeg 4.4.8 in one dylib
+FULL_PACKAGED_MAIN_SHA256 = (
+    "f22d7af623272032e3c529b0cfc0e1b9340b42e310756f6b817f438e57f6758a"
+)
+# the split alternative: libass plus core 4.4.8 plus the 9.0.2 scaler/resampler,
+# i.e. the three-unit artifact the bridge was device-accepted on
+SPLIT_PACKAGED_MAIN_SHA256 = (
+    "638c00d9602b2797d3f18030ebc6ada4bf825a3f871f2f549374fbdecddcdd78"
 )
 
 
@@ -74,46 +79,67 @@ class PatchFlowTests(unittest.TestCase):
         )
         self.assertTrue(output.is_file())
 
-    def test_default_run_installs_and_names_every_dylib(self):
+    def test_default_run_installs_the_default_selection(self):
         expected = SOURCE_IPA.with_name(
-            f"{SOURCE_IPA.stem}-libass0.17.5-ffmpeg9.0.2-ffmpeg-core4.4.8-ffmpeg-demux9.0.2.ipa"
+            f"{SOURCE_IPA.stem}-libass0.17.5-ffmpeg-full4.4.8.ipa"
         )
         expected.unlink(missing_ok=True)
         try:
             result = _patched(SOURCE_IPA, None, self.work / "both")
             self.assertEqual(result.output, expected.resolve())
-            self.assertEqual(
-                result.dylibs, ("libass", "ffmpeg", "ffmpeg-core", "ffmpeg-demux")
-            )
+            self.assertEqual(result.dylibs, ("libass", "ffmpeg-full"))
             self.assertEqual(result.state_initial, 0)
             self.assertEqual(
                 set(result.bridge_sha256s),
                 {
                     "LibASSBridge.dylib",
-                    "LibFFmpegBridge.dylib",
-                    "LibFFmpegCoreBridge.dylib",
-                    "LibFFmpegDemuxBridge.dylib",
+                    "LibFFmpegFullBridge.dylib",
                 },
             )
             with ZipFile(result.output) as archive:
                 names = archive.namelist()
             for basename in (
                 "LibASSBridge.dylib",
-                "LibFFmpegBridge.dylib",
-                "LibFFmpegCoreBridge.dylib",
-                "LibFFmpegDemuxBridge.dylib",
+                "LibFFmpegFullBridge.dylib",
             ):
                 self.assertEqual(
                     names.count(f"{package.APP_DIR}/Frameworks/{basename}"), 1
                 )
-            self.assertNotEqual(
-                result.packaged_main_sha256, PACKAGED_MAIN_SHA256
-            )
             self.assertEqual(
-                result.packaged_main_sha256, CLASS_A_PACKAGED_MAIN_SHA256
+                result.packaged_main_sha256, FULL_PACKAGED_MAIN_SHA256
             )
         finally:
             expected.unlink(missing_ok=True)
+
+    def test_split_selection_matches_the_device_accepted_anchor(self):
+        output = self.work / "split.ipa"
+        output.unlink(missing_ok=True)
+        try:
+            result = _patched(
+                SOURCE_IPA,
+                output,
+                self.work / "split",
+                dylibs=["libass", "ffmpeg", "ffmpeg-core"],
+            )
+            self.assertEqual(result.dylibs, ("libass", "ffmpeg", "ffmpeg-core"))
+            self.assertEqual(
+                result.packaged_main_sha256, SPLIT_PACKAGED_MAIN_SHA256
+            )
+        finally:
+            output.unlink(missing_ok=True)
+
+    def test_conflicting_dylibs_are_rejected(self):
+        output = self.work / "conflict.ipa"
+        output.unlink(missing_ok=True)
+        with self.assertRaises(ValueError) as caught:
+            _patched(
+                SOURCE_IPA,
+                output,
+                self.work / "conflict",
+                dylibs=["ffmpeg-full", "ffmpeg-core"],
+            )
+        self.assertIn("conflicting dylib selection", str(caught.exception))
+        self.assertFalse(output.exists())
 
     def test_unknown_dylib_id_is_rejected(self):
         with self.assertRaises(KeyError) as caught:
@@ -129,7 +155,7 @@ class PatchFlowTests(unittest.TestCase):
         manifest = _manifest_with_an_extra_dylib()
         self.assertEqual(
             patch.default_output_name(SOURCE_IPA, manifest, manifest.units()).name,
-            "nPlayer_3.13.0-libass0.17.5-ffmpeg9.0.2-ffmpeg-core4.4.8-ffmpeg-demux9.0.2-other1.0.0.ipa",
+            "nPlayer_3.13.0-libass0.17.5-ffmpeg-full4.4.8-other1.0.0.ipa",
         )
         self.assertEqual(
             patch.default_output_name(
@@ -252,7 +278,11 @@ def _manifest_with_an_extra_dylib():
         domains=(Domain(id="other", apis=manifest.dylib("libass").domains[0].apis[:1]),),
         extra_sites=(),
     )
-    return replace(manifest, dylibs=manifest.dylibs + (other,))
+    return replace(
+        manifest,
+        dylibs=manifest.dylibs + (other,),
+        default_dylibs=manifest.default_dylibs + ("other",),
+    )
 
 
 if __name__ == "__main__":

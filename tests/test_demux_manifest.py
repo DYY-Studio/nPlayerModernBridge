@@ -54,16 +54,39 @@ class DemuxManifestTests(unittest.TestCase):
         self.assertEqual(sites, EXPECTED_SITES)
         self.assertEqual(len(sites), 25)
 
-    def test_no_site_is_redirected_by_two_units(self):
-        others = {
-            site
-            for d in MANIFEST.dylibs
-            if d.id != "ffmpeg-demux"
-            for dom in d.domains
-            for api in dom.apis
-            for site in api.call_sites
+    def test_overlapping_units_are_mutually_exclusive(self):
+        """A call site may be shared only by dylibs a selection cannot combine.
+
+        The demux domain deliberately restates the 25 class-A sites the 4.4.8
+        core domain also carries, and the tool refuses to select both. Any other
+        overlap would let the patcher write two redirects into one call site, so
+        every sharing pair has to declare the conflict.
+        """
+
+        sites = {
+            dylib.id: {
+                site
+                for domain in dylib.domains
+                for api in domain.apis
+                for site in api.call_sites
+            }
+            for dylib in MANIFEST.dylibs
         }
-        self.assertEqual(EXPECTED_SITES & others, frozenset())
+        for dylib in MANIFEST.dylibs:
+            for other in MANIFEST.dylibs:
+                if other.id <= dylib.id:
+                    continue
+                if sites[dylib.id] & sites[other.id]:
+                    self.assertTrue(
+                        other.id in dylib.conflicts or dylib.id in other.conflicts,
+                        f"{dylib.id} and {other.id} share call sites "
+                        "without declaring a conflict",
+                    )
+        self.assertEqual(set(self.dylib.conflicts), {"ffmpeg-core", "ffmpeg-full"})
+        self.assertEqual(sites["ffmpeg-demux"] & sites["ffmpeg-core"], EXPECTED_SITES)
+        self.assertEqual(
+            sites["ffmpeg-demux"] & sites["ffmpeg-full"], EXPECTED_SITES
+        )
 
     def test_old_targets_match_the_ffmpeg_core_unit(self):
         core = _dylib("ffmpeg-core")

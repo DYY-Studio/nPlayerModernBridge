@@ -57,7 +57,11 @@ def _two_unit_manifest():
             ),
         ),
     )
-    return replace(MANIFEST, dylibs=MANIFEST.dylibs + (other,))
+    return replace(
+        MANIFEST,
+        dylibs=MANIFEST.dylibs + (other,),
+        default_dylibs=MANIFEST.default_dylibs + ("other",),
+    )
 
 
 def _sign_extend(value, bits):

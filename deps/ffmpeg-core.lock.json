@@ -33,6 +33,7 @@
     "build/deps/ffmpeg-core/lib/libavformat.a",
     "build/deps/ffmpeg-core/lib/libavcodec.a",
     "build/deps/ffmpeg-core/lib/libswresample.a",
+    "build/deps/ffmpeg-core/lib/libswscale.a",
     "build/deps/ffmpeg-core/lib/libdav1d.a",
     "build/deps/ffmpeg-core/lib/libavutil.a"
   ],
@@ -75,9 +76,9 @@
     "--disable-avdevice",
     "--disable-avfilter",
     "--disable-postproc",
-    "--disable-swscale",
     "--disable-shared",
     "--enable-static",
+    "--enable-swscale",
     "--enable-zlib",
     "--enable-bzlib",
     "--enable-iconv",

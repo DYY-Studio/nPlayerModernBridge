@@ -228,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         dest="dylibs",
         default=None,
         metavar="ID",
-        help="install only this bridge dylib, by manifest id (repeatable; default: all)",
+        help="install only this bridge dylib, by manifest id (repeatable; "
+        "default: the manifest's default_dylibs)",
     )
     parser.add_argument("--manifests", type=Path, default=MANIFESTS)
     arguments = parser.parse_args(argv)

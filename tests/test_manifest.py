@@ -73,27 +73,23 @@ class ManifestTests(unittest.TestCase):
             [unit.id for unit in self.units],
             [
                 "libass/libass",
-                "ffmpeg/libswscale",
-                "ffmpeg/libswresample",
-                "ffmpeg-core/ffmpeg-core",
-                "ffmpeg-demux/ffmpeg-demux",
+                "ffmpeg-full/ffmpeg-core",
+                "ffmpeg-full/libswscale",
+                "ffmpeg-full/libswresample",
             ],
         )
         self.assertEqual(self.unit.dylib_id, "libass")
         self.assertEqual(self.unit.domain_id, "libass")
-        for dylib in self.manifest.dylibs:
-            with self.subTest(dylib=dylib.id):
+        for dylib_id in dict.fromkeys(unit.dylib_id for unit in self.units):
+            dylib = self.manifest.dylib(dylib_id)
+            selected = [unit for unit in self.units if unit.dylib_id == dylib_id]
+            with self.subTest(dylib=dylib_id):
                 self.assertEqual(
                     [domain.id for domain in dylib.domains],
-                    [
-                        unit.domain_id
-                        for unit in self.units
-                        if unit.dylib_id == dylib.id
-                    ],
+                    [unit.domain_id for unit in selected],
                 )
-                for unit in self.units:
-                    if unit.dylib_id == dylib.id:
-                        self.assertEqual(unit.basename, dylib.basename)
+                for unit in selected:
+                    self.assertEqual(unit.basename, dylib.basename)
 
     def test_ffmpeg_units_split_the_legacy_scaler_and_resampler(self):
         swscale, swresample = (
@@ -122,6 +118,64 @@ class ManifestTests(unittest.TestCase):
                 "npa_swr_convert",
                 "npa_swr_free",
             },
+        )
+
+    def test_ffmpeg_alternatives_conflict(self):
+        for combination in (
+            ("ffmpeg-full", "ffmpeg-core"),
+            ("libass", "ffmpeg-full", "ffmpeg"),
+        ):
+            with self.subTest(combination=combination):
+                with self.assertRaises(ValueError) as caught:
+                    self.manifest.units(combination)
+                self.assertIn("conflicting dylib selection", str(caught.exception))
+
+    def test_the_split_alternative_is_still_selectable(self):
+        self.assertEqual(
+            [
+                unit.id
+                for unit in self.manifest.units(("libass", "ffmpeg-core", "ffmpeg"))
+            ],
+            [
+                "libass/libass",
+                "ffmpeg/libswscale",
+                "ffmpeg/libswresample",
+                "ffmpeg-core/ffmpeg-core",
+            ],
+        )
+
+    def test_shared_domains_are_declared_once(self):
+        """A registry lookup must hand every dylib the same domain object."""
+
+        full = self.manifest.dylib("ffmpeg-full")
+        self.assertEqual(
+            [domain.id for domain in full.domains],
+            ["ffmpeg-core", "libswscale", "libswresample"],
+        )
+        self.assertIs(
+            full.domains[0], self.manifest.dylib("ffmpeg-core").domains[0]
+        )
+        for shared, util in zip(full.domains[1:], self.manifest.dylib("ffmpeg").domains):
+            self.assertIs(shared, util)
+
+    def test_ffmpeg_full_covers_the_whole_4_4_8_surface(self):
+        """The one dylib carries the core, the scaler and the resampler.
+
+        The domain identity is pinned separately; what matters here is that the
+        full dylib's three units are the core, the scaler and the resampler at
+        their frozen sizes, in that order.
+        """
+
+        self.assertEqual(
+            [
+                (unit.domain_id, unit.symbol_count, unit.call_site_count)
+                for unit in self.manifest.units(("ffmpeg-full",))
+            ],
+            [
+                ("ffmpeg-core", 99, 449),
+                ("libswscale", 5, 13),
+                ("libswresample", 6, 7),
+            ],
         )
 
     def test_unit_ids_are_globally_unique(self):

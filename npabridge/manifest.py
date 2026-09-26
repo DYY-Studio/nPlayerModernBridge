@@ -87,6 +87,7 @@ class Dylib:
     basename: str
     domains: tuple[Domain, ...]
     extra_sites: tuple[ExtraSite, ...] = ()
+    conflicts: tuple[str, ...] = ()
     callback: Callback | None = None
     build: BuildSpec | None = None
 
@@ -107,6 +108,7 @@ class Manifest:
     target_abi: target_abi.TargetABI
     dlsym_stub: int
     dladdr_stub: int
+    default_dylibs: tuple[str, ...]
     dylibs: tuple[Dylib, ...]
 
     def units(self, dylib_ids: Sequence[str] | None = None) -> tuple[Unit, ...]:
@@ -143,21 +145,30 @@ class Manifest:
         )
 
     def api(self, symbol: str) -> APIBinding:
-        for unit in self.units():
-            for api in unit.apis:
-                if api.symbol == symbol:
-                    return api
+        """One API binding by symbol, across every dylib the manifest declares.
+
+        Deliberately not scoped to the default selection: a symbol that only a
+        non-default dylib declares is still part of the manifest.
+        """
+
+        for dylib in self.dylibs:
+            for domain in dylib.domains:
+                for api in domain.apis:
+                    if api.symbol == symbol:
+                        return api
         raise KeyError(symbol)
 
     def _select(self, dylib_ids: Sequence[str] | None) -> tuple[Dylib, ...]:
         if dylib_ids is None:
-            return self.dylibs
+            dylib_ids = self.default_dylibs
         wanted = tuple(dict.fromkeys(dylib_ids))
         known = {dylib.id for dylib in self.dylibs}
         unknown = [dylib_id for dylib_id in wanted if dylib_id not in known]
         if unknown:
             raise KeyError(f"unknown dylib ids: {', '.join(unknown)}")
-        return tuple(dylib for dylib in self.dylibs if dylib.id in set(wanted))
+        selected = tuple(dylib for dylib in self.dylibs if dylib.id in set(wanted))
+        _check_conflicts(selected)
+        return selected
 
 
 # The app reaches FFmpeg with calls (BL) and with tail calls (B). Both encode a
@@ -212,43 +223,101 @@ def _build_spec(raw: dict | None) -> BuildSpec | None:
     )
 
 
+def _check_conflicts(selected: Sequence[Dylib]) -> None:
+    """Refuse a selection that names two dylibs the manifest marks exclusive."""
+
+    chosen = {dylib.id for dylib in selected}
+    for dylib in selected:
+        clashes = sorted(other for other in dylib.conflicts if other in chosen)
+        if clashes:
+            raise ValueError(
+                f"conflicting dylib selection: {dylib.id} conflicts with "
+                + ", ".join(clashes)
+            )
+
+
+def _domain(raw: dict) -> Domain:
+    return Domain(
+        id=raw["id"],
+        apis=tuple(
+            APIBinding(
+                symbol=api["symbol"],
+                call_sites=tuple(int(value, 0) for value in api["call_sites"]),
+                old_target=int(api["old_target"], 0),
+            )
+            for api in raw["apis"]
+        ),
+    )
+
+
+def _domain_registry(data: dict, path: Path) -> dict[str, Domain]:
+    """The domain definitions, written once and shared by every dylib."""
+
+    registry: dict[str, Domain] = {}
+    for raw in data["domains"]:
+        if raw["id"] in registry:
+            raise ValueError(f"duplicate domain ids in {path.name}: {raw['id']}")
+        registry[raw["id"]] = _domain(raw)
+    return registry
+
+
+def _dylib(raw: dict, registry: dict[str, Domain]) -> Dylib:
+    domains = []
+    for domain_id in raw["domains"]:
+        if domain_id not in registry:
+            raise ValueError(
+                f"dylib {raw['id']} references unknown domain {domain_id}"
+            )
+        domains.append(registry[domain_id])
+    return Dylib(
+        id=raw["id"],
+        library_version=raw["library_version"],
+        basename=raw["basename"],
+        domains=tuple(domains),
+        extra_sites=tuple(
+            ExtraSite(
+                site=int(site["site"], 0),
+                expected=int(site["expected"], 0),
+                replacement=int(site["replacement"], 0),
+            )
+            for site in raw.get("extra_sites", ())
+        ),
+        conflicts=tuple(raw.get("conflicts", ())),
+        callback=_callback(raw.get("callback")),
+        build=_build_spec(raw.get("build")),
+    )
+
+
 def load_manifest(path: Path) -> Manifest:
     data = json.loads(path.read_text(encoding="utf-8"))
-    dylibs = tuple(
-        Dylib(
-            id=dylib["id"],
-            library_version=dylib["library_version"],
-            basename=dylib["basename"],
-            domains=tuple(
-                Domain(
-                    id=domain["id"],
-                    apis=tuple(
-                        APIBinding(
-                            symbol=api["symbol"],
-                            call_sites=tuple(int(value, 0) for value in api["call_sites"]),
-                            old_target=int(api["old_target"], 0),
-                        )
-                        for api in domain["apis"]
-                    ),
-                )
-                for domain in dylib["domains"]
-            ),
-            extra_sites=tuple(
-                ExtraSite(
-                    site=int(site["site"], 0),
-                    expected=int(site["expected"], 0),
-                    replacement=int(site["replacement"], 0),
-                )
-                for site in dylib.get("extra_sites", ())
-            ),
-            callback=_callback(dylib.get("callback")),
-            build=_build_spec(dylib.get("build")),
-        )
-        for dylib in data["dylibs"]
-    )
+    registry = _domain_registry(data, path)
+    dylibs = tuple(_dylib(raw, registry) for raw in data["dylibs"])
     identifiers = [dylib.id for dylib in dylibs]
     if len(identifiers) != len(set(identifiers)):
         raise ValueError(f"duplicate dylib ids in {path.name}: {identifiers}")
+    default_dylibs = tuple(data["default_dylibs"])
+    unknown = [
+        dylib_id for dylib_id in default_dylibs if dylib_id not in set(identifiers)
+    ]
+    if unknown:
+        raise ValueError(
+            f"default_dylibs names unknown dylibs in {path.name}: {', '.join(unknown)}"
+        )
+    by_id = {dylib.id: dylib for dylib in dylibs}
+    for dylib in dylibs:
+        for other in dylib.conflicts:
+            if other not in by_id:
+                raise ValueError(
+                    f"dylib {dylib.id} conflicts with unknown dylib {other}"
+                )
+            if dylib.id not in by_id[other].conflicts:
+                raise ValueError(
+                    f"conflicts are not symmetric in {path.name}: {dylib.id} "
+                    f"names {other}, but {other} does not name {dylib.id}"
+                )
+    _check_conflicts(
+        tuple(dylib for dylib in dylibs if dylib.id in set(default_dylibs))
+    )
     return Manifest(
         imagebase=int(data["imagebase"], 0),
         main_sha256=data["main_sha256"],
@@ -256,6 +325,7 @@ def load_manifest(path: Path) -> Manifest:
         target_abi=target_abi.from_manifest(data["target_abi"]),
         dlsym_stub=int(data["dlsym_stub"], 0),
         dladdr_stub=int(data["dladdr_stub"], 0),
+        default_dylibs=default_dylibs,
         dylibs=dylibs,
     )
 

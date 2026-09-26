@@ -20,6 +20,7 @@ BRIDGES = {
     "libass": ROOT / "build" / "LibASSBridge.dylib",
     "ffmpeg": ROOT / "build" / "LibFFmpegBridge.dylib",
     "ffmpeg-core": ROOT / "build" / "LibFFmpegCoreBridge.dylib",
+    "ffmpeg-full": ROOT / "build" / "LibFFmpegFullBridge.dylib",
     "ffmpeg-demux": ROOT / "build" / "LibFFmpegDemuxBridge.dylib",
 }
 
@@ -48,12 +49,7 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual(report.state_initial, 0)
         self.assertEqual(
             set(report.bridge_sha256s),
-            {
-                "LibASSBridge.dylib",
-                "LibFFmpegBridge.dylib",
-                "LibFFmpegCoreBridge.dylib",
-                "LibFFmpegDemuxBridge.dylib",
-            },
+            {"LibASSBridge.dylib", "LibFFmpegFullBridge.dylib"},
         )
         for check in report.checks:
             self.assertTrue(check.ok, check)

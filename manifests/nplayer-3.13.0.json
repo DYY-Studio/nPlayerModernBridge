@@ -762,7 +762,7 @@
         "lib_root": "build/deps/ffmpeg/lib"
       },
       "domains": ["libswscale", "libswresample"],
-      "conflicts": ["ffmpeg-full"]
+      "conflicts": ["ffmpeg-full", "ffmpeg-core902"]
     },
     {
       "id": "ffmpeg-core",
@@ -776,7 +776,7 @@
         "lib_root": "build/deps/ffmpeg-core/lib"
       },
       "domains": ["ffmpeg-core"],
-      "conflicts": ["ffmpeg-full", "ffmpeg-demux"]
+      "conflicts": ["ffmpeg-full", "ffmpeg-core902"]
     },
     {
       "id": "ffmpeg-full",
@@ -790,21 +790,21 @@
         "lib_root": "build/deps/ffmpeg-core/lib"
       },
       "domains": ["ffmpeg-core", "libswscale", "libswresample"],
-      "conflicts": ["ffmpeg", "ffmpeg-core", "ffmpeg-demux"]
+      "conflicts": ["ffmpeg", "ffmpeg-core", "ffmpeg-core902"]
     },
     {
-      "id": "ffmpeg-demux",
+      "id": "ffmpeg-core902",
       "library_version": "9.0.2",
-      "basename": "LibFFmpegDemuxBridge.dylib",
+      "basename": "LibFFmpegCore902Bridge.dylib",
       "build": {
-        "source": "bridge/npa_ffmpeg_demux_bridge.c",
-        "exports": "bridge/ffmpeg-demux.exports",
-        "closure": "build/deps/ffmpeg-demux-closure.txt",
-        "include_root": "build/deps/ffmpeg-demux/include",
-        "lib_root": "build/deps/ffmpeg-demux/lib"
+        "source": "bridge/npa_ffmpeg_core902_bridge.c",
+        "exports": "bridge/ffmpeg-core902.exports",
+        "closure": "build/deps/ffmpeg-core902-closure.txt",
+        "include_root": "build/deps/ffmpeg-core902/include",
+        "lib_root": "build/deps/ffmpeg-core902/lib"
       },
-      "domains": ["ffmpeg-demux"],
-      "conflicts": ["ffmpeg-core", "ffmpeg-full"]
+      "domains": ["ffmpeg-demux", "libswscale", "libswresample"],
+      "conflicts": ["ffmpeg", "ffmpeg-core", "ffmpeg-full"]
     }
   ]
 }

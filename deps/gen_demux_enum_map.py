@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LEGACY_INCLUDE = ROOT / "build/deps/ffmpeg-core/include"
-MODERN_INCLUDE = ROOT / "build/deps/ffmpeg-demux/include"
+MODERN_INCLUDE = ROOT / "build/deps/ffmpeg-core902/include"
 OUTPUT = ROOT / "bridge/ffmpeg-demux-enum-map.h"
 
 

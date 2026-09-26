@@ -35,13 +35,14 @@ No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processi
   2. **split** - `LibFFmpegCoreBridge.dylib` carries the 99 core entry points at
     4.4.8 and `LibFFmpegBridge.dylib` carries the `sws_*`/`swr_*` entry points at
     **9.0.2**. Choices 1 and 2 cover the same call sites, so the tool refuses a mix,
-  3. **core 4.4.8 + demux 9.0.2** (experimental) - `LibFFmpegDemuxBridge.dylib`
-    carries FFmpeg **9.0.2** `libavformat` for the pure-playback demuxer's 25
-    class-A call sites only, combined with the 9.0.2 `LibFFmpegBridge.dylib` of
-    choice 2. Those 25 sites are the 4.4.8 core's demux face, so this choice is
-    mutually exclusive with the `ffmpeg-core` unit of choices 1 and 2; class B
-    subtitles, class C remux, the mux face and avcodec stay on the app's own
-    4.4.5, behind a translated legacy-shaped shadow context,
+  3. **9.0.2 core** (experimental) - `LibFFmpegCore902Bridge.dylib` carries FFmpeg
+    **9.0.2** `libavformat` for the pure-playback demuxer's 25 class-A call sites
+    plus 9.0.2 libswscale and libswresample, in one dylib. Those 25 sites are the
+    4.4.8 core's demux face, so this choice is mutually exclusive with the
+    `ffmpeg-core` unit of choices 1 and 2 and with the standalone
+    `LibFFmpegBridge.dylib`; class B subtitles, class C remux, the mux face and
+    avcodec stay on the app's own 4.4.5, behind a translated legacy-shaped shadow
+    context,
 - `Frameworks/LibASSBridge.dylib` is added. It statically links libass 0.17.5,
   FreeType, **HarfBuzz**, FriBidi, fontconfig and expat, with no third-party
   dynamic dependency,
@@ -54,9 +55,10 @@ No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processi
   libraries plus libdav1d 0.9.2, the second the `--disable-everything` 9.0.2
   build of libavutil, libswscale and libswresample; both depend on system
   libraries and frameworks only,
-- `Frameworks/LibFFmpegDemuxBridge.dylib` is added for the demux selection. It
-  statically links 9.0.2 libavutil, libavcodec, libavformat and libswresample,
-  and depends on system libraries and frameworks only,
+- `Frameworks/LibFFmpegCore902Bridge.dylib` is added for the 9.0.2 core
+  selection. It statically links 9.0.2 libavutil, libavcodec, libavformat,
+  libswscale and libswresample, and depends on system libraries and frameworks
+  only,
 - every binary is pseudo-signed so the bundle loads.
 
 The patch is organised in **units**: libass, `ffmpeg-core`, libswscale,
@@ -70,10 +72,12 @@ interpret the other's memory.
   - The whole-4.4.8 dylib carries all three FFmpeg
 units, so a scaler failure does not take the demuxer with it while the three
 still share one libavutil. 
-  - `ffmpeg-demux` is the exception that proves
-the rule: a demux-only slice of 9.0.2 `libavformat` that keeps a 4.4.x avcodec
-behind a translated legacy-shaped shadow context. It patches the same 25 call
-sites as the core unit's demux face, so the tool refuses to select both.
+  - the 9.0.2 core dylib carries the `ffmpeg-demux`, `libswscale` and
+libswresample units together, so it replaces a 4.4.8 face and the
+scaler/resampler at once. `ffmpeg-demux` is a demux-only slice of 9.0.2
+`libavformat` that keeps a 4.4.x avcodec behind a translated legacy-shaped
+shadow context, and it patches the same 25 call sites as the core unit's demux
+face, so the tool refuses to select the two together.
 - A unit is only installed when its dylib is selected,
 so `npa-patch --dylib libass` produces an artifact that is byte-identical to
 the libass-only patch of the same input.
@@ -101,8 +105,8 @@ Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framera
   - `LibFFmpegBridge.dylib` (FFmpeg 9.0.2 for iOS arm64) and
     `LibFFmpegCoreBridge.dylib` (FFmpeg 4.4.8 for iOS arm64) when you want the
     split selection instead.
-  - `LibFFmpegDemuxBridge.dylib` (FFmpeg 9.0.2 libavformat for iOS arm64) when
-    you want the demux selection instead of the 4.4.8 core unit.
+  - `LibFFmpegCore902Bridge.dylib` (FFmpeg 9.0.2 for iOS arm64) when you want
+    the 9.0.2 core selection instead of the 4.4.8 core unit.
   - `libkeystone.dylib` (the arm64 assembler used to encode the dispatch payload, macOS arm64 only); On Linux, please build the
   assembler `libkeystone.so` with `make bootstrap` instead.
 - No Xcode, no iOS SDK, no jailbreak. `npa-patch` runs from the repository
@@ -113,7 +117,7 @@ Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framera
 ```sh
 git clone <this repository> && cd nplayer-libass-bridge
 # put LibASSBridge.dylib, LibFFmpegFullBridge.dylib,
-# LibFFmpegBridge.dylib, LibFFmpegCoreBridge.dylib, LibFFmpegDemuxBridge.dylib
+# LibFFmpegBridge.dylib, LibFFmpegCoreBridge.dylib, LibFFmpegCore902Bridge.dylib
 # and libkeystone.dylib from the release assets here
 # (on Linux, run `make bootstrap` to build libkeystone.so instead)
 uv run npa-patch "/path/to/nPlayer_3.13.0.ipa"

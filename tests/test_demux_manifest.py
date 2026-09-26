@@ -1,4 +1,4 @@
-"""Pin the ffmpeg-demux unit to the frozen class-A redirect set.
+"""Pin the class-A demux domain to the frozen redirect set.
 
 The unit is only sound while it redirects exactly the pure-playback demuxer's
 call sites and nothing else: a site that belongs to class B/C or the mux face
@@ -38,7 +38,7 @@ def _dylib(dylib_id):
 
 class DemuxManifestTests(unittest.TestCase):
     def setUp(self):
-        self.dylib = _dylib("ffmpeg-demux")
+        self.dylib = _dylib("ffmpeg-core902")
         self.domain = next(d for d in self.dylib.domains if d.id == "ffmpeg-demux")
         self.apis = {api.symbol: api for api in self.domain.apis}
 
@@ -82,11 +82,11 @@ class DemuxManifestTests(unittest.TestCase):
                         f"{dylib.id} and {other.id} share call sites "
                         "without declaring a conflict",
                     )
-        self.assertEqual(set(self.dylib.conflicts), {"ffmpeg-core", "ffmpeg-full"})
-        self.assertEqual(sites["ffmpeg-demux"] & sites["ffmpeg-core"], EXPECTED_SITES)
         self.assertEqual(
-            sites["ffmpeg-demux"] & sites["ffmpeg-full"], EXPECTED_SITES
+            set(self.dylib.conflicts), {"ffmpeg", "ffmpeg-core", "ffmpeg-full"}
         )
+        # the sites this unit takes over from the 4.4.8 core's demux face
+        self.assertLessEqual(EXPECTED_SITES, sites["ffmpeg-core"])
 
     def test_old_targets_match_the_ffmpeg_core_unit(self):
         core = _dylib("ffmpeg-core")

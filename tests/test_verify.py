@@ -21,7 +21,7 @@ BRIDGES = {
     "ffmpeg": ROOT / "build" / "LibFFmpegBridge.dylib",
     "ffmpeg-core": ROOT / "build" / "LibFFmpegCoreBridge.dylib",
     "ffmpeg-full": ROOT / "build" / "LibFFmpegFullBridge.dylib",
-    "ffmpeg-demux": ROOT / "build" / "LibFFmpegDemuxBridge.dylib",
+    "ffmpeg-core902": ROOT / "build" / "LibFFmpegCore902Bridge.dylib",
 }
 
 

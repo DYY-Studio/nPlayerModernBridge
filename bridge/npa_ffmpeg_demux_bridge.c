@@ -26,7 +26,10 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
+
+#include <os/log.h>
 
 #include <libavutil/buffer.h>
 #include <libavutil/mem.h>
@@ -292,13 +295,19 @@ static void shadow_rebuild_streams(npa_shadow *s)
         }
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_FORMAT, (uint32_t)mp->format);
         npa_st_u64(lp, NPA_LEGACY_CODECPAR_BIT_RATE, (uint64_t)mp->bit_rate);
+        npa_st_u32(lp, NPA_LEGACY_CODECPAR_BITS_PER_CODED_SAMPLE, (uint32_t)mp->bits_per_coded_sample);
+        npa_st_u32(lp, NPA_LEGACY_CODECPAR_BITS_PER_RAW_SAMPLE, (uint32_t)mp->bits_per_raw_sample);
+        npa_st_u32(lp, NPA_LEGACY_CODECPAR_PROFILE, (uint32_t)mp->profile);
+        npa_st_u32(lp, NPA_LEGACY_CODECPAR_LEVEL, (uint32_t)mp->level);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_WIDTH, (uint32_t)mp->width);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_HEIGHT, (uint32_t)mp->height);
         store_rational(lp, NPA_LEGACY_CODECPAR_SAMPLE_ASPECT_RATIO, mp->sample_aspect_ratio);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_FIELD_ORDER, (uint32_t)mp->field_order);
+        npa_st_u32(lp, NPA_LEGACY_CODECPAR_COLOR_RANGE, (uint32_t)mp->color_range);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_COLOR_PRIMARIES, (uint32_t)mp->color_primaries);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_COLOR_TRC, (uint32_t)mp->color_trc);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_COLOR_SPACE, (uint32_t)mp->color_space);
+        npa_st_u32(lp, NPA_LEGACY_CODECPAR_CHROMA_LOCATION, (uint32_t)mp->chroma_location);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_VIDEO_DELAY, (uint32_t)mp->video_delay);
         npa_st_u64(
             lp,
@@ -309,6 +318,52 @@ static void shadow_rebuild_streams(npa_shadow *s)
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_SAMPLE_RATE, (uint32_t)mp->sample_rate);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_BLOCK_ALIGN, (uint32_t)mp->block_align);
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_FRAME_SIZE, (uint32_t)mp->frame_size);
+    }
+}
+
+/* Temporary diagnostics: dump the app-visible shadow codecpar per stream. */
+static void diag_streams(const char *where, npa_shadow *s)
+{
+    unsigned i;
+
+    os_log(OS_LOG_DEFAULT, "[ffmpeg-demux] %{public}s nb_streams=%u", where, s->nb_streams);
+    for (i = 0; i < s->nb_streams; i++) {
+        void *cp = s->streams[i] ? npa_ld_ptr(s->streams[i], NPA_LEGACY_STREAM_CODECPAR) : NULL;
+        uint8_t *ex;
+        unsigned es;
+        char line[192];
+
+        if (!cp)
+            continue;
+        ex = npa_ld_ptr(cp, NPA_LEGACY_CODECPAR_EXTRADATA);
+        es = npa_ld_u32(cp, NPA_LEGACY_CODECPAR_EXTRADATA_SIZE);
+        snprintf(
+            line,
+            sizeof(line),
+            "st%u type=%d id=%d tag=%08x extra=%u prof=%d lvl=%d %dx%d sr=%d ch=%d lay=%llx",
+            i,
+            (int)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_CODEC_TYPE),
+            (int)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_CODEC_ID),
+            (unsigned)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_CODEC_TAG),
+            es,
+            (int)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_PROFILE),
+            (int)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_LEVEL),
+            (int)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_WIDTH),
+            (int)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_HEIGHT),
+            (int)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_SAMPLE_RATE),
+            (int)npa_ld_u32(cp, NPA_LEGACY_CODECPAR_CHANNELS),
+            (unsigned long long)npa_ld_u64(cp, NPA_LEGACY_CODECPAR_CHANNEL_LAYOUT)
+        );
+        os_log(OS_LOG_DEFAULT, "[ffmpeg-demux]   %{public}s", line);
+        if (ex && es >= 4)
+            os_log(
+                OS_LOG_DEFAULT,
+                "[ffmpeg-demux]   ex=%02x%02x%02x%02x",
+                ex[0],
+                ex[1],
+                ex[2],
+                ex[3]
+            );
     }
 }
 
@@ -407,6 +462,7 @@ NPA_EXPORT int npa_demux_avformat_open_input(
 
     shadow_to_modern(s);
     ret = avformat_open_input(&s->modern, url, fmt, options);
+    os_log(OS_LOG_DEFAULT, "[ffmpeg-demux] open url=%{public}s ret=%d", url ? url : "(null)", ret);
     if (ret < 0) {
         if (ps)
             *ps = NULL;
@@ -415,6 +471,7 @@ NPA_EXPORT int npa_demux_avformat_open_input(
     }
     shadow_rebuild_streams(s);
     modern_to_shadow(s);
+    diag_streams("open", s);
     if (ps)
         *ps = (AVFormatContext *)s->shadow;
     return ret;
@@ -429,9 +486,11 @@ NPA_EXPORT int npa_demux_avformat_find_stream_info(AVFormatContext *ctx, AVDicti
         return AVERROR(EINVAL);
     shadow_to_modern(s);
     ret = avformat_find_stream_info(s->modern, options);
+    os_log(OS_LOG_DEFAULT, "[ffmpeg-demux] find_stream_info ret=%d", ret);
     if (ret >= 0) {
         shadow_rebuild_streams(s);
         modern_to_shadow(s);
+        diag_streams("find_stream_info", s);
     }
     return ret;
 }
@@ -514,6 +573,11 @@ NPA_EXPORT int npa_demux_av_read_frame(AVFormatContext *ctx, AVPacket *pkt)
     if (!tmp)
         return AVERROR(ENOMEM);
     ret = av_read_frame(s->modern, tmp);
+    if (ret < 0) {
+        static _Atomic int read_errors;
+        if (atomic_fetch_add(&read_errors, 1) < 8)
+            os_log(OS_LOG_DEFAULT, "[ffmpeg-demux] read_frame ret=%d", ret);
+    }
     if (ret >= 0 && legacy_packet_from((void *)pkt, tmp) < 0)
         ret = AVERROR(ENOMEM);
     av_packet_unref(tmp);

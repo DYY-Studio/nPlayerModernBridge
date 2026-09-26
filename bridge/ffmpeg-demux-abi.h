@@ -78,13 +78,19 @@
 #define NPA_LEGACY_CODECPAR_EXTRADATA_SIZE 0x018
 #define NPA_LEGACY_CODECPAR_FORMAT 0x01c
 #define NPA_LEGACY_CODECPAR_BIT_RATE 0x020
+#define NPA_LEGACY_CODECPAR_BITS_PER_CODED_SAMPLE 0x028
+#define NPA_LEGACY_CODECPAR_BITS_PER_RAW_SAMPLE 0x02c
+#define NPA_LEGACY_CODECPAR_PROFILE 0x030
+#define NPA_LEGACY_CODECPAR_LEVEL 0x034
 #define NPA_LEGACY_CODECPAR_WIDTH 0x038
 #define NPA_LEGACY_CODECPAR_HEIGHT 0x03c
 #define NPA_LEGACY_CODECPAR_SAMPLE_ASPECT_RATIO 0x040
 #define NPA_LEGACY_CODECPAR_FIELD_ORDER 0x048
+#define NPA_LEGACY_CODECPAR_COLOR_RANGE 0x04c
 #define NPA_LEGACY_CODECPAR_COLOR_PRIMARIES 0x050
 #define NPA_LEGACY_CODECPAR_COLOR_TRC 0x054
 #define NPA_LEGACY_CODECPAR_COLOR_SPACE 0x058
+#define NPA_LEGACY_CODECPAR_CHROMA_LOCATION 0x05c
 #define NPA_LEGACY_CODECPAR_VIDEO_DELAY 0x060
 #define NPA_LEGACY_CODECPAR_CHANNEL_LAYOUT 0x068
 #define NPA_LEGACY_CODECPAR_CHANNELS 0x070
@@ -157,6 +163,16 @@ NPA_ABI_ASSERT(offsetof(AVStream, codecpar) == 0x10, "modern AVStream.codecpar m
 NPA_ABI_ASSERT(offsetof(AVStream, discard) == 0x44, "modern AVStream.discard moved");
 NPA_ABI_ASSERT(offsetof(AVStream, attached_pic) == 0x60, "modern AVStream.attached_pic moved");
 
+NPA_ABI_ASSERT(offsetof(AVCodecParameters, format) == 0x2c, "modern AVCodecParameters.format moved");
+NPA_ABI_ASSERT(offsetof(AVCodecParameters, bit_rate) == 0x30, "modern AVCodecParameters.bit_rate moved");
+NPA_ABI_ASSERT(offsetof(AVCodecParameters, bits_per_coded_sample) == 0x38, "modern bits_per_coded_sample moved");
+NPA_ABI_ASSERT(offsetof(AVCodecParameters, bits_per_raw_sample) == 0x3c, "modern bits_per_raw_sample moved");
+NPA_ABI_ASSERT(offsetof(AVCodecParameters, profile) == 0x40, "modern AVCodecParameters.profile moved");
+NPA_ABI_ASSERT(offsetof(AVCodecParameters, level) == 0x44, "modern AVCodecParameters.level moved");
+NPA_ABI_ASSERT(offsetof(AVCodecParameters, width) == 0x48, "modern AVCodecParameters.width moved");
+NPA_ABI_ASSERT(offsetof(AVCodecParameters, height) == 0x4c, "modern AVCodecParameters.height moved");
+NPA_ABI_ASSERT(offsetof(AVCodecParameters, color_range) == 0x64, "modern AVCodecParameters.color_range moved");
+NPA_ABI_ASSERT(offsetof(AVCodecParameters, chroma_location) == 0x74, "modern chroma_location moved");
 NPA_ABI_ASSERT(offsetof(AVCodecParameters, ch_layout) == 0x80, "modern AVCodecParameters.ch_layout moved");
 
 NPA_ABI_ASSERT(sizeof(AVPacket) == 0x68, "modern AVPacket size moved");

@@ -720,6 +720,75 @@
           ]
         }
       ]
-    }
+    },
+      {
+        "id": "ffmpeg-demux",
+        "library_version": "9.0.2",
+        "basename": "LibFFmpegDemuxBridge.dylib",
+        "build": {
+          "source": "bridge/npa_ffmpeg_demux_bridge.c",
+          "exports": "bridge/ffmpeg-demux.exports",
+          "closure": "build/deps/ffmpeg-demux-closure.txt",
+          "include_root": "build/deps/ffmpeg-demux/include",
+          "lib_root": "build/deps/ffmpeg-demux/lib"
+        },
+        "domains": [
+          {
+            "id": "ffmpeg-demux",
+            "apis": [
+          {
+            "symbol": "npa_avformat_alloc_context",
+            "call_sites": ["0x100A3E390", "0x100AED780", "0x100AEF684"],
+            "old_target": "0x1007DCCF8"
+          },
+          {
+            "symbol": "npa_avformat_open_input",
+            "call_sites": ["0x100A3E900", "0x100AED878", "0x100AEF778"],
+            "old_target": "0x10081FADC"
+          },
+          {
+            "symbol": "npa_avformat_find_stream_info",
+            "call_sites": ["0x100A3E910", "0x100AED8E8", "0x100AEF7A8"],
+            "old_target": "0x100824C8C"
+          },
+          {
+            "symbol": "npa_av_read_frame",
+            "call_sites": ["0x100A46964", "0x100AEE510", "0x100AEEC60", "0x100AEFE28"],
+            "old_target": "0x100821298"
+          },
+          {
+            "symbol": "npa_av_seek_frame",
+            "call_sites": ["0x100A46944", "0x100AEFC4C", "0x100AEFCB4", "0x100AEFCCC"],
+            "old_target": "0x10082357C"
+          },
+          {
+            "symbol": "npa_avformat_close_input",
+            "call_sites": ["0x100A415B4", "0x100AEFA04"],
+            "old_target": "0x100827B08"
+          },
+          {
+            "symbol": "npa_avformat_free_context",
+            "call_sites": ["0x100A415D4"],
+            "old_target": "0x10082020C"
+          },
+          {
+            "symbol": "npa_avio_alloc_context",
+            "call_sites": ["0x100A3E388", "0x100AED778"],
+            "old_target": "0x10073AD30"
+          },
+          {
+            "symbol": "npa_avio_size",
+            "call_sites": ["0x100A46874", "0x100AEFC18"],
+            "old_target": "0x10073B834"
+          },
+          {
+            "symbol": "npa_av_index_search_timestamp",
+            "call_sites": ["0x100AECEE0"],
+            "old_target": "0x10082295C"
+          }
+            ]
+          }
+        ]
+      }
   ]
 }

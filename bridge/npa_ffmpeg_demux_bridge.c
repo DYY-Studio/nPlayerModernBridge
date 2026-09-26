@@ -15,8 +15,8 @@
  * The app's own FFmpeg (avcodec/avutil, bitstream filters) stays 4.4.5, so the
  * shadow is the single ABI the app and the legacy libraries agree on.
  *
- * av_read_frame is still a pass-through here; the packet translation lands in
- * the next commit.
+ * av_read_frame's packets are returned as legacy-owned buffers, and a stream's
+ * attached_pic is materialised the same way.
  *
  * The frozen call-site table is in
  * docs/superpowers/plans/2026-09-26-class-a-demux-modern-avformat.md.
@@ -27,6 +27,9 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdlib.h>
+
+#include <libavutil/buffer.h>
+#include <libavutil/mem.h>
 
 #define NPA_EXPORT __attribute__((visibility("default")))
 
@@ -94,6 +97,102 @@ static void shadow_unregister(npa_shadow *s)
     pthread_mutex_unlock(&g_lock);
 }
 
+static void packet_buffer_free(void *opaque, uint8_t *data)
+{
+    if (opaque) {
+        AVBufferRef *retained = (AVBufferRef *)opaque;
+        av_buffer_unref(&retained);
+    } else {
+        av_free(data);
+    }
+}
+
+/*
+ * Release one legacy AVBufferRef the way the app's 4.4 av_buffer_unref does:
+ * drop the ref, and when it was the last one run the buffer's free callback
+ * and release the buffer. The buffer shell is freed by whoever performs the
+ * last unref, so this must not run ahead of an outstanding legacy reference.
+ */
+static void legacy_ref_release(struct npa_legacy_avbuffer_ref **pref)
+{
+    struct npa_legacy_avbuffer_ref *ref = *pref;
+    struct npa_legacy_avbuffer *buf;
+
+    if (!ref)
+        return;
+    *pref = NULL;
+    buf = ref->buffer;
+    free(ref);
+    if (buf && atomic_fetch_sub_explicit(&buf->refcount, 1, memory_order_acq_rel) == 1) {
+        if (buf->free)
+            buf->free(buf->opaque, buf->data);
+        free(buf);
+    }
+}
+
+static void legacy_packet_release(void *pkt)
+{
+    legacy_ref_release((struct npa_legacy_avbuffer_ref **)((char *)pkt + NPA_LEGACY_PACKET_BUF));
+}
+
+/*
+ * Fill the app's 0x58 AVPacket from a modern packet, wrapping the payload in a
+ * hand-built legacy AVBufferRef so the app's 4.4 av_packet_unref frees it.
+ * The modern buffer is retained (zero copy); a buf-less source is copied.
+ */
+static int legacy_packet_from(void *dst, const AVPacket *src)
+{
+    struct npa_legacy_avbuffer *buf = calloc(1, sizeof(*buf));
+    struct npa_legacy_avbuffer_ref *ref = calloc(1, sizeof(*ref));
+    uint8_t *data = src->data;
+    void *opaque = NULL;
+
+    if (!buf || !ref) {
+        free(buf);
+        free(ref);
+        return -1;
+    }
+    if (src->buf) {
+        opaque = av_buffer_ref(src->buf);
+        if (!opaque) {
+            free(buf);
+            free(ref);
+            return -1;
+        }
+    } else if (src->data && src->size > 0) {
+        data = av_malloc((size_t)src->size);
+        if (!data) {
+            free(buf);
+            free(ref);
+            return -1;
+        }
+        memcpy(data, src->data, (size_t)src->size);
+    }
+
+    buf->data = data;
+    buf->size = src->size;
+    atomic_init(&buf->refcount, 1);
+    buf->free = packet_buffer_free;
+    buf->opaque = opaque;
+    ref->buffer = buf;
+    ref->data = data;
+    ref->size = src->size;
+
+    npa_st_ptr(dst, NPA_LEGACY_PACKET_BUF, ref);
+    npa_st_u64(dst, NPA_LEGACY_PACKET_PTS, (uint64_t)src->pts);
+    npa_st_u64(dst, NPA_LEGACY_PACKET_DTS, (uint64_t)src->dts);
+    npa_st_ptr(dst, NPA_LEGACY_PACKET_DATA, data);
+    npa_st_u32(dst, NPA_LEGACY_PACKET_SIZE_FIELD, (uint32_t)src->size);
+    npa_st_u32(dst, NPA_LEGACY_PACKET_STREAM_INDEX, (uint32_t)src->stream_index);
+    npa_st_u32(dst, NPA_LEGACY_PACKET_FLAGS, (uint32_t)src->flags);
+    npa_st_ptr(dst, NPA_LEGACY_PACKET_SIDE_DATA, NULL);
+    npa_st_u32(dst, NPA_LEGACY_PACKET_SIDE_DATA_ELEMS, 0);
+    npa_st_u64(dst, NPA_LEGACY_PACKET_DURATION, (uint64_t)src->duration);
+    npa_st_u64(dst, NPA_LEGACY_PACKET_POS, (uint64_t)src->pos);
+    npa_st_u64(dst, NPA_LEGACY_PACKET_CONVERGENCE_DURATION, 0);
+    return 0;
+}
+
 static void shadow_free_streams(npa_shadow *s)
 {
     unsigned i;
@@ -101,6 +200,7 @@ static void shadow_free_streams(npa_shadow *s)
     for (i = 0; i < s->nb_streams; i++) {
         if (!s->streams[i])
             continue;
+        legacy_packet_release((char *)s->streams[i] + NPA_LEGACY_STREAM_ATTACHED_PIC);
         free(npa_ld_ptr(s->streams[i], NPA_LEGACY_STREAM_CODECPAR));
         free(s->streams[i]);
     }
@@ -162,6 +262,8 @@ static void shadow_rebuild_streams(npa_shadow *s)
         npa_st_ptr(ls, NPA_LEGACY_STREAM_METADATA, ms->metadata);
         store_rational(ls, NPA_LEGACY_STREAM_AVG_FRAME_RATE, ms->avg_frame_rate);
         npa_st_ptr(ls, NPA_LEGACY_STREAM_CODECPAR, lp);
+        if (ms->attached_pic.size > 0)
+            legacy_packet_from((char *)ls + NPA_LEGACY_STREAM_ATTACHED_PIC, &ms->attached_pic);
 
         if (!mp)
             continue;
@@ -382,5 +484,21 @@ NPA_EXPORT int npa_av_index_search_timestamp(AVStream *st, int64_t timestamp, in
     return av_index_search_timestamp(s->modern->streams[index], timestamp, flags);
 }
 
-/* Packet translation is the next commit; keep forwarding until then. */
-__asm__(".globl _npa_av_read_frame\n_npa_av_read_frame:\n\tb _av_read_frame\n");
+NPA_EXPORT int npa_av_read_frame(AVFormatContext *ctx, AVPacket *pkt)
+{
+    npa_shadow *s = shadow_lookup((void *)ctx);
+    AVPacket *tmp;
+    int ret;
+
+    if (!s || !s->modern)
+        return AVERROR(EINVAL);
+    tmp = av_packet_alloc();
+    if (!tmp)
+        return AVERROR(ENOMEM);
+    ret = av_read_frame(s->modern, tmp);
+    if (ret >= 0 && legacy_packet_from((void *)pkt, tmp) < 0)
+        ret = AVERROR(ENOMEM);
+    av_packet_unref(tmp);
+    av_packet_free(&tmp);
+    return ret;
+}

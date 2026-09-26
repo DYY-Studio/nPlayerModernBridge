@@ -19,10 +19,10 @@ timings were garbage (start/end/metadata happened to line up). The shim now
 builds a legacy-shaped `AVChapter[]` in `shadow_rebuild_chapters` and frees it
 with the shadow.
 
-## AVIOContext - confirmed drift, unverified app impact
+## AVIOContext - drift confirmed, but unreachable
 
-The shim returns the **modern** `AVIOContext` from `avio_alloc_context`. The
-front fields the app is expected to read are identical, but later fields moved:
+The shim returns the **modern** `AVIOContext` from `avio_alloc_context`, so only
+the front fields sit at the legacy offsets. Fields past them moved:
 
 | field | 4.4.8 | 9.0.2 |
 |---|---|---|
@@ -33,11 +33,13 @@ front fields the app is expected to read are identical, but later fields moved:
 | `direct` | 0xa0 | 0x94 |
 | `sizeof` | 0x108 | 0xd0 |
 
-A legacy read of `pb->error` returns the modern `update_checksum` low bits and
-`pb->write_flag` returns the modern `error`; there is no way to mirror both
-layouts in one object, so the shim only asserts the front fields. The custom-IO
-path (`[Reference]`/mmsh) is the one that exercises it and is still unverified;
-if it misbehaves, this is the first suspect.
+There is no way to mirror both layouts in one object. It turned out not to
+matter: the app reads exactly one AVIOContext field on either class-A path -
+`buffer` at `+8`, only to `free()` it - which is the same offset in both majors,
+and it is NULL anyway because the app builds the context with a zero-size buffer
+(`notes/ida-investigation-demux-custom-io.md`). `error`, `write_flag`, `direct`
+and `eof_reached` are never read. The drift is therefore unreachable here; the
+shim asserts the front fields only to keep it that way.
 
 ## Residual risks (not fixed)
 

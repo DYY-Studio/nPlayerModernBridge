@@ -29,6 +29,13 @@ No jailbreak, no inline hooks, bring modern ASS/SSA rendering to this great play
   muxing and the bitstream filters - go through **one** unit, `ffmpeg-core`,
   backed by `LibFFmpegCoreBridge.dylib` (FFmpeg 4.4.8, built from the same
   sources as the app's own 4.4.5 so the two share one ABI),
+- a second FFmpeg unit, `ffmpeg-demux`, is the first **partial** (demux-only)
+  modern-core integration: it takes over the pure-playback demuxer's 25 call
+  sites only and carries FFmpeg 9.0.2 `libavformat` in
+  `LibFFmpegDemuxBridge.dylib`, while class B subtitles, class C remux, the mux
+  face and all of `libavcodec` stay on `ffmpeg-core`. The app sees a
+  legacy-shaped shadow context and the shim translates at the boundary. It is
+  experimental - the 4.4.8 `ffmpeg-core` wiring stays the shipping path,
 - `Frameworks/LibASSBridge.dylib` is added. It statically links libass 0.17.5,
   FreeType, **HarfBuzz**, FriBidi, fontconfig and expat, with no third-party
   dynamic dependency,
@@ -39,14 +46,19 @@ No jailbreak, no inline hooks, bring modern ASS/SSA rendering to this great play
   selected. It statically links libavformat, libavcodec, libavutil and
   libswresample 4.4.8 plus libdav1d 0.9.2, and depends on system libraries and
   frameworks only,
+- `Frameworks/LibFFmpegDemuxBridge.dylib` is added when the demux unit is
+  selected. It statically links libavformat, libavcodec and libavutil 9.0.2,
+  and depends on system libraries and frameworks only,
 - every binary is pseudo-signed so the bundle loads.
 
-The patch is organised in **units**: libass, libswscale, libswresample and
-`ffmpeg-core`. Each unit arbitrates its own state at first call and falls back
-on its own, so a failure in one never turns off another. `ffmpeg-core` is
-deliberately one unit covering libavutil, libavcodec and libavformat together:
-the app reads those structures directly, so half a swap would let one library
-interpret the other's memory. A unit is only installed when its dylib is
+The patch is organised in **units**: libass, libswscale, libswresample,
+`ffmpeg-core` and `ffmpeg-demux`. Each unit arbitrates its own state at first
+call and falls back on its own, so a failure in one never turns off another.
+`ffmpeg-core` is deliberately one unit covering libavutil, libavcodec and
+libavformat together: the app reads those structures directly, so half a swap
+would let one library interpret the other's memory. `ffmpeg-demux` is the
+exception that proves it: a demux-only slice that keeps the app's 4.4.8 avcodec
+behind a translated shadow context. A unit is only installed when its dylib is
 selected, so `npa-patch --dylib libass` produces an artifact that is
 byte-identical to the libass-only patch of the same input.
 
@@ -71,6 +83,8 @@ Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framera
   - `LibFFmpegBridge.dylib` (FFmpeg 9.0.2 for iOS arm64) when you want its units. 
   - `LibFFmpegCoreBridge.dylib` (FFmpeg 4.4.8 for iOS arm64) when you want the
     core unit. 
+  - `LibFFmpegDemuxBridge.dylib` (FFmpeg 9.0.2 libavformat for iOS arm64) when
+    you want the demux unit; it extends the default selection to four units.
   - `libkeystone.dylib` (the arm64 assembler used to encode the dispatch payload, macOS arm64 only); On Linux, please build the
   assembler `libkeystone.so` with `make bootstrap` instead.
 - No Xcode, no iOS SDK, no jailbreak. `npa-patch` runs from the repository
@@ -80,14 +94,14 @@ Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framera
 
 ```sh
 git clone <this repository> && cd nplayer-libass-bridge
-# put LibASSBridge.dylib, LibFFmpegBridge.dylib, LibFFmpegCoreBridge.dylib
-# and libkeystone.dylib from the release assets here
+# put LibASSBridge.dylib, LibFFmpegBridge.dylib, LibFFmpegCoreBridge.dylib,
+# LibFFmpegDemuxBridge.dylib and libkeystone.dylib from the release assets here
 # (on Linux, run `make bootstrap` to build libkeystone.so instead)
 uv run npa-patch "/path/to/nPlayer_3.13.0.ipa"
 ```
 The output is written next to the input as
-`nPlayer_3.13.0-libass0.17.5-ffmpeg9.0.2-ffmpeg-core4.4.8.ipa`, one
-`<id><version>` segment per installed dylib in manifest order. 
+`nPlayer_3.13.0-libass0.17.5-ffmpeg9.0.2-ffmpeg-core4.4.8-ffmpeg-demux9.0.2.ipa`,
+one `<id><version>` segment per installed dylib in manifest order. 
 
 Install it with your usual sideload tool (
 [TrollStore](https://github.com/opa334/TrollStore),

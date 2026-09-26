@@ -33,20 +33,29 @@ import build_deps
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = Path(__file__).resolve().parent / "ffmpeg-core.lock.json"
-FFMPEG_SOURCE = "ffmpeg-core"
 DAV1D_SOURCE = "dav1d"
 TARGET = build_deps.TARGET
+
+
+def ffmpeg_source_key(lock: dict[str, Any]) -> str:
+    """The lock's single non-dav1d source key."""
+
+    return next(name for name in lock["sources"] if name != DAV1D_SOURCE)
 
 
 def load_lock(path: Path = LOCK_PATH) -> dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or data.get("schema") != 1:
-        raise ValueError("ffmpeg-core lock schema is invalid")
+        raise ValueError("lock schema is invalid")
     if data.get("target") != TARGET:
-        raise ValueError("ffmpeg-core lock target is not iOS 13 arm64")
+        raise ValueError("lock target is not iOS 13 arm64")
     sources = data.get("sources")
-    if not isinstance(sources, dict) or set(sources) != {FFMPEG_SOURCE, DAV1D_SOURCE}:
-        raise ValueError("ffmpeg-core lock must declare the ffmpeg-core and dav1d sources")
+    if (
+        not isinstance(sources, dict)
+        or not 1 <= len(sources) <= 2
+        or (len(sources) == 2 and DAV1D_SOURCE not in sources)
+    ):
+        raise ValueError("lock must declare one FFmpeg source and optional dav1d")
     for name, entry in sources.items():
         for field in ("version", "url", "archive_sha256", "archive_name"):
             if field not in entry:
@@ -58,13 +67,15 @@ def load_lock(path: Path = LOCK_PATH) -> dict[str, Any]:
             raise ValueError(f"{name} archive name is unsafe")
     prefix = Path(data["prefix"])
     if not data["output_archives"]:
-        raise ValueError("ffmpeg-core lock declares no output archive")
+        raise ValueError("lock declares no output archive")
     for item in data["output_archives"]:
         path = Path(item)
         if path.parent != prefix / "lib" or path.suffix != ".a":
-            raise ValueError(f"ffmpeg-core output path is unsafe: {item}")
-    if not any(Path(item).name == "libdav1d.a" for item in data["output_archives"]):
-        raise ValueError("ffmpeg-core closure must carry libdav1d.a")
+            raise ValueError(f"output path is unsafe: {item}")
+    if DAV1D_SOURCE in sources and not any(
+        Path(item).name == "libdav1d.a" for item in data["output_archives"]
+    ):
+        raise ValueError("closure must carry libdav1d.a when it builds dav1d")
     return data
 
 
@@ -159,26 +170,29 @@ def write_closure(lock: dict[str, Any]) -> None:
     )
 
 
-def verify_closure(lock: dict[str, Any] | None = None) -> dict[str, Any]:
-    lock = load_lock() if lock is None else lock
+def verify_closure(
+    lock: dict[str, Any] | None = None, lock_path: Path = LOCK_PATH
+) -> dict[str, Any]:
+    lock = load_lock(lock_path) if lock is None else lock
+    source_key = ffmpeg_source_key(lock)
     env = build_deps.isolated_environment()
     archives = archive_paths(lock)
     lib_root = ROOT / lock["lib_root"]
     include_root = ROOT / lock["include_root"]
     if not lib_root.is_dir():
-        raise FileNotFoundError(f"ffmpeg-core library directory is missing: {lib_root}")
+        raise FileNotFoundError(f"closure library directory is missing: {lib_root}")
 
     expected = sorted(path.name for path in archives)
     present = sorted(path.name for path in lib_root.iterdir() if path.is_file())
     if present != expected:
         raise ValueError(
-            f"ffmpeg-core closure archive set mismatch: expected {expected}, found {present}"
+            f"closure archive set mismatch: expected {expected}, found {present}"
         )
     report_archives = {
         path.name: build_deps._validate_archive(path, env) for path in archives
     }
-    if "libdav1d.a" not in report_archives:
-        raise ValueError("ffmpeg-core closure is missing libdav1d.a")
+    if DAV1D_SOURCE in lock["sources"] and "libdav1d.a" not in report_archives:
+        raise ValueError("closure is missing libdav1d.a")
 
     paths = list(archives) + [path for path in include_root.rglob("*") if path.is_file()]
     violations = [
@@ -188,19 +202,20 @@ def verify_closure(lock: dict[str, Any] | None = None) -> dict[str, Any]:
         if prefix.encode() in path.read_bytes()
     ]
     if violations:
-        raise ValueError("forbidden host path in ffmpeg-core output: " + "; ".join(violations))
+        raise ValueError("forbidden host path in closure output: " + "; ".join(violations))
 
     write_closure(lock)
     report = {
         "target": TARGET,
-        "ffmpeg": lock["sources"][FFMPEG_SOURCE]["version"],
-        "dav1d": lock["sources"][DAV1D_SOURCE]["version"],
+        "ffmpeg": lock["sources"][source_key]["version"],
         "archives": report_archives,
         "include_root": str(include_root),
         "lib_root": str(lib_root),
         "system_link_args": list(lock["system_link_args"]),
         "path_hygiene": "passed",
     }
+    if DAV1D_SOURCE in lock["sources"]:
+        report["dav1d"] = lock["sources"][DAV1D_SOURCE]["version"]
     verification = ROOT / lock["verification"]
     verification.parent.mkdir(parents=True, exist_ok=True)
     verification.write_text(
@@ -209,18 +224,20 @@ def verify_closure(lock: dict[str, Any] | None = None) -> dict[str, Any]:
     return report
 
 
-def build() -> dict[str, Any]:
-    lock = load_lock()
+def build(lock_path: Path = LOCK_PATH) -> dict[str, Any]:
+    lock = load_lock(lock_path)
+    source_key = ffmpeg_source_key(lock)
     sdk = build_deps.sdk_path()
-    source = build_deps.extract_source(FFMPEG_SOURCE, lock)
-    if lock["sources"][FFMPEG_SOURCE]["version"] not in (source / "RELEASE").read_text(
+    source = build_deps.extract_source(source_key, lock)
+    if lock["sources"][source_key]["version"] not in (source / "RELEASE").read_text(
         encoding="utf-8"
     ):
-        raise ValueError(f"ffmpeg-core source tree is not {lock['sources'][FFMPEG_SOURCE]['version']}")
+        raise ValueError(f"source tree is not {lock['sources'][source_key]['version']}")
     prefix = ROOT / lock["prefix"]
     if prefix.exists():
         shutil.rmtree(prefix)
-    build_dav1d(lock)
+    if DAV1D_SOURCE in lock["sources"]:
+        build_dav1d(lock)
 
     env = build_deps.isolated_environment(
         {
@@ -246,9 +263,11 @@ def build() -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--lock", default=str(LOCK_PATH))
     arguments = parser.parse_args(argv)
+    lock_path = Path(arguments.lock)
     try:
-        report = verify_closure() if arguments.verify_only else build()
+        report = verify_closure(lock_path=lock_path) if arguments.verify_only else build(lock_path)
         print(json.dumps(report, indent=2, sort_keys=True))
     except Exception as error:  # noqa: BLE001
         print(f"ffmpeg-core build failed: {error}", file=sys.stderr)

@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "target": "arm64-apple-ios13.0",
+  "sources": {
+    "ffmpeg-demux": {
+      "version": "9.0.2",
+      "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+      "archive_sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+      "archive_name": "ffmpeg-9.0.2.tar.xz"
+    }
+  },
+  "prefix": "build/deps/ffmpeg-demux",
+  "include_root": "build/deps/ffmpeg-demux/include",
+  "lib_root": "build/deps/ffmpeg-demux/lib",
+  "pkgconfig_root": "build/deps/ffmpeg-demux/pkgconfig",
+  "closure": "build/deps/ffmpeg-demux-closure.txt",
+  "verification": "build/deps/ffmpeg-demux-verification.json",
+  "output_archives": [
+    "build/deps/ffmpeg-demux/lib/libavformat.a",
+    "build/deps/ffmpeg-demux/lib/libavcodec.a",
+    "build/deps/ffmpeg-demux/lib/libswresample.a",
+    "build/deps/ffmpeg-demux/lib/libavutil.a"
+  ],
+  "system_link_args": [
+    "-lz",
+    "-lbz2",
+    "-liconv",
+    "-framework",
+    "VideoToolbox",
+    "-framework",
+    "CoreMedia",
+    "-framework",
+    "CoreVideo",
+    "-framework",
+    "Security",
+    "-framework",
+    "CoreFoundation",
+    "-framework",
+    "CoreServices"
+  ],
+  "configure_args": [
+    "--prefix={prefix}",
+    "--target-os=darwin",
+    "--arch=arm64",
+    "--enable-cross-compile",
+    "--enable-pic",
+    "--cc={cc}",
+    "--as={cc}",
+    "--ar={ar}",
+    "--ranlib={ranlib}",
+    "--nm={nm}",
+    "--strip={strip}",
+    "--sysroot={sdk}",
+    "--extra-cflags={cflags}",
+    "--extra-ldflags={ldflags}",
+    "--disable-autodetect",
+    "--disable-doc",
+    "--disable-programs",
+    "--disable-avdevice",
+    "--disable-avfilter",
+    "--disable-swscale",
+    "--disable-shared",
+    "--enable-static",
+    "--enable-zlib",
+    "--enable-bzlib",
+    "--enable-iconv",
+    "--enable-videotoolbox",
+    "--enable-securetransport"
+  ]
+}

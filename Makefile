@@ -10,6 +10,7 @@ deps:
 	$(UV) run python deps/build_deps.py
 	$(UV) run python deps/build_ffmpeg.py
 	$(UV) run python deps/build_ffmpeg_core.py
+	$(UV) run python deps/build_ffmpeg_core.py --lock deps/ffmpeg-demux.lock.json
 
 bridge:
 	$(UV) run python -m npabridge.build_bridge

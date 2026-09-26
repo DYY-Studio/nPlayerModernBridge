@@ -113,6 +113,14 @@
 #define NPA_LEGACY_PACKET_POS 0x048
 #define NPA_LEGACY_PACKET_CONVERGENCE_DURATION 0x050
 
+/* ---- Legacy AVChapter (mirrored; the modern id is int64_t so time_base moved) ---- */
+#define NPA_LEGACY_CHAPTER_SIZE 0x028
+#define NPA_LEGACY_CHAPTER_ID 0x000
+#define NPA_LEGACY_CHAPTER_TIME_BASE 0x004
+#define NPA_LEGACY_CHAPTER_START 0x010
+#define NPA_LEGACY_CHAPTER_END 0x018
+#define NPA_LEGACY_CHAPTER_METADATA 0x020
+
 /*
  * The 4.4 AVBuffer, mirrored. The app's av_packet_unref unrefs the packet's
  * `buf` through this layout, so the shim must hand it a buffer built to
@@ -147,6 +155,7 @@ NPA_ABI_ASSERT(NPA_LEGACY_FMT_SIZE > NPA_LEGACY_FMT_INTERRUPT_OPAQUE, "shadow AV
 NPA_ABI_ASSERT(NPA_LEGACY_STREAM_SIZE > NPA_LEGACY_STREAM_CODECPAR, "shadow AVStream too small");
 NPA_ABI_ASSERT(NPA_LEGACY_CODECPAR_SIZE > NPA_LEGACY_CODECPAR_FRAME_SIZE, "shadow AVCodecParameters too small");
 NPA_ABI_ASSERT(NPA_LEGACY_PACKET_SIZE > NPA_LEGACY_PACKET_CONVERGENCE_DURATION, "shadow AVPacket too small");
+NPA_ABI_ASSERT(NPA_LEGACY_CHAPTER_SIZE > NPA_LEGACY_CHAPTER_METADATA, "shadow AVChapter too small");
 
 /* ---- Modern fields the shim reads/writes ---- */
 NPA_ABI_ASSERT(offsetof(AVFormatContext, pb) == 0x20, "modern AVFormatContext.pb moved");
@@ -180,6 +189,21 @@ NPA_ABI_ASSERT(offsetof(AVPacket, duration) == 0x40, "modern AVPacket.duration m
 NPA_ABI_ASSERT(offsetof(AVPacket, time_base) == 0x60, "modern AVPacket.time_base moved");
 
 NPA_ABI_ASSERT(offsetof(AVIOContext, buffer) == 0x08, "modern AVIOContext.buffer moved");
+/*
+ * The shim hands the app the modern AVIOContext, so only the front fields are
+ * valid at legacy offsets. Fields past these (write_flag, error, direct) have a
+ * different offset and must not be read by the app.
+ */
+NPA_ABI_ASSERT(offsetof(AVIOContext, buf_ptr) == 0x18, "modern AVIOContext.buf_ptr moved");
+NPA_ABI_ASSERT(offsetof(AVIOContext, opaque) == 0x28, "modern AVIOContext.opaque moved");
+NPA_ABI_ASSERT(offsetof(AVIOContext, pos) == 0x48, "modern AVIOContext.pos moved");
+NPA_ABI_ASSERT(offsetof(AVIOContext, eof_reached) == 0x50, "modern AVIOContext.eof_reached moved");
+
+NPA_ABI_ASSERT(offsetof(AVChapter, id) == 0x0, "modern AVChapter.id moved");
+NPA_ABI_ASSERT(offsetof(AVChapter, time_base) == 0x8, "modern AVChapter.time_base moved");
+NPA_ABI_ASSERT(offsetof(AVChapter, start) == 0x10, "modern AVChapter.start moved");
+NPA_ABI_ASSERT(offsetof(AVChapter, end) == 0x18, "modern AVChapter.end moved");
+NPA_ABI_ASSERT(offsetof(AVChapter, metadata) == 0x20, "modern AVChapter.metadata moved");
 
 /* ---- Shadow field writers (the shadow is untyped legacy memory) ---- */
 static inline void npa_st_u32(void *shadow, size_t offset, uint32_t value)

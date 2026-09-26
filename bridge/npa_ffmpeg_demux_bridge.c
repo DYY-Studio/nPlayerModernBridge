@@ -39,6 +39,8 @@ typedef struct npa_shadow {
     void *shadow;
     unsigned nb_streams;
     void **streams;
+    unsigned nb_chapters;
+    void **chapters;
     struct npa_shadow *next;
 } npa_shadow;
 
@@ -216,10 +218,22 @@ static void shadow_free_streams(npa_shadow *s)
     s->nb_streams = 0;
 }
 
+static void shadow_free_chapters(npa_shadow *s)
+{
+    unsigned i;
+
+    for (i = 0; i < s->nb_chapters; i++)
+        free(s->chapters[i]);
+    free(s->chapters);
+    s->chapters = NULL;
+    s->nb_chapters = 0;
+}
+
 static void shadow_destroy(npa_shadow *s)
 {
     shadow_unregister(s);
     shadow_free_streams(s);
+    shadow_free_chapters(s);
     free(s->shadow);
     free(s);
 }
@@ -245,9 +259,15 @@ static void shadow_rebuild_streams(npa_shadow *s)
 
     for (i = 0; i < n; i++) {
         AVStream *ms = s->modern->streams[i];
-        AVCodecParameters *mp = ms ? ms->codecpar : NULL;
-        void *ls = calloc(1, NPA_LEGACY_STREAM_SIZE);
-        void *lp = calloc(1, NPA_LEGACY_CODECPAR_SIZE);
+        AVCodecParameters *mp;
+        void *ls;
+        void *lp;
+
+        if (!ms)
+            continue;
+        mp = ms->codecpar;
+        ls = calloc(1, NPA_LEGACY_STREAM_SIZE);
+        lp = calloc(1, NPA_LEGACY_CODECPAR_SIZE);
 
         if (!ls || !lp) {
             free(ls);
@@ -324,6 +344,42 @@ static void shadow_rebuild_streams(npa_shadow *s)
     }
 }
 
+/*
+ * The app reads AVChapter at 4.4.x offsets, where id is an int and time_base
+ * sits at 0x4; the modern id is int64_t and time_base sits at 0x8. Build a
+ * legacy-shaped array rather than alias the modern one.
+ */
+static void shadow_rebuild_chapters(npa_shadow *s)
+{
+    unsigned i, n;
+
+    shadow_free_chapters(s);
+    n = s->modern ? s->modern->nb_chapters : 0;
+    if (!n)
+        return;
+    s->chapters = calloc(n, sizeof(void *));
+    if (!s->chapters)
+        return;
+    s->nb_chapters = n;
+
+    for (i = 0; i < n; i++) {
+        AVChapter *src = s->modern->chapters ? s->modern->chapters[i] : NULL;
+        void *dst = calloc(1, NPA_LEGACY_CHAPTER_SIZE);
+
+        if (!src || !dst) {
+            free(dst);
+            continue;
+        }
+        s->chapters[i] = dst;
+        npa_st_u32(dst, NPA_LEGACY_CHAPTER_ID, (uint32_t)src->id);
+        npa_st_u32(dst, NPA_LEGACY_CHAPTER_TIME_BASE, (uint32_t)src->time_base.num);
+        npa_st_u32(dst, NPA_LEGACY_CHAPTER_TIME_BASE + 4, (uint32_t)src->time_base.den);
+        npa_st_u64(dst, NPA_LEGACY_CHAPTER_START, (uint64_t)src->start);
+        npa_st_u64(dst, NPA_LEGACY_CHAPTER_END, (uint64_t)src->end);
+        npa_st_ptr(dst, NPA_LEGACY_CHAPTER_METADATA, src->metadata);
+    }
+}
+
 static void shadow_to_modern(npa_shadow *s)
 {
     AVFormatContext *m = s->modern;
@@ -352,14 +408,14 @@ static void modern_to_shadow(npa_shadow *s)
         return;
     npa_st_ptr(s->shadow, NPA_LEGACY_FMT_IFORMAT, m->iformat);
     npa_st_ptr(s->shadow, NPA_LEGACY_FMT_PB, m->pb);
-    npa_st_u32(s->shadow, NPA_LEGACY_FMT_NB_STREAMS, (uint32_t)m->nb_streams);
+    npa_st_u32(s->shadow, NPA_LEGACY_FMT_NB_STREAMS, s->nb_streams);
     npa_st_ptr(s->shadow, NPA_LEGACY_FMT_STREAMS, s->streams);
     npa_st_u64(s->shadow, NPA_LEGACY_FMT_START_TIME, (uint64_t)m->start_time);
     npa_st_u64(s->shadow, NPA_LEGACY_FMT_DURATION, (uint64_t)m->duration);
     npa_st_u32(s->shadow, NPA_LEGACY_FMT_MAX_DELAY, (uint32_t)m->max_delay);
     npa_st_u32(s->shadow, NPA_LEGACY_FMT_FLAGS, (uint32_t)m->flags);
-    npa_st_u32(s->shadow, NPA_LEGACY_FMT_NB_CHAPTERS, (uint32_t)m->nb_chapters);
-    npa_st_ptr(s->shadow, NPA_LEGACY_FMT_CHAPTERS, m->chapters);
+    npa_st_u32(s->shadow, NPA_LEGACY_FMT_NB_CHAPTERS, s->nb_chapters);
+    npa_st_ptr(s->shadow, NPA_LEGACY_FMT_CHAPTERS, s->chapters);
     npa_st_ptr(s->shadow, NPA_LEGACY_FMT_METADATA, m->metadata);
     npa_st_u32(s->shadow, NPA_LEGACY_FMT_ERROR_RECOGNITION, (uint32_t)m->error_recognition);
 }
@@ -426,6 +482,7 @@ NPA_EXPORT int npa_demux_avformat_open_input(
         return ret;
     }
     shadow_rebuild_streams(s);
+    shadow_rebuild_chapters(s);
     modern_to_shadow(s);
     if (ps)
         *ps = (AVFormatContext *)s->shadow;
@@ -443,6 +500,7 @@ NPA_EXPORT int npa_demux_avformat_find_stream_info(AVFormatContext *ctx, AVDicti
     ret = avformat_find_stream_info(s->modern, options);
     if (ret >= 0) {
         shadow_rebuild_streams(s);
+        shadow_rebuild_chapters(s);
         modern_to_shadow(s);
     }
     return ret;
@@ -522,6 +580,7 @@ NPA_EXPORT int npa_demux_av_read_frame(AVFormatContext *ctx, AVPacket *pkt)
 
     if (!s || !s->modern)
         return AVERROR(EINVAL);
+    shadow_to_modern(s);
     tmp = av_packet_alloc();
     if (!tmp)
         return AVERROR(ENOMEM);

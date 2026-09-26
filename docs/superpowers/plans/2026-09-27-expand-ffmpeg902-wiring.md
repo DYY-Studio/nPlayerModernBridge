@@ -39,10 +39,12 @@
 |---|---|---|---|---|
 | `libass` | `LibASSBridge.dylib` | 0.17.5 | libass + FreeType/HarfBuzz/FriBidi/fontconfig/expat | libass（15/16） |
 | `ffmpeg` | `LibFFmpegBridge.dylib` | 9.0.2 | avutil + swresample + swscale | libswscale（5/13）、libswresample（6/7） |
-| `ffmpeg-demux` | `LibFFmpegDemuxBridge.dylib` | 9.0.2 | avcodec + avformat + avutil + swresample | ffmpeg-demux（10/25） |
+| `ffmpeg-core902` | `LibFFmpegCore902Bridge.dylib` | 9.0.2 | avcodec + avformat + avutil + swscale + swresample | ffmpeg-demux（10/25）、libswscale（5/13）、libswresample（6/7） |
+| `ffmpeg-full` | `LibFFmpegFullBridge.dylib` | 4.4.8 | avcodec + avformat + avutil + swscale + swresample + **libdav1d 0.9.2** | ffmpeg-core（99/449）、libswscale（5/13）、libswresample（6/7） |
 | `ffmpeg-core` | `LibFFmpegCoreBridge.dylib` | 4.4.8 | avcodec + avformat + avutil + **libdav1d 0.9.2** + swresample + swscale | ffmpeg-core（99/424） |
 
-- 打补丁默认选中 manifest 内全部 dylib → 当前产物含 **4** 个桥接 dylib。
+- 打补丁默认选中 `default_dylibs`（**`libass` + `ffmpeg-full`**）；备选之间用 `conflicts` 互斥。
+- 同步 `main` 后（`38b5b97`），`ffmpeg-core` domain 与 `ffmpeg-full` 共用且必须保持完整（449 站点）。
 - 进程内**已经存在 9.0.2 代码**：`ffmpeg-demux` 甚至已静态链入 9.0.2 的 `libavcodec`
   （`find_stream_info` 内部探测需要）。所以"扩大接线"不是引入新库，而是**把更多 app 调用点
   接到已有 9.0.2 库，并为 app 直接解引用的结构体补影子**。
@@ -88,7 +90,7 @@
 
 | 阶段 | 内容 | 新增影子对象 | 本环境可测 | 回退粒度 |
 |---|---|---|---|---|
-| **P0** | 形态收敛：`ffmpeg-demux` + `ffmpeg` → 单个 `ffmpeg-core902` | 无（接线点不动） | 是 | 整个 9.0.2 核心 |
+| **P0** ✅ | 形态收敛：新增 `ffmpeg-core902`（demux + swscale + swresample 三个 domain 一个 dylib），退役 `ffmpeg-demux` 条目；保留 `ffmpeg`（main 的 split 备选） | 无（接线点不动） | 是 | 整个 9.0.2 核心 |
 | **P1** | 字幕 **demux** 面（`0x100AB4xxx`） | **带缓冲 `AVIOContext`**、`AVInputFormat` | 是（字幕矩阵已验） | 同上 |
 | **P2** | **codec 对象层**：`AVCodecContext`/`AVCodec`/`AVFrame`/`AVSubtitle`(+rect)/`AVBSFContext`，并迁移 avutil 的对象分配 API | 上述五个 + `av_packet_*`/`av_frame_*`/`av_dict_*`/`av_image_*`/`av_samples_*` 转入 9.0.2 | 是 | 同上 |
 | **P3** | mux/录制/HLS session/SPDIF | 输出侧 `AVFormatContext`/`AVStream`/`AVOutputFormat`/encoder ctx | **否** | 待可测环境 |
@@ -102,59 +104,54 @@
 
 ---
 
-## 3. P0：形态收敛为 `ffmpeg-core902`
+## 3. P0：形态收敛为 `ffmpeg-core902`（代码已完成，待设备复验）
 
-### 3.1 目标
+### 3.1 目标与同步后的修订
 
-把现有两块 9.0.2 合成一个单元，**接线点、符号名、站点集合全部不动**，只改库归属与打包形态。
+把两块 9.0.2（demux 面 + sws/swr 面）并成**一个** dylib，**接线点、符号名、站点集合全部不动**：
+它提供三个 domain（`ffmpeg-demux` 10 API/25 站、`libswscale` 5/13、`libswresample` 6/7），
+共 **21 API / 45 站点**，导出 21 个符号。
 
-- 新单元：id `ffmpeg-core902`，basename `LibFFmpegCore902Bridge.dylib`
-- domain（原样迁入）：`ffmpeg-demux`（10 API/25 站）、`libswscale`（5/13）、`libswresample`（6/7）
-  → 合计 **21 API / 45 站**，导出 21 个符号（`npa_demux_*` 10 + `npa_sws_*` 5 + `npa_swr_*` 6）
-- 保留 4.4.8 的 `ffmpeg-core` 不动（其验收历史按名字引用）；打补丁默认从 4 个 dylib 变为 **3 个**
+同步 `main` 后这一目标必须重新表述（原稿在此已过时）：
 
-### 3.2 具体改动
+- `ffmpeg-core` domain 与新的 `ffmpeg-full`（**当前默认**）共用且必须保持完整，因此**不能**把 25 个
+  demux 站点从 core 域里移走（那会让默认产物不完整）；
+- 于是改为：新增 `ffmpeg-core902`，与 `ffmpeg` / `ffmpeg-core` / `ffmpeg-full` **全部互斥**；
+  退役 `ffmpeg-demux` 这个 **dylib 条目**（其 domain 仍"声明一次"，改由 `ffmpeg-core902` 提供）；
+- **保留 `ffmpeg`**（9.0.2 sws/swr）——它是 main 已验收的 split 备选（`libass + ffmpeg + ffmpeg-core`）
+  的一半，合并掉它等于退役一个已验收产物；
+- 默认仍是 `libass + ffmpeg-full`；9.0.2 的选择是 `libass + ffmpeg-core902`。
 
-| 项目 | 内容 |
+### 3.2 实施（已提交）
+
+| Commit | 内容 |
 |---|---|
-| 新闭包 | `deps/ffmpeg-core902.lock.json` = demux 锁再启用 `swscale`（avutil+avcodec+avformat+swresample+swscale，9.0.2，保留 `--enable-securetransport`），用参数化构建器 `deps/build_ffmpeg_core.py --lock …` 产出 `build/deps/ffmpeg-core902-closure.txt` 与验证报告 |
-| 新导出集 | `bridge/ffmpeg-core902.exports`（21 个符号） |
-| 桥接源码 | `bridge/npa_ffmpeg_demux_bridge.c` + `bridge/npa_ffmpeg_util_bridge.c` 编入同一 dylib |
-| manifest | 新增 `ffmpeg-core902` 条目（三 domain 迁入），删除 `ffmpeg`、`ffmpeg-demux` 条目 |
-| 测试 | `tests/test_demux_manifest.py`、`tests/test_macho.py`、`tests/test_patch.py`、`tests/test_verify.py`、`tests/test_manifest.py` 中对 dylib 名/数量的断言 |
-| 文档 | `README.md`：单元清单、二进制清单、产物命名示例 |
-| 验收 | 设备复验后**新增**一条 `dev/acceptance.json` 条目（旧条目按 sha 保留） |
+| `5f0f9f3` | `deps/ffmpeg-core902.lock.json` = demux 锁 + 启用 swscale、列入 `libswscale.a`；闭包构建与 `--verify-only` 通过 |
+| `38b5b97` | 与 main 合并：core 域保持完整；demux 成为互斥备选；守卫改为"共享站点的单元必须互斥" |
+| `0d2f51e` | 单元级聚合源 `bridge/npa_ffmpeg_core902_bridge.c`（引入两个 shim）+ 导出集 + manifest/Makefile/测试/README；删除 `ffmpeg-demux` 的 lock 与 exports |
 
-**不做**：不预建"未来解码面用的共享影子/翻译抽象"（P0 不加面，YAGNI）；
-`bridge/ffmpeg-demux-enum-map.h` 生成器保持原样（合并后天然只有一处使用）。
+- 多源文件方案：**单元级聚合源文件**（与 `ffmpeg-full`"一个 dylib 一个源文件"一致），工具链零改动。
+- 两 shim 无同名文件级符号；合并后编译无警告（`NPA_EXPORT` 定义一致）。
+- 枚举生成器改读新闭包头文件，**重生成结果字节一致**。
+- 合并 dylib 19.9 MB < 两块之和 20.3 MB：去重了一份 `libavutil`。
 
-### 3.3 步骤（每步一个 Commit）
+### 3.3 验收
 
-1. `build: pin the ffmpeg-core902 closure`（新锁 + 构建 + `--verify-only`）
-2. `feat: build one 9.0.2 core dylib from the demux and util bridges`
-   （新导出集 + Makefile；**第一步先解决两个 C 文件的 `static` 重名**）
-3. `refactor: fold ffmpeg-demux and ffmpeg into ffmpeg-core902`
-   （manifest 合并、删除旧单元、更新 5 个测试与 README）
-4. `test: record the ffmpeg-core902 acceptance`（干净产物 + 设备复验）
+1. ✅ `make bridge` / `make verify`：五个 dylib 各 7 项检查全过；`ffmpeg-core902` 导出 21 个。
+2. ✅ `uv run pytest`：86 passed / 1757 subtests；`dev/tests`：7 passed。
+3. ⏳ **设备复验（待做）**：`libass + ffmpeg-core902`。一次同时验证两件事：
+   - 合并本身无行为变化；
+   - **demux 面不再依赖 4.4.8 core**（该选择下其余面回落到 app 自带 4.4.5）——这是选项 A 的前提。
+4. 复验后**新增**一条 `dev/acceptance.json` 条目并按新选择重锚。
 
-### 3.4 验收
-
-1. `make bridge` / `make verify` 绿：导出恰为 **21** 个；动态依赖仍只在系统框架内。
-2. `uv run pytest` 绿（含更新后的守卫）。
-3. 设备复验 **demux 矩阵 + sws/swr 相关行为**（缩放/色彩/软解后转换/字幕），
-   要求与合并前**行为等价**；任一行回退即说明合并改变了行为。
-4. 产物 dylib 数 4 → 3。
-
-### 3.5 风险
+### 3.4 风险
 
 | 风险 | 处置 |
 |---|---|
-| 两桥接 C 文件 `static` 符号重名 → 链接失败或静默串用 | 步骤 2 先验证；必要时给文件级前缀 |
-| 单元合并改变回退粒度（两面的回退变成一致） | 已由用户接受；在 README/验收条目中写明 |
-| 测试/产物名断言散落多处 | 步骤 3 一次性同步，并跑全量 `pytest` |
-| 合并本身引入行为差异 | 以"行为等价"为验收标准；不假设 |
-
----
+| 两桥接源文件 `static` 重名 | 已验证无重名，合并编译无警告 |
+| 单元合并改变回退粒度 | 已由用户接受；README 写明 |
+| 合并改变默认产物 | 未改变：默认仍是 `libass + ffmpeg-full` |
+| 合并引入行为差异 | 以"行为等价"为验收标准；设备复验待做 |
 
 ## 4. 已关闭：sws 入口的像素格式翻译（原 P0.5b）
 

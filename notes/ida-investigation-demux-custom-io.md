@@ -82,9 +82,31 @@ is `0x8` in both majors, and it is NULL anyway.
   info/artwork/thumbnail route.
 - the `[Reference]`/mmsh branch and idx 34 are the narrower capability.
 
-## Open
+## https HLS - resolved (it is the FFmpeg chain)
 
-- whether https HLS playback goes through `net::CURLStream` + idx 33 or the
-  separate `media::MediaServer` HLSSession (`0x100B95008`, class C).
-- the field identities of AVFormatContext `+0x4c8`/`+0x4d0` are recorded by offset
-  only (they are not the `io_open`/`io_close` defaults at `0x5b8`/`0x5c0`).
+The `tls-fix` acceptance entry settles it: a build without a TLS backend failed
+an https HLS with "https protocol not found", while the same HLS over http
+played and an https *direct* URL played. The same entry records that an https
+direct URL goes through the app's curl stack, not FFmpeg. So:
+
+- an https direct URL -> the app's own stream -> the **custom-IO open (idx 33)**;
+- https HLS -> FFmpeg opens the URL itself -> the **native-URL open (idx 34)**.
+
+Consistent with that, the 9.0.2 demux closure carries a TLS backend and the HLS
+demuxer: `deps/ffmpeg-demux.lock.json` has `--enable-securetransport` and
+`-framework Security`, and `build/deps/ffmpeg-demux/lib/libavformat.a` defines
+`ff_tls_protocol` / `ff_https_protocol` (`tls.o`, `tls_securetransport.o`) and
+`ff_hls_demuxer` (`hls.o`). So the https HLS row already exercised the class-A
+native-URL open: sites `0x100AEF684` / `0x100AEF778` / `0x100AEF7A8` and read
+`0x100AEFE28`.
+
+## Still open
+
+- the `[Reference]` branch only: the `KEY=VALUE` parsing and the delegation from
+  idx 33 to idx 34. No device row has driven it. It is undriven, not a capability
+  gap - the demux closure carries the same protocol set as the core
+  (`ff_mmsh_protocol`, `ff_rtmp_protocol`, `ff_http_protocol` are defined in both
+  archives).
+- the field identities of AVFormatContext `+0x4c8`/`+0x4d0` are recorded by
+  offset only (they are not the `io_open`/`io_close` defaults at
+  `0x5b8`/`0x5c0`).

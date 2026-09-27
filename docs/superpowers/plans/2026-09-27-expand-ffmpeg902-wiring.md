@@ -139,10 +139,13 @@
 
 1. ✅ `make bridge` / `make verify`：五个 dylib 各 7 项检查全过；`ffmpeg-core902` 导出 21 个。
 2. ✅ `uv run pytest`：86 passed / 1757 subtests；`dev/tests`：7 passed。
-3. ⏳ **设备复验（待做）**：`libass + ffmpeg-core902`。一次同时验证两件事：
+3. ✅ **设备复验**（`libass + ffmpeg-core902`，packaged main `34f19c62…`）：HEVC Main10 + FLAC Matroska、
+   带章节 Matroska、缩略图、H.264、内嵌字幕 + Matroska 字体、https HLS 全部通过。这一次同时确认了：
    - 合并本身无行为变化；
-   - **demux 面不再依赖 4.4.8 core**（该选择下其余面回落到 app 自带 4.4.5）——这是选项 A 的前提。
-4. 复验后**新增**一条 `dev/acceptance.json` 条目并按新选择重锚。
+   - **demux 面不再依赖 4.4.8 core**（该选择下其余面回落到 app 自带 4.4.5）——选项 A 的前提成立。
+   矩阵其余行与状态字读取**未在本选择上重测**（其消费者由 4.4.8 变为 4.4.5），条目中已如实标注为"沿袭"。
+4. ✅ 新增 `dev/acceptance.json` 条目 `ffmpeg-core902`（`result: partial`）：待做/未决项为 fallback 证明、
+   `[Reference]` 分支、矩阵其余行，以及本环境不可测的录制路径。
 
 ### 3.4 风险
 

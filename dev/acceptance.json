@@ -195,6 +195,22 @@
         "the dylib was restored afterwards; the installed Frameworks dylib hashes back to 979c2ae04315b33cf173466783fec1ee76782cf5f342f4cb1145dba0236eb977",
         "the identity arm of the check - a dylib at the expected path that exports the expected symbols - is not constructible as an artifact, because the load path and the expected basename come from the same manifest field; it is pinned by tests/test_payload.py instead"
       ]
+    },
+    {
+      "variant": "ffmpeg-core902",
+      "result": "partial",
+      "notes": [
+        "artifact: the 9.0.2 selection `libass + ffmpeg-core902`. packaged_main_sha256 34f19c623f67a634e4b4cc2320f76a0e598b088d63382ae69e359606766b0934; signed dylibs LibASSBridge b2db1e1baa7b154d145b6e6bbc6b84928bb1fc348c9c7c68588b63e5b0acc12b, LibFFmpegCore902Bridge 59a4e73cfa05108b229a69c5f562df58c672a55fa5c9e94f8c3efbde1956e876",
+        "device/install: nPlayer 3.13.0 under PlayCover on macOS (Apple Silicon)",
+        "the unit: one dylib carries both 9.0.2 faces - the class-A demux face (the ffmpeg-demux domain: 10 APIs / 25 call sites, the app handed a legacy-shaped shadow AVFormatContext) plus libswscale (5 APIs / 13 sites) and libswresample (6 APIs / 7 sites); 21 APIs / 45 sites in total. It replaces the retired ffmpeg-demux dylib entry and is a third FFmpeg alternative, mutually exclusive with ffmpeg, ffmpeg-core and ffmpeg-full. Its source is an aggregate translation unit that includes the two unchanged shims",
+        "what this artifact re-verifies that the class-a-demux artifact could not: (1) the merge is behaviour-preserving - the two shims are the same code, only the packaging changed; (2) the demux face no longer sits on the 4.4.8 core, because ffmpeg-core is absent from this selection, so every face but the demuxer and the scaler/resampler runs on the app's own 4.4.5. The scaler path is therefore the pixfmt-fix path fed by 4.4.5 decoders instead of 4.4.8 ones (4.4.5 and 4.4.8 number AVPixelFormat identically), and the resampler is the swr_alloc_set_opts/legacy-layout-mask path",
+        "device-verified on this artifact (user-run): HEVC Main10 + FLAC in Matroska; a chaptered Matroska; MediaProbe thumbnails; H.264; an embedded subtitle track whose Matroska font attachments apply; https HLS. No row failed",
+        "not re-measured on this selection: the rest of the class-A matrix (VP9/VP8 + Vorbis in WebM, MP4, MPEG1 + MP2 in MPG, WMV3 + WMAP in WMV, MPEG-TS, HEVC Main10 + Opus, SRT, seeking, metadata) and the whole-unit state-word read. Those rows were measured on the earlier artifact in the class-a-demux entry; here their consumer is the app's own 4.4.5 rather than the 4.4.8 core, so they are carried over, not re-verified",
+        "still open but deliberately deferred, not blocking: the whole-unit fallback proof for this unit - no forced failure of ffmpeg-core902 has been run",
+        "still undriven: the narrower [Reference] branch of the custom-IO open (KEY=VALUE parsing and its delegation to the native-URL open). The native-URL open itself is covered - https HLS was measured here and goes through FFmpeg's protocol layer",
+        "marked NOT TESTABLE here, not a failure: a remux/record action (class C/mux). The routes that would drive it cannot be exercised in this environment, and this unit does not swap that face by design",
+        "result is partial rather than pass: every row measured on this artifact passes, and it is the first evidence that the demux face works without the 4.4.8 core. What keeps it from pass is the deferred fallback proof, the undriven [Reference] branch, the remainder of the matrix that this selection did not re-measure, and the recording row that is not testable here"
+      ]
     }
   ]
 }

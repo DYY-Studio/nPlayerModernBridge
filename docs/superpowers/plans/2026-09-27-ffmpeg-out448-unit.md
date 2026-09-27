@@ -58,7 +58,7 @@ arm64 iOS 13 静态闭包、ldid、Frida（进程内驱动）。
 - Produces: 冻结的三张站点表（append 的附录）、每个辅助层站点的"所属函数 + 调用者"结论、HLS/SPDIF 驱动入口的
   签名与实例来源（供 Task 4 的 JS 使用）。
 
-- [ ] **Step 1: 派 `ida-explorer`（只读）做四项核对**
+- [x] **Step 1: 派 `ida-explorer`（只读）做四项核对**
 
 问题清单（逐条要证据与 Confirmed/Probable/Hypothesis 标注；主库 `nPlayer.i64`，imagebase `0x100000000`，
 `save: false`，不改任何名字/注释/类型）：
@@ -72,12 +72,12 @@ arm64 iOS 13 静态闭包、ldid、Frida（进程内驱动）。
    `sub_100B944C8` / `sub_100B93A18` 的签名、`sub_100A52108`（SPDIFOutput 判定）与
    `sub_100B8A664`（音频解码器工厂）→ `sub_100B2FFA4` → `sub_100B3010C` 的调用关系。
 
-- [ ] **Step 2: 按结论更新 spec 的 §3.2 / §3.3 / 附录**
+- [x] **Step 2: 按结论更新 spec 的 §3.2 / §3.3 / 附录**
 
 - 若某辅助层站点落在主播放音频路径 ⇒ 从本单元站点集移出（认领数相应下调），并在 §3.3 记为"不覆盖"；
 - 附录表格里每个站点的"域"列改成核对后的结论，并在 §3.3 写明核对依据（函数边界 + 调用者）。
 
-- [ ] **Step 3: 复核数字自洽**
+- [x] **Step 3: 复核数字自洽**
 
 Run:
 ```bash
@@ -94,7 +94,7 @@ PY
 ```
 Expected: 附录站点数 = **155**、剔除 = **1**、API 行 = **67**，与 §3.2 表格（认领 154）一致。
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/superpowers/specs/2026-09-27-ffmpeg-out448-unit-design.md

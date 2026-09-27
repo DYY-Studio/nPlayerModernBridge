@@ -832,12 +832,12 @@
         },
         {
           "symbol": "npa_codec_avcodec_parameters_alloc",
-          "call_sites": ["0x100A80FA8", "0x100A898E0"],
+          "call_sites": ["0x100A80FA8", "0x100A898E0", "0x100B63FFC"],
           "old_target": "0x1001D8C00"
         },
         {
           "symbol": "npa_codec_avcodec_parameters_free",
-          "call_sites": ["0x100A80FCC", "0x100A89904"],
+          "call_sites": ["0x100A80FCC", "0x100A89904", "0x100B64020"],
           "old_target": "0x1001D8C70"
         },
         {

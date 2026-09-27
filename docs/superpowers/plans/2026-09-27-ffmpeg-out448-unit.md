@@ -168,8 +168,8 @@ git commit -m "feat: add the ffmpeg-out448 unit to the manifest"
 
 按 `bridge/npa_ffmpeg_core_bridge.c` 与 `bridge/npa_ffmpeg_forwards.h` 的现成形状写两个文件，名与格式完全由现有文件决定：
 
-- `bridge/npa_ffmpeg_out448_forwards.h`：`#define NPA_OUT448_FORWARDS(X) \` 之后逐行列出**去掉 `npa_` 前缀**的符号名（如 `X(avformat_open_input)`），照 `npa_ffmpeg_forwards.h` 的写法，共 72 行；
-- `bridge/ffmpeg-out448.exports`：每行 `_npa_<符号名>`，共 72 行。
+- `bridge/npa_ffmpeg_out448_forwards.h`：三个宏（每面一个），每行是**裸 FFmpeg 符号名**（如 `F(avformat_open_input)`），前缀由 `.c` 的宏加；
+- `bridge/ffmpeg-out448.exports`：每行 `_npa_<面前缀>_<符号名>`，共 **90** 行。
 
 符号清单从 manifest 取，避免手抄（下面的命令只打印清单与条数，写文件时照抄输出）：
 
@@ -186,7 +186,7 @@ for s in syms:
 PY
 ```
 
-Expected: **67**（与 spec §4 一致）。
+Expected: **90**（与 spec §4 一致：hls 66 + spdif 11 + mjpeg 13）。
 
 - [ ] **Step 2: 写 bridge 源**
 
@@ -311,7 +311,7 @@ sha256 与 UUID（二者因重签名不同，条目里写明）。
 
 - [ ] **Step 1: 写验收条目**
 
-variant `ffmpeg-out448`，内容：产物锚点与三份 dylib 哈希；域与站点数（130/11/13，认领 154，入口 67）；条目要点 =
+variant `ffmpeg-out448`，内容：产物锚点与三份 dylib 哈希；域与站点数（130/11/13，认领 154，入口 90）；条目要点 =
 零翻译零影子、复用 4.4.8 闭包、67 导出、`old_target` 与 `ffmpeg-core` 一致、两个剔除项留给 `ffmpeg-codec`、
 与 9.0.2 五域地址级零重叠、与 4.4.8 全核故意重叠由 conflicts 正当化；行 = HLS（驱动 + `canPassthru==0` 断言 +
 分片 ffprobe）、SPDIF（驱动 + IEC 61937 帧头断言）、封面（用户信息面板行）、状态字 9 项、整 dylib 回退 A/B、

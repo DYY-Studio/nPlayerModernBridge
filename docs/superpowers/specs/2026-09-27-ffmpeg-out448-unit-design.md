@@ -57,7 +57,7 @@
    `npa_codec_avcodec_free_context`、4.4.8 侧是 `npa_avcodec_free_context`，按 `(地址, 符号)` 比较会漏掉冲突
    （本轮做站点盘点时实测踩到，故写死为规则）。
 4. 与 `ffmpeg-core` / `ffmpeg-full` 的**故意重叠**由对称 `conflicts` 正当化（工具已强制对称）。
-5. 每个 API 的 `old_target` 必须与 `ffmpeg-core` 域同名 API 的 `old_target` 一致（同一条 app 调用点、
+5. 每个 API 的 `old_target` 必须与 `ffmpeg-core` 域同名 API（去掉面前缀后）的 `old_target` 一致（同一条 app 调用点、
    同一个 4.4.5 目标地址）；守卫测试逐符号断言。
 6. 守卫测试落在 `tests/test_out448_manifest.py`（结构照 `tests/test_codec_manifest.py`）：逐符号站点、
    并集恰为 **154**、与 9.0.2 五域地址级零不相交、`old_target` 一致性、以及 exclusion 断言
@@ -73,7 +73,7 @@
 | 合计 | 155 | 1 | **154** |
 
 剔除项（留给 `ffmpeg-codec`）：`avcodec_free_context` @`0x100B300F0`（SPDIF 面内，释放的是 9.0.2 shim
-拥有的临时源 ctx）。去重后入口 **67** 个，无任何非公开符号。
+拥有的临时源 ctx）。三面入口点合计 **90** 个（`npa_hls_` 66 / `npa_spdif_` 11 / `npa_mjpeg_` 13），无任何非公开符号。
 `ffmpeg-mjpeg448` 的 13 个与既有记录"`0x100A469FC` 的 13 站点"一致（交叉校验通过）。
 
 ### 3.3 Task 1 的归属核对（已完成 2026-09-27；证据见 `notes/ida-investigation-out448-sites.md`）
@@ -105,8 +105,8 @@ vtable `off_1016C4200`），即 §3.2 表里的 12 个（剔除 1 个后 11 个�
 | dylib id / 文件 | `ffmpeg-out448` / `LibFFmpegOut448Bridge.dylib` |
 | `library_version` | `4.4.8` |
 | `build.source` | 新建 `bridge/npa_ffmpeg_out448_bridge.c`：`#include "ffmpeg-core-abi.h"` + 新 forwards 头 + `NPA_FORWARD` 宏 + `NPA_OUT448_FORWARDS(NPA_FORWARD)` |
-| `build.exports` | 新建 `bridge/ffmpeg-out448.exports`：恰好列出 `_npa_*` 共 **67** 个 |
-| 新增 forwards 头 | `bridge/npa_ffmpeg_out448_forwards.h`：67 个入口；三个域**共用**同一批符号（解析按 `(dylib, 符号)` 走，允许同名共享） |
+| `build.exports` | 新建 `bridge/ffmpeg-out448.exports`：恰好列出 **90** 个 `_npa_*`（三个面各带前缀：`npa_hls_` 66 / `npa_spdif_` 11 / `npa_mjpeg_` 13） |
+| 新增 forwards 头 | `bridge/npa_ffmpeg_out448_forwards.h`：三个宏（`NPA_HLS_FORWARDS` / `NPA_SPDIF_FORWARDS` / `NPA_MJPEG_FORWARDS`），每行是**裸 FFmpeg 符号**，前缀由 `.c` 里的宏加 |
 | `build.closure` | **复用** `build/deps/ffmpeg-core-closure.txt`（现有 4.4.8 闭包）⇒ 无需 `make deps`，`make bridge` 即可 |
 | include/lib root | 同 `ffmpeg-core` |
 
@@ -116,9 +116,10 @@ vtable `off_1016C4200`），即 §3.2 表里的 12 个（剔除 1 个后 11 个�
 **记档**：本单元**不含任何非公开符号**——原候选里的 `avpriv_mpegaudio_decode_header` 随
 `AudioToolboxDecoder` 那一层一起移出（§3.3）。因此不存在"内部符号在 9.0.2 是否仍有"的问题。
 
-**入口名与 4.4.8 全核同名**：本单元的 `npa_avformat_open_input` 等与 `ffmpeg-core` 域的入口点同名。
-这是允许的——解析按 `(dylib, 符号)` 走，且两个 dylib 互斥；代价是评审时必须靠 `old_target` 与站点表区分，
-故 §3.1 规则 5 把"`old_target` 与 `ffmpeg-core` 一致"写成硬性断言。
+**入口点按面加前缀**（`npa_hls_` / `npa_spdif_` / `npa_mjpeg_`）。这是桥工具链的硬约束，不是风格偏好：一个 dylib 里
+一个 API 只能有一个入口点，而导出集校验把"manifest 声明的名字"与"实际导出"按**扁平列表**比对——同一符号出现在
+两个域里会让期望列表长于实际导出（本轮 `make verify` 报 `bridge.exports` 就是这么抓出来的：期望 90、实际 67）。
+加前缀也与既有 9.0.2 单元（`npa_demux_*` / `npa_codec_*` / `npa_sws_*`）的做法一致。
 
 **校验**：`make bridge` 后 `make verify` 的 7 项检查（导出集精确匹配、install name、依赖仅系统框架、
 无初始化器、无宿主路径等）必须全过。
@@ -170,7 +171,7 @@ vtable `off_1016C4200`），即 §3.2 表里的 12 个（剔除 1 个后 11 个�
 - hook **自家冷导出**做调用计数（"真的被调用"证据，强于 liveness）；
 - **整 dylib 回退 A/B**：抽掉 `LibFFmpegOut448Bridge.dylib` ⇒ 三个单元读 `3 (OLD)`、其余 6 个不受影响、
   行为等同自带 4.4.5；还原后回 `2`；
-- `make bridge` / `make verify`（导出集恰好 67 等 7 项）/ `pytest` 全绿（含新守卫测试）；
+- `make bridge` / `make verify`（导出集恰好 90 等 7 项）/ `pytest` 全绿（含新守卫测试）；
 - **P0–P2 的行在新选择下重跑不得改变**（软解 H.264/HEVC/HEVC Main10、音频、字幕、AV1 缩略图+软硬解）；
 - §5 的"既有锚点不扰动"检查。
 
@@ -231,7 +232,9 @@ vtable `off_1016C4200`），即 §3.2 表里的 12 个（剔除 1 个后 11 个�
 ## 附：站点表（经 Task 1 归属核对后冻结；按 API 分组）
 
 - 候选（本单元三个面的函数区间内）：**155**；剔除（留 `ffmpeg-codec`）：**1**；本单元认领：**154**（`ffmpeg-hls448` 130 + `ffmpeg-spdif448` 11 + `ffmpeg-mjpeg448` 13）
-- 去重后入口（API）：**67**
+- 每面入口点数：`ffmpeg-hls448` 66 / `ffmpeg-spdif448` 11 / `ffmpeg-mjpeg448` 13，合计 **90**
+- 入口点前缀：`ffmpeg-hls448` → `npa_hls_`、`ffmpeg-spdif448` → `npa_spdif_`、`ffmpeg-mjpeg448` → `npa_mjpeg_`
+  （表内写的是 FFmpeg 符号名；共 90 个入口点）
 - **不在本表内**：`0x100B63xxx`–`0x100B64xxx` 的 16 个站点 —— 经核对属主播放音频路径
   （`media::ios::AudioToolboxDecoder`），整体不进本单元，见 §3.3 与
   `notes/ida-investigation-out448-sites.md`。

@@ -796,6 +796,71 @@
           "old_target": "0x10016CC7C"
         }
       ]
+    },
+    {
+      "id": "ffmpeg-codec",
+      "apis": [
+        {
+          "symbol": "npa_codec_avcodec_alloc_context3",
+          "call_sites": ["0x100A80F9C", "0x100A898D4", "0x100A467B8", "0x100A8A514"],
+          "old_target": "0x1004FEBAC"
+        },
+        {
+          "symbol": "npa_codec_avcodec_free_context",
+          "call_sites": ["0x100A80ED8", "0x100A80F4C", "0x100A81078", "0x100A81104", "0x100A89770", "0x100A89880", "0x100A899D0", "0x100A468EC", "0x100A8A684", "0x100B300F0", "0x100B63F88"],
+          "old_target": "0x1004FEC04"
+        },
+        {
+          "symbol": "npa_codec_avcodec_find_decoder",
+          "call_sites": ["0x100A80F8C", "0x100A898C4", "0x100A467B0"],
+          "old_target": "0x100143A28"
+        },
+        {
+          "symbol": "npa_codec_avcodec_open2",
+          "call_sites": ["0x100A81020", "0x100A89914", "0x100A467DC"],
+          "old_target": "0x10016C0F8"
+        },
+        {
+          "symbol": "npa_codec_avcodec_close",
+          "call_sites": ["0x100A468E0"],
+          "old_target": "0x1010F3F88"
+        },
+        {
+          "symbol": "npa_codec_avcodec_flush_buffers",
+          "call_sites": ["0x100A815AC", "0x100A89FF4"],
+          "old_target": "0x10016CB40"
+        },
+        {
+          "symbol": "npa_codec_avcodec_parameters_alloc",
+          "call_sites": ["0x100A80FA8", "0x100A898E0"],
+          "old_target": "0x1001D8C00"
+        },
+        {
+          "symbol": "npa_codec_avcodec_parameters_free",
+          "call_sites": ["0x100A80FCC", "0x100A89904"],
+          "old_target": "0x1001D8C70"
+        },
+        {
+          "symbol": "npa_codec_avcodec_parameters_from_context",
+          "call_sites": ["0x100A80FB8", "0x100A898F0", "0x100B6400C"],
+          "old_target": "0x1001D8DE8"
+        },
+        {
+          "symbol": "npa_codec_avcodec_parameters_to_context",
+          "call_sites": ["0x100A80FC4", "0x100A898FC", "0x100A467C8"],
+          "old_target": "0x1001D8F78"
+        },
+        {
+          "symbol": "npa_codec_avcodec_send_packet",
+          "call_sites": ["0x100A81280", "0x100A812AC", "0x100A89BD8", "0x100A89C04", "0x100A468A8", "0x100A46998"],
+          "old_target": "0x1001FF544"
+        },
+        {
+          "symbol": "npa_codec_avcodec_receive_frame",
+          "call_sites": ["0x100A812F8", "0x100A89C8C", "0x100A468B4", "0x100A469AC"],
+          "old_target": "0x100200060"
+        }
+      ]
     }
   ],
   "dylibs": [
@@ -883,7 +948,7 @@
         "include_root": "build/deps/ffmpeg-core902/include",
         "lib_root": "build/deps/ffmpeg-core902/lib"
       },
-      "domains": ["ffmpeg-demux", "libswscale", "libswresample", "ffmpeg-subdecode"],
+      "domains": ["ffmpeg-demux", "libswscale", "libswresample", "ffmpeg-subdecode", "ffmpeg-codec"],
       "conflicts": ["ffmpeg", "ffmpeg-core", "ffmpeg-full"]
     }
   ]

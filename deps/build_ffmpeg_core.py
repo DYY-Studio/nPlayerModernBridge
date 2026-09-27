@@ -5,12 +5,21 @@ for the unit that replaces the FFmpeg the app links statically today
 (4.4.5 -> 4.4.8). It is deliberately separate from `deps/build_ffmpeg.py`,
 which builds the 9.0.2 scaler/resampler closure for the other bridge dylib.
 
-Two hazards this file exists to prevent:
+Three hazards this file exists to prevent:
 
 * the two closures must not share a source tree. `build_deps.extract_source`
   returns an existing `build/deps/sources/<name>/tree` verbatim, so reusing the
   name `ffmpeg` would silently build 4.4.8 out of a 9.0.2 tree. The core source
   is therefore keyed `ffmpeg-core` in the lock.
+* a dav1d version change must not leave objects compiled against the previous
+  dav1d. `ninja install` keeps the tarball mtimes on `include/dav1d/*`, and those
+  are older than the objects already sitting in the source tree, so make() sees
+  `libavcodec/libdav1d.o` as up to date and links it against the new
+  `libdav1d.a`. FFmpeg then fills `Dav1dSettings` with the old layout while the
+  library reads the new one, which surfaces only as "AV1 software decode shows
+  no picture" - every version involved still looks correct in the artifact.
+  `build()` therefore stamps the tree with the dav1d version it was built
+  against and starts it over whenever that version differs.
 * the app's FFmpeg decodes AV1 through *libdav1d*, and that dav1d is a 1.x
   build (the app binary carries the `1.2.1` version literal and dav1d 1.x's
   `src/cpu.c` strings), i.e. dav1d API 6. FFmpeg 4.4's `libavcodec/libdav1d.c`
@@ -221,10 +230,24 @@ def verify_closure(lock: dict[str, Any] | None = None) -> dict[str, Any]:
     return report
 
 
+def dav1d_stamp() -> Path:
+    """The dav1d version the FFmpeg source tree was last built against."""
+
+    return ROOT / "build" / "deps" / "build" / "ffmpeg-core.dav1d-version"
+
+
 def build() -> dict[str, Any]:
     lock = load_lock()
     sdk = build_deps.sdk_path()
+    dav1d_version = lock["sources"][DAV1D_SOURCE]["version"]
     source = build_deps.extract_source(FFMPEG_SOURCE, lock)
+    stamp = dav1d_stamp()
+    if not stamp.is_file() or stamp.read_text(encoding="utf-8").strip() != dav1d_version:
+        # See the header: the freshly installed dav1d headers carry older mtimes
+        # than the objects in this tree, so make() would not recompile the files
+        # that include them. Start the tree over.
+        shutil.rmtree(source)
+        source = build_deps.extract_source(FFMPEG_SOURCE, lock)
     if lock["sources"][FFMPEG_SOURCE]["version"] not in (source / "RELEASE").read_text(
         encoding="utf-8"
     ):
@@ -252,7 +275,10 @@ def build() -> dict[str, Any]:
     build_deps.run(["./configure", *configure_command(lock, sdk)], env, source)
     build_deps.run(["/usr/bin/make", f"-j{os.cpu_count() or 2}"], env, source)
     build_deps.run(["/usr/bin/make", "install"], env, source)
-    return verify_closure(lock)
+    report = verify_closure(lock)
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(dav1d_version + "\n", encoding="utf-8")
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:

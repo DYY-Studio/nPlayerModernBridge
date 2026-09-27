@@ -204,8 +204,144 @@ static void npa_params_remove(const void *shadow)
 }
 
 /* ---- legacy <-> modern ------------------------------------------------ */
+
+/* ---- AV1 extradata: the two shapes ------------------------------------ */
+
+/*
+ * 4.4.x's matroska demuxer published only the OBUs as AV1 extradata (it skips
+ * the AV1CodecConfigurationRecord on purpose; see the demux unit), and the app
+ * feeds those bytes to VideoToolbox, so the app side must keep seeing that
+ * shape. 9.0.2's decoders want the record back: libdav1d rejects anything whose
+ * first byte is not marker+version 0x81 ("Missing AV1 codec configuration
+ * record"), and both it and the old native decoder read the config OBUs that
+ * follow. So a record header goes on when the bytes enter the modern world and
+ * comes off when they leave it.
+ *
+ * The header carries seq_profile/seq_level_idx_0/seq_tier_0/high_bitdepth/
+ * twelve_bit/monochrome/chroma_subsampling_*, which the caller already knows
+ * (profile, level, pixel format), so only chroma_sample_position is left at
+ * "unknown" - the record's copy of these fields is informational, the decoders
+ * read the real ones from the sequence header OBU that follows.
+ */
+#define NPA_AV1_RECORD_HEADER 4
+
+static int npa_av1_record_size(const void *data, int size)
+{
+    const uint8_t *p = data;
+
+    if (!p || size < NPA_AV1_RECORD_HEADER)
+        return 0;
+    if (!(p[0] & 0x80) || (p[0] & 0x7F) != 1)
+        return 0;
+    return size;
+}
+
+static void npa_av1_record_bytes(uint8_t *out, int profile, int level, int format)
+{
+    int high_bitdepth = 0, twelve_bit = 0, monochrome = 0, sub_x = 1, sub_y = 1;
+
+    switch (format) {
+    case AV_PIX_FMT_GRAY8:
+        monochrome = 1;
+        break;
+    case AV_PIX_FMT_GRAY10:
+        monochrome = 1;
+        high_bitdepth = 1;
+        break;
+    case AV_PIX_FMT_GRAY12:
+        monochrome = 1;
+        high_bitdepth = 1;
+        twelve_bit = 1;
+        break;
+    case AV_PIX_FMT_YUV420P10:
+        high_bitdepth = 1;
+        break;
+    case AV_PIX_FMT_YUV420P12:
+        high_bitdepth = 1;
+        twelve_bit = 1;
+        break;
+    case AV_PIX_FMT_YUV422P:
+        sub_y = 0;
+        break;
+    case AV_PIX_FMT_YUV422P10:
+        high_bitdepth = 1;
+        sub_y = 0;
+        break;
+    case AV_PIX_FMT_YUV422P12:
+        high_bitdepth = 1;
+        twelve_bit = 1;
+        sub_y = 0;
+        break;
+    case AV_PIX_FMT_YUV444P:
+        sub_x = 0;
+        sub_y = 0;
+        break;
+    case AV_PIX_FMT_YUV444P10:
+        high_bitdepth = 1;
+        sub_x = 0;
+        sub_y = 0;
+        break;
+    case AV_PIX_FMT_YUV444P12:
+        high_bitdepth = 1;
+        twelve_bit = 1;
+        sub_x = 0;
+        sub_y = 0;
+        break;
+    default:
+        break; /* 8-bit 4:2:0, the common case */
+    }
+    out[0] = 0x81;
+    out[1] = (uint8_t)(((profile & 0x07) << 5) | (level & 0x1F));
+    out[2] = (uint8_t)((high_bitdepth << 6) | (twelve_bit << 5) | (monochrome << 4) |
+                       (sub_x << 3) | (sub_y << 2));
+    out[3] = 0;
+}
+
+/* AV1 bytes on their way into the modern world: a record, if they are not one
+ * already. The result is owned by the caller (av_free). */
+static void *npa_av1_extradata_modern(const void *data, int size, int profile, int level,
+                                      int format, int *out_size)
+{
+    void *out;
+
+    if (!data || size <= 0) {
+        *out_size = 0;
+        return NULL;
+    }
+    if (npa_av1_record_size(data, size)) {
+        *out_size = size;
+        return av_memdup(data, (size_t)size);
+    }
+    out = av_malloc((size_t)size + NPA_AV1_RECORD_HEADER);
+    if (!out)
+        abort();
+    npa_av1_record_bytes(out, profile, level, format);
+    memcpy((char *)out + NPA_AV1_RECORD_HEADER, data, (size_t)size);
+    *out_size = size + NPA_AV1_RECORD_HEADER;
+    return out;
+}
+
+/* The other direction, for publishing into the shadow: the record header comes
+ * off and the result points into the same buffer. */
+static const void *npa_av1_extradata_legacy(const void *data, int size, int *out_size)
+{
+    if (npa_av1_record_size(data, size)) {
+        *out_size = size - NPA_AV1_RECORD_HEADER;
+        return (const char *)data + NPA_AV1_RECORD_HEADER;
+    }
+    *out_size = size;
+    return data;
+}
+
 /* The app's extradata belongs to the app; the modern object gets its own copy
  * so that 9.0.2 can release it with its own allocator. */
+static void npa_ctx_set_extradata_owned(AVCodecContext *modern, void *data, int size)
+{
+    av_freep(&modern->extradata);
+    modern->extradata = data;
+    modern->extradata_size = data ? size : 0;
+}
+
 static void npa_ctx_set_extradata(AVCodecContext *modern, const void *data, int size)
 {
     void *copy = NULL;
@@ -214,9 +350,7 @@ static void npa_ctx_set_extradata(AVCodecContext *modern, const void *data, int 
      * read back may alias it: copy before releasing the old one. */
     if (size > 0 && data)
         copy = av_memdup(data, (size_t)size);
-    av_freep(&modern->extradata);
-    modern->extradata = copy;
-    modern->extradata_size = copy ? size : 0;
+    npa_ctx_set_extradata_owned(modern, copy, copy ? size : 0);
 }
 
 static void npa_ctx_in(AVCodecContext *modern, const void *shadow)
@@ -260,10 +394,20 @@ static void npa_ctx_in(AVCodecContext *modern, const void *shadow)
         if (modern->ch_layout.nb_channels == 0)
             modern->ch_layout.nb_channels = channels;
     }
-    npa_ctx_set_extradata(
-        modern,
-        NPA_LD(shadow, NPA_LEGACY_CTX_EXTRADATA, void *),
-        NPA_LD(shadow, NPA_LEGACY_CTX_EXTRADATA_SIZE, int));
+    if (modern->codec_id == AV_CODEC_ID_AV1) {
+        int modern_size = 0;
+        void *modern_extra = npa_av1_extradata_modern(
+            NPA_LD(shadow, NPA_LEGACY_CTX_EXTRADATA, void *),
+            NPA_LD(shadow, NPA_LEGACY_CTX_EXTRADATA_SIZE, int), 0, 0,
+            npa_modern_pixfmt(NPA_LD(shadow, NPA_LEGACY_CTX_PIX_FMT, int)), &modern_size);
+
+        npa_ctx_set_extradata_owned(modern, modern_extra, modern_size);
+    } else {
+        npa_ctx_set_extradata(
+            modern,
+            NPA_LD(shadow, NPA_LEGACY_CTX_EXTRADATA, void *),
+            NPA_LD(shadow, NPA_LEGACY_CTX_EXTRADATA_SIZE, int));
+    }
 }
 
 static void npa_ctx_out(void *shadow, const AVCodecContext *modern)
@@ -278,8 +422,15 @@ static void npa_ctx_out(void *shadow, const AVCodecContext *modern)
      * because the in-bound copy takes its own copy first.
      */
     NPA_ST(shadow, NPA_LEGACY_CTX_CODEC, void *, (void *)(uintptr_t)modern->codec);
-    NPA_ST(shadow, NPA_LEGACY_CTX_EXTRADATA, void *, modern->extradata);
-    NPA_ST(shadow, NPA_LEGACY_CTX_EXTRADATA_SIZE, int, modern->extradata_size);
+    {
+        const void *extra = modern->extradata;
+        int extra_size = modern->extradata_size;
+
+        if (modern->codec_id == AV_CODEC_ID_AV1)
+            extra = npa_av1_extradata_legacy(extra, extra_size, &extra_size);
+        NPA_ST(shadow, NPA_LEGACY_CTX_EXTRADATA, void *, (void *)(uintptr_t)extra);
+        NPA_ST(shadow, NPA_LEGACY_CTX_EXTRADATA_SIZE, int, extra_size);
+    }
     NPA_ST(shadow, NPA_LEGACY_CTX_CODEC_ID, unsigned,
            (unsigned)npa_codec_id_to_legacy((int)modern->codec_id));
     NPA_ST(shadow, NPA_LEGACY_CTX_CODEC_TAG, unsigned, modern->codec_tag);
@@ -390,15 +541,26 @@ static void npa_params_in(AVCodecParameters *modern, const void *shadow)
     {
         int size = NPA_LD(shadow, NPA_LEGACY_PARAMS_EXTRADATA_SIZE, int);
         void *data = NPA_LD(shadow, NPA_LEGACY_PARAMS_EXTRADATA, void *);
-        void *copy = NULL;
 
-        /* npa_params_out aliases this buffer into the shadow, so the copy has
-         * to be taken before the previous one is released. */
-        if (size > 0 && data)
-            copy = av_memdup(data, (size_t)size);
-        av_freep(&modern->extradata);
-        modern->extradata = copy;
-        modern->extradata_size = copy ? size : 0;
+        if (modern->codec_id == AV_CODEC_ID_AV1) {
+            int modern_size = 0;
+            void *modern_extra = npa_av1_extradata_modern(
+                data, size, modern->profile, modern->level, modern->format, &modern_size);
+
+            av_freep(&modern->extradata);
+            modern->extradata = modern_extra;
+            modern->extradata_size = modern_extra ? modern_size : 0;
+        } else {
+            void *copy = NULL;
+
+            /* npa_params_out aliases this buffer into the shadow, so the copy
+             * has to be taken before the previous one is released. */
+            if (size > 0 && data)
+                copy = av_memdup(data, (size_t)size);
+            av_freep(&modern->extradata);
+            modern->extradata = copy;
+            modern->extradata_size = copy ? size : 0;
+        }
     }
 }
 
@@ -408,8 +570,15 @@ static void npa_params_out(void *shadow, const AVCodecParameters *modern)
     NPA_ST(shadow, NPA_LEGACY_PARAMS_CODEC_ID, unsigned,
            (unsigned)npa_codec_id_to_legacy((int)modern->codec_id));
     NPA_ST(shadow, NPA_LEGACY_PARAMS_CODEC_TAG, unsigned, modern->codec_tag);
-    NPA_ST(shadow, NPA_LEGACY_PARAMS_EXTRADATA, void *, modern->extradata);
-    NPA_ST(shadow, NPA_LEGACY_PARAMS_EXTRADATA_SIZE, int, modern->extradata_size);
+    {
+        const void *extra = modern->extradata;
+        int extra_size = modern->extradata_size;
+
+        if (modern->codec_id == AV_CODEC_ID_AV1)
+            extra = npa_av1_extradata_legacy(extra, extra_size, &extra_size);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_EXTRADATA, void *, (void *)(uintptr_t)extra);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_EXTRADATA_SIZE, int, extra_size);
+    }
     NPA_ST(shadow, NPA_LEGACY_PARAMS_BIT_RATE, int64_t, modern->bit_rate);
     NPA_ST(shadow, NPA_LEGACY_PARAMS_BITS_PER_CODED_SAMPLE, int,
            modern->bits_per_coded_sample);

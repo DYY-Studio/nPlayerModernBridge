@@ -309,11 +309,36 @@ static void shadow_rebuild_streams(npa_shadow *s)
          * second time.
          */
         if (mp->extradata && mp->extradata_size > 0) {
-            void *copy = av_malloc((size_t)mp->extradata_size);
-            if (copy) {
-                memcpy(copy, mp->extradata, (size_t)mp->extradata_size);
-                npa_st_ptr(lp, NPA_LEGACY_CODECPAR_EXTRADATA, copy);
-                npa_st_u32(lp, NPA_LEGACY_CODECPAR_EXTRADATA_SIZE, (uint32_t)mp->extradata_size);
+            /*
+             * 4.4.x published only the OBUs for AV1, on purpose: its
+             * matroskadec.c sets `extradata_offset = 4` for AV_CODEC_ID_AV1
+             * with the comment "For now, propagate only the OBUs, if any.
+             * Once libavcodec is updated to handle isobmff style extradata this
+             * can be removed." 9.0.2's libavcodec *was* updated, so its
+             * demuxer hands out the AV1CodecConfigurationRecord instead - and
+             * the app feeds these bytes straight to VideoToolbox when it builds
+             * the hardware decoder's format description. Measured on device:
+             * with the record the description came out 0x0 and
+             * VTDecompressionSessionCreateWithOptions failed (-12910), so the
+             * player fell back to software; with the OBUs the hardware decoder
+             * is installed. The codec unit turns the OBUs back into a record
+             * for 9.0.2's decoders (npa_av1_extradata_modern).
+             */
+            const uint8_t *src = mp->extradata;
+            int size = mp->extradata_size;
+
+            if (mp->codec_id == AV_CODEC_ID_AV1 && size > 4 && (src[0] & 0x80) &&
+                (src[0] & 0x7F) == 1) {
+                src += 4;
+                size -= 4;
+            }
+            if (size > 0) {
+                void *copy = av_malloc((size_t)size);
+                if (copy) {
+                    memcpy(copy, src, (size_t)size);
+                    npa_st_ptr(lp, NPA_LEGACY_CODECPAR_EXTRADATA, copy);
+                    npa_st_u32(lp, NPA_LEGACY_CODECPAR_EXTRADATA_SIZE, (uint32_t)size);
+                }
             }
         }
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_FORMAT, (uint32_t)npa_pix_fmt_to_legacy(mp->format));

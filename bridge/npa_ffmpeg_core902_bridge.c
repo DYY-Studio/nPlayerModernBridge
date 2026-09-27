@@ -17,3 +17,4 @@
 
 #include "npa_ffmpeg_demux_bridge.c"
 #include "npa_ffmpeg_util_bridge.c"
+#include "npa_ffmpeg_subdec_bridge.c"

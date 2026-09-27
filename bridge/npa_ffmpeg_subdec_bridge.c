@@ -576,14 +576,14 @@ static void npa_sub_release_legacy(AVSubtitle *app)
 
 /* ---- entry points ----------------------------------------------------- */
 
-NPA_EXPORT const AVCodec *npa_subdec_avcodec_find_decoder(enum AVCodecID id)
+static const AVCodec *npa_shadow_avcodec_find_decoder(enum AVCodecID id)
 {
     /* The app asks with its own 4.4.x id; the codec ids in the subtitle range
      * were renumbered in 9.0.2 (see npa_subdec_modern_codec_id). */
     return avcodec_find_decoder(npa_subdec_modern_codec_id((int)id));
 }
 
-NPA_EXPORT AVCodecContext *npa_subdec_avcodec_alloc_context3(const AVCodec *codec)
+static AVCodecContext *npa_shadow_avcodec_alloc_context3(const AVCodec *codec)
 {
     AVCodecContext *modern = avcodec_alloc_context3(codec);
     AVCodecContext *shadow;
@@ -608,7 +608,7 @@ NPA_EXPORT AVCodecContext *npa_subdec_avcodec_alloc_context3(const AVCodec *code
     return shadow;
 }
 
-NPA_EXPORT void npa_subdec_avcodec_free_context(AVCodecContext **pavctx)
+static void npa_shadow_avcodec_free_context(AVCodecContext **pavctx)
 {
     AVCodecContext *shadow;
 
@@ -630,7 +630,7 @@ NPA_EXPORT void npa_subdec_avcodec_free_context(AVCodecContext **pavctx)
     *pavctx = NULL;
 }
 
-NPA_EXPORT int npa_subdec_avcodec_open2(AVCodecContext *avctx, const AVCodec *codec,
+static int npa_shadow_avcodec_open2(AVCodecContext *avctx, const AVCodec *codec,
                                         AVDictionary **options)
 {
     npa_ctx_shadow *entry = npa_ctx_find(avctx);
@@ -650,7 +650,7 @@ NPA_EXPORT int npa_subdec_avcodec_open2(AVCodecContext *avctx, const AVCodec *co
     return ret;
 }
 
-NPA_EXPORT AVCodecParameters *npa_subdec_avcodec_parameters_alloc(void)
+static AVCodecParameters *npa_shadow_avcodec_parameters_alloc(void)
 {
     AVCodecParameters *modern = avcodec_parameters_alloc();
     AVCodecParameters *shadow;
@@ -667,7 +667,7 @@ NPA_EXPORT AVCodecParameters *npa_subdec_avcodec_parameters_alloc(void)
     return shadow;
 }
 
-NPA_EXPORT void npa_subdec_avcodec_parameters_free(AVCodecParameters **ppar)
+static void npa_shadow_avcodec_parameters_free(AVCodecParameters **ppar)
 {
     AVCodecParameters *shadow;
 
@@ -691,7 +691,7 @@ NPA_EXPORT void npa_subdec_avcodec_parameters_free(AVCodecParameters **ppar)
     *ppar = NULL;
 }
 
-NPA_EXPORT int npa_subdec_avcodec_parameters_from_context(AVCodecParameters *par,
+static int npa_shadow_avcodec_parameters_from_context(AVCodecParameters *par,
                                                           const AVCodecContext *ctx)
 {
     npa_params_shadow *entry = npa_params_find(par);
@@ -710,7 +710,7 @@ NPA_EXPORT int npa_subdec_avcodec_parameters_from_context(AVCodecParameters *par
     return ret;
 }
 
-NPA_EXPORT int npa_subdec_avcodec_parameters_to_context(AVCodecContext *ctx,
+static int npa_shadow_avcodec_parameters_to_context(AVCodecContext *ctx,
                                                         const AVCodecParameters *par)
 {
     npa_ctx_shadow *entry = npa_ctx_find(ctx);
@@ -808,4 +808,134 @@ NPA_EXPORT void npa_subdec_avsubtitle_free(AVSubtitle *sub)
     avsubtitle_free(modern);
     av_free(modern);
     npa_sub_release_legacy(sub);
+}
+
+/* ---- shared entries and the two units' forwarders --------------------- */
+
+/*
+ * Both units sit on one registry and one shadow translation. The context and
+ * parameter entries behave identically for the subtitle decoder and for the
+ * playback/probe decoders, so the implementation lives once (npa_shadow_*) and
+ * each unit's export is a forwarder. The unit split is what falls back
+ * independently, not the code.
+ */
+
+NPA_EXPORT const AVCodec *npa_subdec_avcodec_find_decoder(enum AVCodecID id)
+{
+    return npa_shadow_avcodec_find_decoder(id);
+}
+
+NPA_EXPORT const AVCodec *npa_codec_avcodec_find_decoder(enum AVCodecID id)
+{
+    return npa_shadow_avcodec_find_decoder(id);
+}
+
+NPA_EXPORT AVCodecContext *npa_subdec_avcodec_alloc_context3(const AVCodec *codec)
+{
+    return npa_shadow_avcodec_alloc_context3(codec);
+}
+
+NPA_EXPORT AVCodecContext *npa_codec_avcodec_alloc_context3(const AVCodec *codec)
+{
+    return npa_shadow_avcodec_alloc_context3(codec);
+}
+
+NPA_EXPORT void npa_subdec_avcodec_free_context(AVCodecContext **pavctx)
+{
+    npa_shadow_avcodec_free_context(pavctx);
+}
+
+NPA_EXPORT void npa_codec_avcodec_free_context(AVCodecContext **pavctx)
+{
+    npa_shadow_avcodec_free_context(pavctx);
+}
+
+NPA_EXPORT int npa_subdec_avcodec_open2(AVCodecContext *avctx, const AVCodec *codec,
+                                        AVDictionary **options)
+{
+    return npa_shadow_avcodec_open2(avctx, codec, options);
+}
+
+NPA_EXPORT int npa_codec_avcodec_open2(AVCodecContext *avctx, const AVCodec *codec,
+                                       AVDictionary **options)
+{
+    return npa_shadow_avcodec_open2(avctx, codec, options);
+}
+
+NPA_EXPORT AVCodecParameters *npa_subdec_avcodec_parameters_alloc(void)
+{
+    return npa_shadow_avcodec_parameters_alloc();
+}
+
+NPA_EXPORT AVCodecParameters *npa_codec_avcodec_parameters_alloc(void)
+{
+    return npa_shadow_avcodec_parameters_alloc();
+}
+
+NPA_EXPORT void npa_subdec_avcodec_parameters_free(AVCodecParameters **ppar)
+{
+    npa_shadow_avcodec_parameters_free(ppar);
+}
+
+NPA_EXPORT void npa_codec_avcodec_parameters_free(AVCodecParameters **ppar)
+{
+    npa_shadow_avcodec_parameters_free(ppar);
+}
+
+NPA_EXPORT int npa_subdec_avcodec_parameters_from_context(AVCodecParameters *par,
+                                                          const AVCodecContext *ctx)
+{
+    return npa_shadow_avcodec_parameters_from_context(par, ctx);
+}
+
+NPA_EXPORT int npa_codec_avcodec_parameters_from_context(AVCodecParameters *par,
+                                                         const AVCodecContext *ctx)
+{
+    return npa_shadow_avcodec_parameters_from_context(par, ctx);
+}
+
+NPA_EXPORT int npa_subdec_avcodec_parameters_to_context(AVCodecContext *ctx,
+                                                        AVCodecParameters *par)
+{
+    return npa_shadow_avcodec_parameters_to_context(ctx, par);
+}
+
+NPA_EXPORT int npa_codec_avcodec_parameters_to_context(AVCodecContext *ctx,
+                                                       AVCodecParameters *par)
+{
+    return npa_shadow_avcodec_parameters_to_context(ctx, par);
+}
+
+/*
+ * The frame side of the codec unit is not implemented yet. These entries trap
+ * instead of falling back to 4.4.5, so a call that reaches them is a defect and
+ * not a silent pass; the task that adds frame materialisation replaces them.
+ * avcodec_close has no 9.0.2 counterpart at all and stays shim-implemented.
+ */
+
+NPA_EXPORT void npa_codec_avcodec_close(AVCodecContext *avctx)
+{
+    (void)avctx;
+    __builtin_trap();
+}
+
+NPA_EXPORT int npa_codec_avcodec_flush_buffers(AVCodecContext *avctx)
+{
+    (void)avctx;
+    __builtin_trap();
+}
+
+NPA_EXPORT int npa_codec_avcodec_send_packet(AVCodecContext *avctx,
+                                             const AVPacket *pkt)
+{
+    (void)avctx;
+    (void)pkt;
+    __builtin_trap();
+}
+
+NPA_EXPORT int npa_codec_avcodec_receive_frame(AVCodecContext *avctx, AVFrame *frame)
+{
+    (void)avctx;
+    (void)frame;
+    __builtin_trap();
 }

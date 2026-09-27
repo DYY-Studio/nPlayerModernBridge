@@ -741,6 +741,61 @@
           "old_target": "0x10073B228"
         }
       ]
+    },
+    {
+      "id": "ffmpeg-subdecode",
+      "apis": [
+        {
+          "symbol": "npa_subdec_avcodec_alloc_context3",
+          "call_sites": ["0x100A03BE8", "0x100A03CF8", "0x100A03D68", "0x100AB4740"],
+          "old_target": "0x1004FEBAC"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_free_context",
+          "call_sites": ["0x100A03B28", "0x100A03E38", "0x100AB4884"],
+          "old_target": "0x1004FEC04"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_find_decoder",
+          "call_sites": ["0x100A03D8C"],
+          "old_target": "0x100143A28"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_open2",
+          "call_sites": ["0x100A03DC8"],
+          "old_target": "0x10016C0F8"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_parameters_alloc",
+          "call_sites": ["0x100A03D98"],
+          "old_target": "0x1001D8C00"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_parameters_free",
+          "call_sites": ["0x100A03DB8"],
+          "old_target": "0x1001D8C70"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_parameters_from_context",
+          "call_sites": ["0x100A03DA4"],
+          "old_target": "0x1001D8DE8"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_parameters_to_context",
+          "call_sites": ["0x100A03DB0", "0x100AB474C"],
+          "old_target": "0x1001D8F78"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_decode_subtitle2",
+          "call_sites": ["0x100A04D14"],
+          "old_target": "0x100200368"
+        },
+        {
+          "symbol": "npa_subdec_avsubtitle_free",
+          "call_sites": ["0x100A05788"],
+          "old_target": "0x10016CC7C"
+        }
+      ]
     }
   ],
   "dylibs": [
@@ -828,7 +883,7 @@
         "include_root": "build/deps/ffmpeg-core902/include",
         "lib_root": "build/deps/ffmpeg-core902/lib"
       },
-      "domains": ["ffmpeg-demux", "libswscale", "libswresample"],
+      "domains": ["ffmpeg-demux", "libswscale", "libswresample", "ffmpeg-subdecode"],
       "conflicts": ["ffmpeg", "ffmpeg-core", "ffmpeg-full"]
     }
   ]

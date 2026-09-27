@@ -92,7 +92,7 @@
 |---|---|---|---|---|
 | **P0** ✅ | 形态收敛：新增 `ffmpeg-core902`（demux + swscale + swresample 三个 domain 一个 dylib），退役 `ffmpeg-demux` 条目；保留 `ffmpeg`（main 的 split 备选） | 无（接线点不动） | 是 | 整个 9.0.2 核心 |
 | **P1** | 字幕 **demux** 面（`0x100AB4xxx`） | **带缓冲 `AVIOContext`**、`AVInputFormat` | 是（字幕矩阵已验） | 同上 |
-| **P2** | **codec 对象层**：`AVCodecContext`/`AVCodec`/`AVFrame`/`AVSubtitle`(+rect)/`AVBSFContext`，并迁移 avutil 的对象分配 API | 上述五个 + `av_packet_*`/`av_frame_*`/`av_dict_*`/`av_image_*`/`av_samples_*` 转入 9.0.2 | 是 | 同上 |
+| **P2** ✅ | **codec 对象层**：`AVCodecContext`/`AVCodec`/`AVFrame`/`AVSubtitle`(+rect)/`AVBSFContext`，并迁移 avutil 的对象分配 API。**实际落地**：两个单元 `ffmpeg-subdecode`（字幕解码，P2-A）与 `ffmpeg-codec`（播放/probe/poster 软解，P2-B）；`av_frame_*`/`av_packet_*`/`av_dict_*`/`av_image_*`/`av_samples_*` 经裁定**不迁移**（帧/包仍 app 自持，shim 就地物化），`AVBSFContext` 未纳入（BSF 站点在 HLS/mux 侧，属 P3） | ctx/params/subtitle/frame 影子（复用 P2-A 的共享核心） | 是（两轮设备验收已过） | 同上 |
 | **P3** | mux/录制/HLS session/SPDIF | 输出侧 `AVFormatContext`/`AVStream`/`AVOutputFormat`/encoder ctx | **否** | 待可测环境 |
 
 **统一"能稳稳吃下"判据**：阶段内有本环境可测的验收行；不改动已验面的行为；失败时整单元回退。
@@ -187,7 +187,20 @@
   `AVInputFormat`（若 app 解引用其字段）。
 - 解码仍归 4.4.8，故与本阶段同构、可测（字幕矩阵已验）。
 
-## 6. P2：codec 对象层（概要）
+## 6. P2：codec 对象层（已关闭 2026-09-27）
+
+**结局**：拆成两个单元落地并通过设备验收——`ffmpeg-subdecode`（字幕解码；`dev/acceptance.json` 的
+`ffmpeg-core902-subdecode` 条目）与 `ffmpeg-codec`（播放/probe 软解；同文件 `ffmpeg-codec` 条目，
+两者都带整 dylib 回退行）。与原概要的偏离都是经裁定的：
+
+- `av_frame_*`/`av_packet_*`/`av_dict_*`/`av_image_*`/`av_samples_*` **不迁移**：帧与包仍由 app 自持，
+  shim 就地物化，让 app 自己的释放路径驱动引用计数（spec §2.5）；
+- `AVBSFContext` 未纳入：app 的 BSF 站点都在 HLS/mux 会话侧，属 P3；
+- `AVFrame` 影子的 `format` 定为 **legacy（4.4 编号）**，与 §4 的入口翻译一致（spec §3.3）；
+- AV1 的收尾决定：闭包加 **libdav1d 1.5.4** 并 `--disable-decoder=av1`（9.0.2 原生 av1 解码器是硬解专用），
+  下一条"`libdav1d 0.9.2` 不能用于 9.0.2"因此由升级 dav1d 解决。
+
+以下为立项时的概要，保留作历史：
 
 **门槛**：先建影子，再迁站点。需覆盖 `AVCodecContext`（app 读写字段多）、`AVCodec`、`AVFrame`、
 `AVSubtitle`(+`AVSubtitleRect`)、`AVBSFContext`；并随之迁移 avutil 的对象分配 API

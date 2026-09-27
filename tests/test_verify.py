@@ -86,7 +86,7 @@ class VerifyTests(unittest.TestCase):
         mutated = self._mutate(self.patched, "mutated-extra-site")
         binary = parse(mutated)
         raw = bytearray(mutated.read_bytes())
-        for extra in MANIFEST.dylib("libass").extra_sites:
+        for extra in MANIFEST.main_sites:
             offset = int(binary.virtual_address_to_offset(extra.site))
             raw[offset : offset + 4] = struct.pack("<I", extra.expected)
         mutated.write_bytes(bytes(raw))

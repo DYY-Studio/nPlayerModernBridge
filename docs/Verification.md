@@ -45,19 +45,20 @@ on the device, and rtmps stays on the same open list as the rest of the matrix.
 For the same input the libass-only patch produces a main whose SHA-256 is
 `09dcc851d8a26fb27a6d7dbc789e3147f146ff4a7e6f1eb6b9df82bf105fd469`, the
 FFmpeg-only patch
-`6ecb085b98f04abe6af27d909a51a7a90a14f748efcc35d97acd195d452ccb52`, and the
+`56b96f63a8f751f8cca791a53b6ebcd7fe92b594c7a633028bd0561603bb63b5`, and the
 libass+ffmpeg selection
 `9f7acf21d112c5711cd505ce7d54c17742c577bcebb2c04d5f2aea7662cd6ded`. The default
 selection, libass plus the whole FFmpeg 4.4.8, is
 `0ab724dc04125b44b69806fb60b30aad240289a59787d2bbe8be4aeaa88d98f4`; the split
 alternative, libass with the 4.4.8 core and the 9.0.2 scaler/resampler, is
 `3dbcf7de246581c5b876e533a463960a094643f88e790cda118240462de9a9de`. Every
-selection also carries the manifest's app-level site (see the README), so these
-anchors moved on 2026-09-28, when that site started being applied to all of them;
-the artifacts the earlier matrix was accepted on therefore carry the previous
-hashes. Both selections rewrite the same 485
-call sites plus the two libass NOP guards, so they differ only in which dylibs
-carry the units.
+selection carries the manifest's app-level sites (see the README), so these
+anchors moved on 2026-09-28: first when the UPnP site started being applied to
+all of them, and the `--dylib ffmpeg` one again when the two font guards became
+app-level, since that is the only selection without libass. The artifacts the
+earlier matrix was accepted on therefore carry the previous hashes. Both
+selections rewrite the same 485 call sites plus the two font NOP guards, so they
+differ only in which dylibs carry the units.
 
 The whole-4.4.8 dylib carries the `ffmpeg-core` code and the scaler/resampler of
 the same closure, so it inherits every core result below; the new part is that

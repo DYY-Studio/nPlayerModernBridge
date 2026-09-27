@@ -17,6 +17,16 @@
   "dladdr_stub": "0x10113629C",
   "main_sites": [
     {
+      "site": "0x100A0392C",
+      "expected": "0x35000148",
+      "replacement": "0xD503201F"
+    },
+    {
+      "site": "0x100ACBC14",
+      "expected": "0x37000080",
+      "replacement": "0xD503201F"
+    },
+    {
       "site": "0x100AE3C7C",
       "expected": "0x52807D00",
       "replacement": "0x52800640"
@@ -681,18 +691,6 @@
         "va_list_size": 8,
         "ignored_argument_register": "x3"
       },
-      "extra_sites": [
-        {
-          "site": "0x100A0392C",
-          "expected": "0x35000148",
-          "replacement": "0xD503201F"
-        },
-        {
-          "site": "0x100ACBC14",
-          "expected": "0x37000080",
-          "replacement": "0xD503201F"
-        }
-      ],
       "build": {
         "source": "bridge/npa_ass_bridge.c",
         "exports": "bridge/bridge.exports",

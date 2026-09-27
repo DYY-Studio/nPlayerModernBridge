@@ -1,9 +1,17 @@
 import hashlib
+import json
+import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from zipfile import ZipFile
 
-from npabridge.manifest import branch_opcode, encode_branch, load_manifest
+from npabridge.manifest import (
+    ExtraSite,
+    branch_opcode,
+    encode_branch,
+    load_manifest,
+)
 
 from support import SOURCE_IPA
 
@@ -244,17 +252,42 @@ class ManifestTests(unittest.TestCase):
             "@executable_path/Frameworks/LibASSBridge.dylib",
         )
         self.assertEqual(self.libass.install_name, "@rpath/LibASSBridge.dylib")
+
+    def test_a_dylib_can_declare_extra_sites(self):
+        """The per-dylib site mechanism is still read from the manifest."""
+
+        data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        data["dylibs"][0]["extra_sites"] = [
+            {
+                "site": "0x100A0392C",
+                "expected": "0x35000148",
+                "replacement": "0xD503201F",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / MANIFEST_PATH.name
+            path.write_text(json.dumps(data), encoding="utf-8")
+            manifest = load_manifest(path)
+        sites = manifest.dylib("libass").extra_sites
         self.assertEqual(
-            [(item.site, item.expected, item.replacement) for item in self.libass.extra_sites],
-            [(0x100A0392C, 0x35000148, 0xD503201F), (0x100ACBC14, 0x37000080, 0xD503201F)],
+            [(site.site, site.expected, site.replacement) for site in sites],
+            [(0x100A0392C, 0x35000148, 0xD503201F)],
         )
 
     def test_extra_sites_are_selected_by_dylib(self):
-        self.assertEqual(
-            self.manifest.extra_sites(("libass",)), self.libass.extra_sites
+        site = ExtraSite(0x100A0392C, 0x35000148, 0xD503201F)
+        manifest = replace(
+            self.manifest,
+            dylibs=tuple(
+                replace(dylib, extra_sites=(site,))
+                if dylib.id == "libass"
+                else dylib
+                for dylib in self.manifest.dylibs
+            ),
         )
-        self.assertEqual(self.manifest.extra_sites(("ffmpeg",)), ())
-        self.assertEqual(self.manifest.extra_sites(()), ())
+        self.assertEqual(manifest.extra_sites(("libass",)), (site,))
+        self.assertEqual(manifest.extra_sites(("ffmpeg",)), ())
+        self.assertEqual(manifest.extra_sites(()), ())
 
     def test_callback_metadata(self):
         callback = self.libass.callback

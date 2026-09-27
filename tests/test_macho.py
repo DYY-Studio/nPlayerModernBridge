@@ -142,14 +142,9 @@ class MachOTests(unittest.TestCase):
     def test_a_manifest_with_wrong_extra_site_guard_is_rejected(self):
         broken = replace(
             MANIFEST,
-            dylibs=(
-                replace(
-                    MANIFEST.dylib("libass"),
-                    extra_sites=(
-                        ExtraSite(0x100A0392C, 0x35000149, NOP_WORD),
-                        MANIFEST.dylib("libass").extra_sites[1],
-                    ),
-                ),
+            main_sites=(
+                ExtraSite(0x100A0392C, 0x35000149, NOP_WORD),
+                *MANIFEST.main_sites[1:],
             ),
             default_dylibs=("libass",),
         )
@@ -178,9 +173,10 @@ class MachOTests(unittest.TestCase):
     def test_extra_sites_belong_to_their_own_dylib(self):
         """Selecting one dylib must not touch another dylib's extra sites."""
 
+        app_sites = {site.site for site in MANIFEST.main_sites}
         taken = {
             site for unit in UNITS for api in unit.apis for site in api.call_sites
-        } | {0x100A0392C, 0x100ACBC14}
+        } | app_sites
         forbidden = {api.old_target for unit in UNITS for api in unit.apis}
         call_site, old_target, extra_site, guard = _spare_bl(
             self.baseline, taken, forbidden
@@ -206,7 +202,8 @@ class MachOTests(unittest.TestCase):
         report = phase_b(layout, patched, manifest, units)
 
         self.assertEqual(report["patched_call_sites"], 1)
-        self.assertEqual(report["extra_sites"], sorted([extra_site, 0x100AE3C7C]))
+        # the app-level sites belong to every selection, this synthetic one too
+        self.assertEqual(report["extra_sites"], sorted([extra_site, *app_sites]))
         before = parse(layout)
         after = parse(patched)
         changed = set()
@@ -216,12 +213,7 @@ class MachOTests(unittest.TestCase):
         for index in range(0, len(old_text) - 3, 4):
             if old_text[index : index + 4] != new_text[index : index + 4]:
                 changed.add(base + index)
-        self.assertEqual(changed, {call_site, extra_site, 0x100AE3C7C})
-        for site in MANIFEST.dylib("libass").extra_sites:
-            with self.subTest(site=site.site):
-                offset = int(after.virtual_address_to_offset(site.site))
-                actual = struct.unpack_from("<I", patched.read_bytes(), offset)[0]
-                self.assertEqual(actual, site.expected)
+        self.assertEqual(changed, {call_site, extra_site} | app_sites)
 
 
 if __name__ == "__main__":

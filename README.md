@@ -49,17 +49,26 @@ No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processi
   libraries plus libdav1d 1.5.4, the second the `--disable-everything` 9.0.2
   build of libavutil, libswscale and libswresample; both depend on system
   libraries and frameworks only,
-- **one app-level site** in the main binary is retimed. `net::`'s UPnP/SSDP
-  discovery loop retries a `select()` that came back empty after a 1000 ms wait;
-  at `0x100AE3C7C` that constant becomes 50 ms (`MOVZ W0, #1000` -> `MOVZ W0,
-  #50`, `0x52807D00` -> `0x52800640`). The scan still runs, only the wait between
-  retries is shorter. Left as it is, the app stalls about a second at the start
-  of playback while that wait elapses (measured: `sleep ms=1000` ->
-  `enqueue-gap 1004`, with PTS continuous - the queue empties instead of frames
-  being dropped). The site belongs to no dylib, so it is part of every selection,
-  `npa-patch --dylib libass` included; it is declared in
-  `manifests/<version>.json` as `main_sites` and rejected unless the instruction
-  there still matches `expected`, like every other site.
+- **three app-level sites**, declared in `manifests/<version>.json` as
+  `main_sites`, belong to no bridge library, so every selection carries them,
+  `npa-patch --dylib ffmpeg` (no libass at all) included:
+  - the **two** guards turned into NOPs (first bullet above). The app records
+    "fonts already set" on a subtitle wrapper (`wrapper+0x1C`, read again by
+    `-[Subtitle updateFontCache]`) and then skips re-registering fonts, which is
+    why only the first video in a playback sequence could use font attachments.
+    The skip happens before the call, so the defect is there whichever libass is
+    loaded; an earlier layout scoped these two to the libass unit, which left
+    `--dylib ffmpeg` with the defect,
+  - the UPnP/SSDP retiming: `net::`'s discovery loop retries a `select()` that
+    came back empty after a 1000 ms wait; at `0x100AE3C7C` that constant becomes
+    50 ms (`MOVZ W0, #1000` -> `MOVZ W0, #50`, `0x52807D00` -> `0x52800640`).
+    The scan still runs, only the wait between retries is shorter. Left as it
+    is, the app stalls about a second at the start of playback while that wait
+    elapses (measured: `sleep ms=1000` -> `enqueue-gap 1004`, with PTS
+    continuous - the queue empties instead of frames being dropped).
+
+  Each site is rejected unless the instruction there still matches `expected`,
+  like every call site.
 - every binary is pseudo-signed so the bundle loads.
 
 The patch is organised in **units**: libass, `ffmpeg-core`, libswscale and

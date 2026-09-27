@@ -75,9 +75,10 @@ the closure is built with `deps/ios-arm64.cross` and `deps/macos-arm64.native`.
    `acceptance.json`.
 
 The expected packaged main hashes, after the 2026-09-26 fixes and with the
-manifest's app-level site applied to every selection (2026-09-28), are
+manifest's app-level sites (the two font guards and the UPnP retiming) applied
+to every selection (2026-09-28), are
 `09dcc851d8a26fb27a6d7dbc789e3147f146ff4a7e6f1eb6b9df82bf105fd469` for
-`--dylib libass`, `6ecb085b98f04abe6af27d909a51a7a90a14f748efcc35d97acd195d452ccb52`
+`--dylib libass`, `56b96f63a8f751f8cca791a53b6ebcd7fe92b594c7a633028bd0561603bb63b5`
 for `--dylib ffmpeg` and
 `9f7acf21d112c5711cd505ce7d54c17742c577bcebb2c04d5f2aea7662cd6ded` for
 libass + ffmpeg. The default selection, libass plus the whole FFmpeg 4.4.8, is

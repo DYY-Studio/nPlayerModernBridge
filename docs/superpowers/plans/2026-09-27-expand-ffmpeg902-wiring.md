@@ -93,7 +93,7 @@
 | **P0** ✅ | 形态收敛：新增 `ffmpeg-core902`（demux + swscale + swresample 三个 domain 一个 dylib），退役 `ffmpeg-demux` 条目；保留 `ffmpeg`（main 的 split 备选） | 无（接线点不动） | 是 | 整个 9.0.2 核心 |
 | **P1** | 字幕 **demux** 面（`0x100AB4xxx`） | **带缓冲 `AVIOContext`**、`AVInputFormat` | 是（字幕矩阵已验） | 同上 |
 | **P2** ✅ | **codec 对象层**：`AVCodecContext`/`AVCodec`/`AVFrame`/`AVSubtitle`(+rect)/`AVBSFContext`，并迁移 avutil 的对象分配 API。**实际落地**：两个单元 `ffmpeg-subdecode`（字幕解码，P2-A）与 `ffmpeg-codec`（播放/probe/poster 软解，P2-B）；`av_frame_*`/`av_packet_*`/`av_dict_*`/`av_image_*`/`av_samples_*` 经裁定**不迁移**（帧/包仍 app 自持，shim 就地物化），`AVBSFContext` 未纳入（BSF 站点在 HLS/mux 侧，属 P3） | ctx/params/subtitle/frame 影子（复用 P2-A 的共享核心） | 是（两轮设备验收已过） | 同上 |
-| **P3** | mux/录制/HLS session/SPDIF | 输出侧 `AVFormatContext`/`AVStream`/`AVOutputFormat`/encoder ctx | **否** | 待可测环境 |
+| **P3** ✅ | mux/录制/HLS session/SPDIF | **同世代单元**：4.4.8 原样，零翻译零影子（asm 尾分支 + 编译期 ABI 守卫） | **是**（设备证据见 `dev/acceptance.json` 的 `ffmpeg-out448`） | 另一形态是探索分支的 9.0.2 输出侧；HLS/SPDIF 行的驱动条件见 §7 |
 
 **统一"能稳稳吃下"判据**：阶段内有本环境可测的验收行；不改动已验面的行为；失败时整单元回退。
 
@@ -216,13 +216,31 @@
 - 注意：`libdav1d 0.9.2` 无法用于 9.0.2（要求 ≥1.0.0）；AV1 将走 9.0.2 原生解码器
   （或届时升级 dav1d），需在 P2 前定。
 
-## 7. P3：mux/录制/HLS session/SPDIF（概要）
+## 7. P3：输出侧（两种形态，默认产物不变）
 
 输出侧影子：`AVFormatContext`(out)/`AVStream`/`AVOutputFormat`/encoder `AVCodecContext`/
-`AVIOContext`(out)；站点见 `0x100B30xxx`（SPDIF）、`0x100B95-9Axxx`（MediaServer HLS session / mux）。
-**本环境不可测**（录制路径依赖 SPDIF/AirPlay 等，无法驱动），故排在最后，待可测环境。
+`AVIOContext`(out)；站点在 `0x100B30xxx`（SPDIF）、`0x100B95-9Axxx`（MediaServer HLS session / mux）
+与封面编码（`0x100A469FC`）。
 
----
+P3 有两种可选形态，由 manifest 的 `conflicts` 隔离，**默认产物不变**：
+
+1. **同世代单元（本分支 `feat/ffmpeg-output448`，已落地）**：一个 4.4.8 dylib
+   `LibFFmpegOut448Bridge.dylib` 承载三域 `ffmpeg-hls448`/`ffmpeg-spdif448`/`ffmpeg-mjpeg448`
+   （154 站点 / 90 入口），可与 9.0.2 输入侧四域（`libass + ffmpeg-core902`）共选，余下仍是
+   app 自带 4.4.5。输出侧**不下沉到 shim**：asm 尾分支直跳 4.4.8 闭包，ABI 由编译期守卫锁定。
+   与 `ffmpeg-core`/`ffmpeg-full` 互斥（它们带 4.4.5 核，符号相同）。证据见
+   `dev/acceptance.json` 的 `ffmpeg-out448` 条目。
+2. **输出侧也 9.0.2（探索分支 `feat/ffmpeg-demux-class-a` 的 `ffmpeg-full`）**：整核替换路线的后续，
+   需要为输出侧写影子翻译；本分支不采用。
+
+环境限制（两形态共有）：
+
+- 录制/HLS 会话需要 AirPlay/cast 的前置状态，本环境**不可驱动**：app 自身的断言发生在
+  `MediaServer::CreateHLSSession` 之前，故 `ffmpeg-hls448` 只能留站点/构建级证据。
+- SPDIF 面需要 **HDMI 路由**才会被 app 主动启用（`-[nPlayerView setSPDIFOutput:]` 与路由相与），
+  本环境用"在音频解码器工厂入口（`sub_100B911F8`）置位 `player+0x88`"的进程内驱动取到行为证据
+  （见 `nPlayerFridaHook/drive-spdif-flag.py` 与验收条目）。
+- 封面（MJPEG）面由用户在信息面板/海报行验证。
 
 ## 8. 不变量与统一验收判据
 

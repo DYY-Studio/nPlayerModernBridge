@@ -209,9 +209,13 @@ def provisional_layout(binary: Any) -> PayloadLayout:
 
 
 def selected_extra_sites(manifest: Manifest, units: Sequence[Unit]):
-    """The extra sites of every dylib the selected units belong to."""
+    """Every word-level site this selection rewrites in the main binary.
 
-    return manifest.extra_sites([unit.dylib_id for unit in units])
+    The selected dylibs contribute the sites they need, and the manifest's own
+    app-level `main_sites` are always included.
+    """
+
+    return manifest.extra_sites([unit.dylib_id for unit in units]) + manifest.main_sites
 
 
 def preflight(

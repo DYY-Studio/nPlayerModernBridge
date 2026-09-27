@@ -12,6 +12,7 @@ from npabridge.macho import (
     phase_a,
     phase_b,
     section_bytes,
+    selected_extra_sites,
     snapshot,
 )
 from npabridge.manifest import APIBinding, Domain, Dylib, ExtraSite, load_manifest
@@ -99,7 +100,7 @@ class MachOTests(unittest.TestCase):
 
     def test_phase_b_changes_only_the_frozen_sites(self):
         self.assertEqual(self.phase_b_report["patched_call_sites"], 485)
-        self.assertEqual(self.phase_b_report["extra_sites"], [0x100A0392C, 0x100ACBC14])
+        self.assertEqual(self.phase_b_report["extra_sites"], [0x100A0392C, 0x100ACBC14, 0x100AE3C7C])
         before = parse(self.layout)
         after = parse(self.patched)
         self.assertEqual(snapshot(before).segment_vas, snapshot(after).segment_vas)
@@ -117,7 +118,7 @@ class MachOTests(unittest.TestCase):
                 )
             else:
                 self.assertEqual(old, new_sections[name], name)
-        self.assertEqual(changed, 487)
+        self.assertEqual(changed, 488)
 
     def test_phase_b_writes_the_assembled_payload(self):
         layout = parse(self.layout)
@@ -161,6 +162,19 @@ class MachOTests(unittest.TestCase):
             )
         self.assertIn("0x100a0392c", str(caught.exception))
 
+    def test_main_sites_apply_to_every_selection(self):
+        """App-level sites are not tied to a dylib: any selection keeps them."""
+
+        expected = {site.site for site in MANIFEST.main_sites}
+        self.assertTrue(expected, "the manifest declares no main_sites")
+        for selection in (None, ("libass",), ("ffmpeg",), ("ffmpeg-full",)):
+            with self.subTest(selection=selection):
+                selected = {
+                    site.site
+                    for site in selected_extra_sites(MANIFEST, MANIFEST.units(selection))
+                }
+                self.assertTrue(expected <= selected)
+
     def test_extra_sites_belong_to_their_own_dylib(self):
         """Selecting one dylib must not touch another dylib's extra sites."""
 
@@ -192,7 +206,7 @@ class MachOTests(unittest.TestCase):
         report = phase_b(layout, patched, manifest, units)
 
         self.assertEqual(report["patched_call_sites"], 1)
-        self.assertEqual(report["extra_sites"], [extra_site])
+        self.assertEqual(report["extra_sites"], sorted([extra_site, 0x100AE3C7C]))
         before = parse(layout)
         after = parse(patched)
         changed = set()
@@ -202,7 +216,7 @@ class MachOTests(unittest.TestCase):
         for index in range(0, len(old_text) - 3, 4):
             if old_text[index : index + 4] != new_text[index : index + 4]:
                 changed.add(base + index)
-        self.assertEqual(changed, {call_site, extra_site})
+        self.assertEqual(changed, {call_site, extra_site, 0x100AE3C7C})
         for site in MANIFEST.dylib("libass").extra_sites:
             with self.subTest(site=site.site):
                 offset = int(after.virtual_address_to_offset(site.site))

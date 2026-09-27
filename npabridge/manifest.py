@@ -62,7 +62,12 @@ class Unit:
 
 @dataclass(frozen=True)
 class ExtraSite:
-    """A site that is rewritten whenever its dylib is installed."""
+    """One frozen instruction word the patcher rewrites in the main binary.
+
+    A dylib's ``extra_sites`` are applied when that dylib is installed; the
+    manifest's own ``main_sites`` are app-level patches that belong to no
+    bridge library and are therefore always applied.
+    """
 
     site: int
     expected: int
@@ -110,6 +115,7 @@ class Manifest:
     dladdr_stub: int
     default_dylibs: tuple[str, ...]
     dylibs: tuple[Dylib, ...]
+    main_sites: tuple[ExtraSite, ...] = ()
 
     def units(self, dylib_ids: Sequence[str] | None = None) -> tuple[Unit, ...]:
         """Flatten the selected dylibs into their units, in manifest order."""
@@ -261,6 +267,14 @@ def _domain_registry(data: dict, path: Path) -> dict[str, Domain]:
     return registry
 
 
+def _extra_site(raw: dict) -> ExtraSite:
+    return ExtraSite(
+        site=int(raw["site"], 0),
+        expected=int(raw["expected"], 0),
+        replacement=int(raw["replacement"], 0),
+    )
+
+
 def _dylib(raw: dict, registry: dict[str, Domain]) -> Dylib:
     domains = []
     for domain_id in raw["domains"]:
@@ -274,14 +288,7 @@ def _dylib(raw: dict, registry: dict[str, Domain]) -> Dylib:
         library_version=raw["library_version"],
         basename=raw["basename"],
         domains=tuple(domains),
-        extra_sites=tuple(
-            ExtraSite(
-                site=int(site["site"], 0),
-                expected=int(site["expected"], 0),
-                replacement=int(site["replacement"], 0),
-            )
-            for site in raw.get("extra_sites", ())
-        ),
+        extra_sites=tuple(_extra_site(site) for site in raw.get("extra_sites", ())),
         conflicts=tuple(raw.get("conflicts", ())),
         callback=_callback(raw.get("callback")),
         build=_build_spec(raw.get("build")),
@@ -327,6 +334,7 @@ def load_manifest(path: Path) -> Manifest:
         dladdr_stub=int(data["dladdr_stub"], 0),
         default_dylibs=default_dylibs,
         dylibs=dylibs,
+        main_sites=tuple(_extra_site(site) for site in data.get("main_sites", ())),
     )
 
 

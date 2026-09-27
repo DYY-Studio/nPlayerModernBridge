@@ -49,6 +49,17 @@ No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processi
   libraries plus libdav1d 1.5.4, the second the `--disable-everything` 9.0.2
   build of libavutil, libswscale and libswresample; both depend on system
   libraries and frameworks only,
+- **one app-level site** in the main binary is retimed. `net::`'s UPnP/SSDP
+  discovery loop retries a `select()` that came back empty after a 1000 ms wait;
+  at `0x100AE3C7C` that constant becomes 50 ms (`MOVZ W0, #1000` -> `MOVZ W0,
+  #50`, `0x52807D00` -> `0x52800640`). The scan still runs, only the wait between
+  retries is shorter. Left as it is, the app stalls about a second at the start
+  of playback while that wait elapses (measured: `sleep ms=1000` ->
+  `enqueue-gap 1004`, with PTS continuous - the queue empties instead of frames
+  being dropped). The site belongs to no dylib, so it is part of every selection,
+  `npa-patch --dylib libass` included; it is declared in
+  `manifests/<version>.json` as `main_sites` and rejected unless the instruction
+  there still matches `expected`, like every other site.
 - every binary is pseudo-signed so the bundle loads.
 
 The patch is organised in **units**: libass, `ffmpeg-core`, libswscale and

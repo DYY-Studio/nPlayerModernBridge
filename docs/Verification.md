@@ -81,3 +81,13 @@ AirPlay and Chromecast start an HLS transcode/mux session for a local non-mp4
 source, the digital-audio passthrough setting drives the SPDIF muxer, and MJPEG
 cover encoding runs for the browser and info panels - and AirPlay playback passes
 on the device. `dev/acceptance.json` records the artifact and the full list.
+
+The app-level site is verified as well. The main binary waits 1000 ms in
+`net::`'s UPnP/SSDP discovery loop whenever its `select()` comes back empty, and
+on device that wait lands on the start of playback: a run without the retiming
+stalls about a second (`sleep ms=1000`, `enqueue-gap 1004`, PTS continuous, so
+the queue empties rather than frames being dropped). Retiming `0x100AE3C7C` to
+50 ms removes the stall on the default selection and on the libass-only one
+alike, and a build left at 1000 ms stalls in the same place with the whole
+FFmpeg 4.4.8 payload installed - the stall follows that constant, not the FFmpeg
+version. Measured with VP9 4K60 material.

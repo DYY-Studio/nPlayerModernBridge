@@ -14,7 +14,8 @@
     "the bridge dylibs themselves are NOT byte-reproducible: `make deps` rebuilds the static closures from scratch and the resulting archives (and therefore the linked dylibs) differ on every run. The contract for a shipped dylib is its verification report (exports, install name, dependencies, no initializers, no host paths), not a hash",
     "the IPA sha256 is not a stable anchor: the zip records file mtimes, so re-patching the same input yields a different artifact digest while packaged_main_sha256 and the dylib hashes stay the same. Use packaged_main_sha256 for regression anchors.",
     "adding the `ffmpeg-core` unit extends the anchors: `--dylib libass` stays e84ef5b5e10cb10940ecffe73c3509f932a4aa6d2cba053052a7d9e7549792fe and libass + ffmpeg stays 3bee29d20c4cc6e5979f594dc8df34a6c0fd96e48240e1c2d6a0065fe69be810, while the three-unit selection (libass + ffmpeg + ffmpeg-core) is 638c00d9602b2797d3f18030ebc6ada4bf825a3f871f2f549374fbdecddcdd78",
-    "the 9.0.2 core unit extends the anchors: libass + ffmpeg-core902 -> 34f19c623f67a634e4b4cc2320f76a0e598b088d63382ae69e359606766b0934"
+    "the 9.0.2 core unit extends the anchors: libass + ffmpeg-core902 -> 34f19c623f67a634e4b4cc2320f76a0e598b088d63382ae69e359606766b0934",
+    "the subtitle demux face extends the anchors again: libass + ffmpeg-core902 (26 exports) -> c128890f010133f2e9e2de6f2ee40340e76c0b660dae42d7356f79ede120a530"
   ],
   "results": [
     {
@@ -211,6 +212,23 @@
         "still undriven: the narrower [Reference] branch of the custom-IO open (KEY=VALUE parsing and its delegation to the native-URL open). The native-URL open itself is covered - https HLS was measured here and goes through FFmpeg's protocol layer",
         "marked NOT TESTABLE here, not a failure: a remux/record action (class C/mux). The routes that would drive it cannot be exercised in this environment, and this unit does not swap that face by design",
         "result is partial rather than pass: every row measured on this artifact passes, and it is the first evidence that the demux face works without the 4.4.8 core. What keeps it from pass is the deferred fallback proof, the undriven [Reference] branch, the remainder of the matrix that this selection did not re-measure, and the recording row that is not testable here"
+      ]
+    },
+    {
+      "variant": "subtitle-demux-face",
+      "result": "partial",
+      "notes": [
+        "artifact: the 9.0.2 selection `libass + ffmpeg-core902` (26 exports). Anchor: packaged_main_sha256 c128890f010133f2e9e2de6f2ee40340e76c0b660dae42d7356f79ede120a530, re-patched in this pass and confirmed byte-stable. The artifact also carried LibASSBridge b2db1e1baa7b154d145b6e6bbc6b84928bb1fc348c9c7c68588b63e5b0acc12b and LibFFmpegCore902Bridge 0c2a38cdeb8a30e649fd193aa5ceec8387229628f80c5b1516045542b9441d2e, recorded as built in this pass rather than as anchors - the dylibs are not byte-reproducible",
+        "device/install: nPlayer 3.13.0 under PlayCover on macOS (Apple Silicon)",
+        "the face: the external-subtitle loader media::FFmpegSubtitle now runs on 9.0.2 libavformat. It serves external standalone subtitle files only (the format dispatch sends srt/vtt to SRTParser, and container-embedded tracks to the bare media::Subtitle cue feed), and its 13 avformat/avio sites joined the ffmpeg-demux domain, which grew to 15 APIs / 38 sites. It mounts its own buffered AVIOContext (4096 bytes plus its own read/seek callbacks), probes or forces the input format, reads the packets, and hands them to the app's own 4.4.x avcodec, which stays unredirected",
+        "the reconnaissance found that the manifest never bound avformat_seek_file, which this class's virtual seek reaches by a tail branch at 0x100AB4F7C. Moving the face without that binding would have handed the shim's shadow context to the app's own 4.4.5, so the face moved in one commit; the manifest guard now pins the binding and its old_target 0x100823AA8. Evidence: notes/ida-investigation-subtitle-demux-face.md",
+        "device-verified on this artifact (user-run): an external .ass file renders; seeking during playback keeps the right subtitle and does not crash, which is the row the new avformat_seek_file binding exists for; switching subtitle files and turning subtitles off and on again repeatedly does not crash, which is the shimmed context's teardown where the class frees avio->buffer itself and then closes the input; an external .srt renders; a container-embedded subtitle track renders; HEVC Main10 plays and thumbnails generate. No row failed",
+        "not re-measured on this selection: the playback-demux matrix recorded in the ffmpeg-core902 entry (the container and audio-codec rows, chapters, metadata, the whole-unit state-word read) and its https HLS row. Those were measured on the previous artifact, and this pass did not change the playback demux sites, so they are carried over rather than re-verified",
+        "still open but deliberately deferred, not blocking: the whole-unit fallback proof for this unit - no forced failure of ffmpeg-core902 has been run",
+        "still undriven: the narrow [Reference] branch of the custom-IO open (KEY=VALUE parsing and its delegation to the native-URL open)",
+        "marked NOT TESTABLE here, not a failure: a remux/record action (class C/mux); the routes that would drive it cannot be exercised in this environment, and this unit does not swap that face",
+        "recorded here, not fixed: the ffmpeg-core domain never bound avformat_seek_file either, so the 4.4.8 alternatives (ffmpeg-core and ffmpeg-full) still reach that call through the app's own 4.4.5. That is harmless for them - they hand the app a real 4.4.8 AVFormatContext and 4.4.5 and 4.4.8 agree on the struct - but it means the default selection does not literally replace every FFmpeg call. Binding it would move the default artifact's anchor, so it is left as a separate follow-up",
+        "result is partial rather than pass: every row measured on this artifact passes, and it is the first evidence that the external-subtitle demuxer works on the 9.0.2 core unit. What keeps it from pass is the deferred fallback proof, the undriven [Reference] branch, the playback rows this selection did not re-measure, and the recording row that is not testable here"
       ]
     }
   ]

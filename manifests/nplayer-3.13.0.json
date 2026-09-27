@@ -15,6 +15,13 @@
   },
   "dlsym_stub": "0x1011362CC",
   "dladdr_stub": "0x10113629C",
+  "main_sites": [
+    {
+      "site": "0x100AE3C7C",
+      "expected": "0x52807D00",
+      "replacement": "0x52800640"
+    }
+  ],
   "default_dylibs": ["libass", "ffmpeg-full"],
   "domains": [
     {

@@ -81,3 +81,45 @@ AirPlay and Chromecast start an HLS transcode/mux session for a local non-mp4
 source, the digital-audio passthrough setting drives the SPDIF muxer, and MJPEG
 cover encoding runs for the browser and info panels - and AirPlay playback passes
 on the device. `dev/acceptance.json` records the artifact and the full list.
+
+## 2026-09-27: the decode faces, and the output side at 4.4.8
+
+Two more faces landed on the 9.0.2 core after the demux face, and the output side
+landed beside them on 4.4.8.
+
+- `ffmpeg-subdecode` (subtitle decoding) and `ffmpeg-codec` (playback, probe and
+  poster software decode, 12 APIs over 46 call sites) join `ffmpeg-demux`,
+  `libswscale` and `libswresample` in `LibFFmpegCore902Bridge.dylib`. Their device
+  rows are the `subtitle-demux-face` / `subtitle-decode` and `ffmpeg-codec`
+  entries in `dev/acceptance.json`.
+- `LibFFmpegOut448Bridge.dylib` carries the **output** side at 4.4.8 in three
+  units - `ffmpeg-hls448`, `ffmpeg-spdif448`, `ffmpeg-mjpeg448`, 154 call sites
+  over 90 entry points, no translation and no shadow - and is selectable
+  together with the 9.0.2 input side. The two generations coexist in one process:
+  playing an AC3 file and a subtitle sample leaves all six 9.0.2-side units
+  `NEW` with no crash. Its own rows: the user's info-panel/poster row reads
+  `ffmpeg-mjpeg448` `NEW`; the SPDIF face reads `NEW` under an in-process drive
+  that raises the app's SPDIF flag (the app enables SPDIF only on an HDMI route,
+  so it never builds `media::SPDIF` here on its own); with the dylib removed the
+  same drive reads `OLD` while the other units keep `NEW`, so the whole-dylib
+  fallback holds. The HLS face is not drivable in this environment - the app
+  traps before `MediaServer::CreateHLSSession` - so it keeps site/build-level
+  evidence only, and the SPDIF muxer output was not byte-asserted.
+- Defect found on the way, in the already accepted `ffmpeg-codec` face rather
+  than in the new unit: playing an AC3 file aborted the app. The
+  AudioToolboxDecoder builder (`sub_100B63FA4`) hands its own 4.4.5
+  `AVCodecParameters` (allocated at `0x100B63FFC`) to a claimed
+  `avcodec_parameters_from_context` site, so the shim found no shadow and aborted
+  by design. Claiming `0x100B63FFC`/`0x100B64020` makes that object the unit's,
+  while the context pair (`0x100B63FF4`/`0x100B63E5C`) and `to_context` stay on
+  4.4.5 and never cross. Device-verified; the same fix is on
+  `feat/ffmpeg-demux-class-a`.
+- Anchors measured again on 2026-09-27: `libass` e84ef5b5...,
+  `libass + ffmpeg` 3bee29d2..., split selection 638c00d9..., default
+  `libass + ffmpeg-full` f22d7af6..., `libass + ffmpeg-core902` b7a8f017...
+  (moved from 5a33aa13... by that fix), `libass + ffmpeg-core902 +
+  ffmpeg-out448` 4abfb2ae....
+- The recipes used for the output side - reading the state words by PID, the
+  SPDIF flag drive, the site-byte payload check, lldb on an abort - are recorded
+  in `notes/playcover-debug-path.md` section 14.
+

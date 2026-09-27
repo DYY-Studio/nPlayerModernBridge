@@ -131,7 +131,7 @@ vtable `off_1016C4200`），即 §3.2 表里的 12 个（剔除 1 个后 11 个�
 | `conflicts` | `ffmpeg-out448` ⇄ `ffmpeg-core`、`ffmpeg-full`（对称声明，工具强制）。理由：三者认领同一批输出侧站点。与 `libass`、`ffmpeg`、`ffmpeg-core902` 可共选 ⇒ 目标产物 `libass + ffmpeg-core902 + ffmpeg-out448`。 |
 | `default_dylibs` | **不动**（仍 `libass + ffmpeg-full`）⇒ 新单元与 `ffmpeg-core902` 同为 opt-in。 |
 | 载荷布局 | 三个新单元让 `__NPATCH_DATA` 变长 ⇒ 本选择需要**新的 `packaged_main_sha256` 锚点**，单元偏移 6 → 9 个。偏移一律用 `npabridge.payload.unit_offsets(manifest.units([...]))` 按当次选择算，不手推。 |
-| 不扰动既有锚点 | 加 dylib **条目**不得改变其它选择的载荷：重打 `libass + ffmpeg-core902`，`packaged_main_sha256` 必须仍为 `5a33aa13b5c5c2455c9be9f5fb2857c1e36bbc95b8a3de61a206ed6d819b6ca1`；不等则先查清，不许静默换锚点。 |
+| 不扰动既有锚点 | 加 dylib **条目**不得改变其它选择的载荷：重打 `libass + ffmpeg-core902`，`packaged_main_sha256` 必须仍为 `5a33aa13b5c5c2455c9be9f5fb2857c1e36bbc95b8a3de61a206ed6d819b6ca1`；不等则先查清，不许静默换锚点。 （2026-09-27 后注：AC3 修复改了 `ffmpeg-codec` 的站点表，该选择的载荷现为 `b7a8f0172ddc9732e155db7836e82789e59cc7cf85ee5c660bc81a6d9f638313`；本条约束针对的"加 dylib 条目"本身未被违反。） |
 | 弱加载与回落 | 选择里的每个 dylib 都弱加载 ⇒ 抽掉本 dylib 时三个单元各自读 `3 (OLD)`，其余单元不受影响。 |
 | 验收记录 | 新增 variant `ffmpeg-out448`：产物锚点、dylib 哈希（as-built 与 IPA 内各一份，注明二者因重签名不同）、域与站点数、验证行、以及与 9.0.2 五域零重叠 / 与 4.4.8 全核故意重叠的对账结论。 |
 

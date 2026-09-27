@@ -82,7 +82,15 @@ for `--dylib ffmpeg` and
 libass + ffmpeg. The default selection, libass plus the whole FFmpeg 4.4.8, is
 `f22d7af623272032e3c529b0cfc0e1b9340b42e310756f6b817f438e57f6758a`; the split
 alternative, libass + ffmpeg-core + ffmpeg, is
-`638c00d9602b2797d3f18030ebc6ada4bf825a3f871f2f549374fbdecddcdd78`. The pre-fix values
+`638c00d9602b2797d3f18030ebc6ada4bf825a3f871f2f549374fbdecddcdd78`. The 9.0.2
+selections: `libass + ffmpeg-core902` is
+`b7a8f0172ddc9732e155db7836e82789e59cc7cf85ee5c660bc81a6d9f638313` (until the
+2026-09-27 AC3 fix changed which sites the `ffmpeg-codec` domain redirects it was
+`5a33aa13b5c5c2455c9be9f5fb2857c1e36bbc95b8a3de61a206ed6d819b6ca1`), and
+`libass + ffmpeg-core902 + ffmpeg-out448`, which adds the 4.4.8 output side, is
+`4abfb2ae056ba9356db26a928cb8c6d518f285e01c2adde1a90cf793d006186c`. Every value in
+this paragraph was re-measured on 2026-09-27; the four above the 9.0.2 pair are
+unchanged. The pre-fix values
 (`19d3447193bcd66e03b850876a1281c4bceac087dd50cf6db534e0527fb3a887` and
 `4d7e79ba3d2a6a1afaa68948002ee3da36ed9c33cf1e7801df122539572b2272` for the
 default selection) are void: those payloads never activated the bridge (see
@@ -107,8 +115,9 @@ re-check the offsets asserted in `bridge/ffmpeg-core-abi.h`.
 
 1. `make bridge` and `make verify`.
 2. Publish `build/LibASSBridge.dylib`, `build/LibFFmpegFullBridge.dylib`,
-   `build/LibFFmpegBridge.dylib` and `build/LibFFmpegCoreBridge.dylib`, plus
-   `libkeystone.dylib`, as release assets together with their SHA-256, plus
+   `build/LibFFmpegBridge.dylib`, `build/LibFFmpegCoreBridge.dylib`,
+   `build/LibFFmpegCore902Bridge.dylib` and `build/LibFFmpegOut448Bridge.dylib`,
+   plus `libkeystone.dylib`, as release assets together with their SHA-256, plus
    `LICENSE` and `THIRD-PARTY.md`. These are host-side products; `make bootstrap`
    reproduces the assembler.
 3. When any pinned dependency version changes, update `THIRD-PARTY.md` and the

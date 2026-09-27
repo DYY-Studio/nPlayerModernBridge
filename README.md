@@ -36,14 +36,24 @@ No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processi
     4.4.8 and `LibFFmpegBridge.dylib` carries the `sws_*`/`swr_*` entry points at
     **9.0.2**. Choices 1 and 2 cover the same call sites, so the tool refuses a mix,
   3. **9.0.2 core** (experimental) - `LibFFmpegCore902Bridge.dylib` carries FFmpeg
-    **9.0.2** `libavformat` for the app's demux call sites - the pure-playback
-    demuxer's and the external-subtitle loader's, 15 APIs over 38 call sites -
-    plus 9.0.2 libswscale and libswresample, in one dylib. All but one of those
-    sites are also the 4.4.8 core's demux face, so this choice is mutually
-    exclusive with the `ffmpeg-core` unit of choices 1 and 2 and with the
-    standalone `LibFFmpegBridge.dylib`; container-embedded subtitle tracks,
-    class C remux, the mux face and avcodec stay on the app's own 4.4.5, behind a
-    translated legacy-shaped shadow context,
+    **9.0.2** for the input side, in five units: `ffmpeg-demux` (the pure-playback
+    demuxer and the external-subtitle loader, 15 APIs over 38 call sites),
+    `libswscale` and `libswresample`, `ffmpeg-subdecode` (subtitle decoding) and
+    `ffmpeg-codec` (the playback, probe and poster software decoders, 12 APIs
+    over 46 call sites). All but one of the demux sites are also the 4.4.8 core's
+    demux face, so this choice is mutually exclusive with the `ffmpeg-core` unit
+    of choices 1 and 2 and with the standalone `LibFFmpegBridge.dylib`. The
+    **output** side (class C remux, the mux face, the HLS session, SPDIF, poster
+    encoding) stays on the app's own 4.4.5, behind a translated legacy-shaped
+    shadow context, unless choice 4 is selected,
+  4. **output side at 4.4.8** (pairs with choice 3) - `LibFFmpegOut448Bridge.dylib`
+    carries one FFmpeg **4.4.8** build for the app's output call sites, in three
+    units: `ffmpeg-hls448` (the MediaServer HLS session and its muxer, 130 call
+    sites), `ffmpeg-spdif448` (11) and `ffmpeg-mjpeg448` (poster/cover encoding,
+    13) - 90 entry points over 154 sites. Nothing is translated there: the shim
+    only branches into the 4.4.8 closure, which shares the app's ABI. It
+    conflicts with `ffmpeg-core` and `ffmpeg-full`, which already own those call
+    sites at 4.4.8,
 - `Frameworks/LibASSBridge.dylib` is added. It statically links libass 0.17.5,
   FreeType, **HarfBuzz**, FriBidi, fontconfig and expat, with no third-party
   dynamic dependency,
@@ -60,6 +70,9 @@ No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processi
   selection. It statically links 9.0.2 libavutil, libavcodec, libavformat,
   libswscale and libswresample, and depends on system libraries and frameworks
   only,
+- `Frameworks/LibFFmpegOut448Bridge.dylib` is added for the output-side
+  selection. It statically links the same 4.4.8 closure the default selection
+  uses, and depends on system libraries and frameworks only,
 - every binary is pseudo-signed so the bundle loads.
 
 The patch is organised in **units**: libass, `ffmpeg-core`, libswscale,
@@ -80,7 +93,12 @@ scaler/resampler at once. `ffmpeg-demux` is a demux-only slice of 9.0.2
 subtitle files, that keeps a 4.4.x avcodec behind a translated legacy-shaped
 shadow context. It patches the core unit's demux call sites, except
 `avformat_seek_file`, which the core unit never bound, so the tool refuses to
-select the two together.
+select the two together. 
+  - the output-side dylib carries `ffmpeg-hls448`, `ffmpeg-spdif448` and
+`ffmpeg-mjpeg448` together: they share one 4.4.8 closure, and the app reaches
+them from three different subsystems (the HLS session, digital audio
+passthrough, poster encoding), so one dylib keeps that closure single while each
+unit still arbitrates its own state and falls back on its own.
 - A unit is only installed when its dylib is selected,
 so `npa-patch --dylib libass` produces an artifact that is byte-identical to
 the libass-only patch of the same input.
@@ -110,6 +128,8 @@ Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framera
     split selection instead.
   - `LibFFmpegCore902Bridge.dylib` (FFmpeg 9.0.2 for iOS arm64) when you want
     the 9.0.2 core selection instead of the 4.4.8 core unit.
+  - `LibFFmpegOut448Bridge.dylib` (FFmpeg 4.4.8 for iOS arm64) when you want the
+    output side on 4.4.8 as well; it pairs with the 9.0.2 core selection.
   - `libkeystone.dylib` (the arm64 assembler used to encode the dispatch payload, macOS arm64 only); On Linux, please build the
   assembler `libkeystone.so` with `make bootstrap` instead.
 - No Xcode, no iOS SDK, no jailbreak. `npa-patch` runs from the repository
@@ -120,8 +140,8 @@ Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framera
 ```sh
 git clone <this repository> && cd nplayer-libass-bridge
 # put LibASSBridge.dylib, LibFFmpegFullBridge.dylib,
-# LibFFmpegBridge.dylib, LibFFmpegCoreBridge.dylib, LibFFmpegCore902Bridge.dylib
-# and libkeystone.dylib from the release assets here
+# LibFFmpegBridge.dylib, LibFFmpegCoreBridge.dylib, LibFFmpegCore902Bridge.dylib,
+# LibFFmpegOut448Bridge.dylib and libkeystone.dylib from the release assets here
 # (on Linux, run `make bootstrap` to build libkeystone.so instead)
 uv run npa-patch "/path/to/nPlayer_3.13.0.ipa"
 ```
@@ -157,9 +177,13 @@ uv run npa-patch --dylib libass "/path/to/nPlayer_3.13.0.ipa"   # subtitles only
 uv run npa-patch --dylib libass --dylib ffmpeg-full "/path/to/nPlayer_3.13.0.ipa"
 # subtitles plus the 4.4.8 core with the 9.0.2 scaler/resampler instead:
 uv run npa-patch --dylib libass --dylib ffmpeg --dylib ffmpeg-core "/path/to/nPlayer_3.13.0.ipa"
+# subtitles plus the 9.0.2 input side with the output side at 4.4.8:
+uv run npa-patch --dylib libass --dylib ffmpeg-core902 --dylib ffmpeg-out448 "/path/to/nPlayer_3.13.0.ipa"
 ```
-The two FFmpeg selections replace the same call sites, so they cannot be
-combined: naming both fails before anything is written. A missing or stale dylib
+The FFmpeg selections replace the same call sites, so they cannot be combined:
+the 4.4.8 core and the 9.0.2 core are exclusive, and `ffmpeg-out448` is refused
+next to `ffmpeg-core`/`ffmpeg-full`, which own its call sites already. Naming
+both fails before anything is written. A missing or stale dylib
 is a hard error; a unit only ever falls back at runtime when the dylib it needs
 fails to load or fails its identity check.
 
@@ -188,7 +212,7 @@ See [Verification.md](docs/Verification.md)
 | `bridge.exports` / `bridge.install_name` failed | wrong or stale dylib | use the dylib from the matching release |
 | `bridge dylib for <id> is missing` | the selected dylib is not in `--dylibs-dir` | copy it there or point `--dylibs-dir` at it |
 | `unknown dylib ids: <id>` | typo in `--dylib` | the ids are the manifest's `dylibs[].id` values |
-| `conflicting dylib selection: ...` | `ffmpeg-full` was combined with `ffmpeg`/`ffmpeg-core` | pick one FFmpeg selection; they replace the same call sites |
+| `conflicting dylib selection: ...` | `ffmpeg-full` was combined with `ffmpeg`/`ffmpeg-core`, or `ffmpeg-out448` with `ffmpeg-core`/`ffmpeg-full` | pick one core selection for the call sites; `ffmpeg-out448` pairs with `ffmpeg-core902` |
 | `ldid is required to assemble the IPA` | ldid is not installed | `brew install ldid`, or a prebuilt Linux ldid |
 | `host assembler library is missing` | the host assembler is not in the checkout | run `make bootstrap`, or drop the `libkeystone.dylib` release asset on macOS |
 

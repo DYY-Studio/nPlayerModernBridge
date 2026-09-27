@@ -25,7 +25,7 @@ arm64 iOS 13 静态闭包、ldid、Frida（进程内驱动）。
 - 每个 API 的 `old_target` 必须与 `ffmpeg-core` 域同名 API 一致。
 - 剔除项（留给 `ffmpeg-codec`）：`avcodec_free_context` @`0x100B300F0`、@`0x100B63F88`。
 - 既有选择 `libass + ffmpeg-core902` 的 `packaged_main_sha256` 必须仍为
-  `5a33aa13b5c5c2455c9be9f5fb2857c1e36bbc95b8a3de61a206ed6d819b6ca1`。
+  `5a33aa13b5c5c2455c9be9f5fb2857c1e36bbc95b8a3de61a206ed6d819b6ca1`。 （2026-09-27 后注：AC3 修复改了 `ffmpeg-codec` 的站点表，该选择的载荷现为 `b7a8f0172ddc9732e155db7836e82789e59cc7cf85ee5c660bc81a6d9f638313`；本条约束针对的"加 dylib 条目"本身未被违反。）
 - 驱动纪律（`notes/playcover-debug-path.md` §6/§8）：只 attach/读内存优先；进程内驱动要有锚点字节校验并在
   加载期间**不得 kill** 目标；进程内驱动只在本地已安装 app 上做，不在用户设备上做。
 - IDA 只读：不覆盖既有函数名/变量名/注释/原型/类型，`save: false` 收尾。
@@ -207,7 +207,7 @@ uv run npa-patch /Volumes/990EP/Work/Mac/nPlayer_Backup/nPlayer_3.13.0.ipa \
   --dylibs-dir build --dylib libass --dylib ffmpeg-core902 -o /tmp/anchor-check.ipa
 # 打印 packaged_main_sha256
 ```
-Expected: `packaged_main_sha256 == 5a33aa13b5c5c2455c9be9f5fb2857c1e36bbc95b8a3de61a206ed6d819b6ca1`
+Expected: `packaged_main_sha256 == 5a33aa13b5c5c2455c9be9f5fb2857c1e36bbc95b8a3de61a206ed6d819b6ca1` （2026-09-27 后注：AC3 修复改了 `ffmpeg-codec` 的站点表，该选择的载荷现为 `b7a8f0172ddc9732e155db7836e82789e59cc7cf85ee5c660bc81a6d9f638313`；本条约束针对的"加 dylib 条目"本身未被违反。）
 （不相等 ⇒ **停下**，先查载荷生成为何受影响，不许改用新锚点）。
 
 - [x] **Step 5: 全量测试**

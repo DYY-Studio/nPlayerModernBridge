@@ -11,11 +11,18 @@ Two hazards this file exists to prevent:
   returns an existing `build/deps/sources/<name>/tree` verbatim, so reusing the
   name `ffmpeg` would silently build 4.4.8 out of a 9.0.2 tree. The core source
   is therefore keyed `ffmpeg-core` in the lock.
-* the app's FFmpeg decodes AV1 through *libdav1d* (the binary contains
-  `libdav1d` and `dav1d_apply_grain`, which dav1d 1.0 removed) and its DASH
-  demuxer is absent (no libxml2), so the only external dependency is dav1d
-  0.9.2. Anything else would silently change which decoder
-  `avcodec_find_decoder(AV_CODEC_ID_AV1)` returns.
+* the app's FFmpeg decodes AV1 through *libdav1d*, and that dav1d is a 1.x
+  build (the app binary carries the `1.2.1` version literal and dav1d 1.x's
+  `src/cpu.c` strings), i.e. dav1d API 6. FFmpeg 4.4's `libavcodec/libdav1d.c`
+  selects how it configures the decoder with `FF_DAV1D_VERSION_AT_LEAST(6,0)`,
+  so the closure pins dav1d 1.5.4 to stay on that API-6+ path - the same one
+  Homebrew's `ffmpeg@4` ships. Pinning 0.9.2 (API 5) would take the legacy
+  `n_frame_threads`/`n_tile_threads` branch and silently change AV1 behaviour,
+  and it is not needed: FFmpeg 4.4 only requires `dav1d >= 0.5.0` and never
+  references `dav1d_apply_grain`. Its DASH demuxer is absent (no libxml2), so
+  dav1d is the only external dependency of this closure. Anything else would
+  silently change which decoder `avcodec_find_decoder(AV_CODEC_ID_AV1)`
+  returns.
 """
 
 from __future__ import annotations

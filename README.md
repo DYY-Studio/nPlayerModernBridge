@@ -42,11 +42,11 @@ No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processi
   dynamic dependency,
 - `Frameworks/LibFFmpegFullBridge.dylib` is added for the default selection. It
   statically links libavformat, libavcodec, libavutil, libswscale and
-  libswresample 4.4.8 plus libdav1d 0.9.2, and depends on system libraries and
+  libswresample 4.4.8 plus libdav1d 1.5.4, and depends on system libraries and
   frameworks only,
 - `Frameworks/LibFFmpegCoreBridge.dylib` and `Frameworks/LibFFmpegBridge.dylib`
   are added for the split selection. The first statically links the four 4.4.8
-  libraries plus libdav1d 0.9.2, the second the `--disable-everything` 9.0.2
+  libraries plus libdav1d 1.5.4, the second the `--disable-everything` 9.0.2
   build of libavutil, libswscale and libswresample; both depend on system
   libraries and frameworks only,
 - every binary is pseudo-signed so the bundle loads.

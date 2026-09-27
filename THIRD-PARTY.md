@@ -37,7 +37,7 @@ license above is the one that applies.
 | Library | License | Version | Source |
 | --- | --- | --- | --- |
 | FFmpeg (libavformat, libavcodec, libavutil, libswresample) | LGPL-2.1-or-later | 4.4.8 | https://ffmpeg.org/releases/ |
-| dav1d | BSD-2-Clause | 0.9.2 | https://code.videolan.org/videolan/dav1d |
+| dav1d | BSD-2-Clause | 1.5.4 | https://code.videolan.org/videolan/dav1d |
 
 This closure mirrors the FFmpeg the app already carries, which is what makes
 replacing it ABI-safe: same major versions, same components, the same external
@@ -53,7 +53,7 @@ app's `sws_*` calls belong to `LibFFmpegBridge.dylib`.
 | Library | License | Version | Source |
 | --- | --- | --- | --- |
 | FFmpeg (libavformat, libavcodec, libavutil, libswscale, libswresample) | LGPL-2.1-or-later | 4.4.8 | https://ffmpeg.org/releases/ |
-| dav1d | BSD-2-Clause | 0.9.2 | https://code.videolan.org/videolan/dav1d |
+| dav1d | BSD-2-Clause | 1.5.4 | https://code.videolan.org/videolan/dav1d |
 
 The same 4.4.8 closure as `LibFFmpegCoreBridge.dylib`, linked whole so that one
 dylib carries every FFmpeg entry point the app calls. Same licenses, same

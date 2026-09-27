@@ -84,6 +84,17 @@ NPA_ABI_ASSERT(
     "the legacy AVCodecParameters shadow is too small for the offsets it is read at"
 );
 
+/* ---- Legacy (FFmpeg 4.4.x) AVPacket ---- */
+/* The unit never allocates a packet; it reads the app's stack-local one, so the
+ * struct size is not needed. `av_init_packet` (4.4.5, never redirected) fills
+ * these fields. */
+#define NPA_LEGACY_PKT_PTS 0x008
+#define NPA_LEGACY_PKT_DTS 0x010
+#define NPA_LEGACY_PKT_DATA 0x018
+#define NPA_LEGACY_PKT_SIZE 0x020
+#define NPA_LEGACY_PKT_FLAGS 0x028
+#define NPA_LEGACY_PKT_DURATION 0x040
+
 /* ---- Legacy (FFmpeg 4.4.x) AVSubtitle and AVSubtitleRect ---- */
 #define NPA_LEGACY_SUB_SIZE 0x020
 #define NPA_LEGACY_SUB_FORMAT 0x000

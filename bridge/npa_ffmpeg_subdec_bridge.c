@@ -35,8 +35,9 @@
  *   - AVCodecContext.channel_layout on the way out: the modern side carries an
  *     AVChannelLayout and the reverse mapping is the playback unit's concern.
  *
- * Unimplemented entries trap rather than pass through: a half-written unit must
- * fail loudly, never decode with one foot on each ABI.
+ * A pointer arriving that this shim did not allocate is either a legacy object
+ * built by 4.4.5 code (read by its frozen layout) or a misuse: every entry
+ * aborts rather than decoding with one foot on each ABI.
  */
 
 #include "ffmpeg-subdec-abi.h"
@@ -173,14 +174,7 @@ static void npa_params_remove(const void *shadow)
     pthread_mutex_unlock(&g_subdec_lock);
 }
 
-static void npa_not_implemented(const char *entry)
-{
-    (void)entry;
-    abort();
-}
-
 /* ---- legacy <-> modern ------------------------------------------------ */
-
 /* The app's extradata belongs to the app; the modern object gets its own copy
  * so that 9.0.2 can release it with its own allocator. */
 static void npa_ctx_set_extradata(AVCodecContext *modern, const void *data, int size)
@@ -344,6 +338,129 @@ static void npa_ctx_require_own(AVCodecContext *avctx)
         abort();
 }
 
+/* ---- subtitles -------------------------------------------------------- */
+
+static npa_sub_shadow *npa_sub_find(const AVSubtitle *ptr)
+{
+    npa_sub_shadow *entry;
+
+    if (!ptr)
+        return NULL;
+    pthread_mutex_lock(&g_subdec_lock);
+    for (entry = g_sub_shadows; entry; entry = entry->next)
+        if (entry->app == ptr)
+            break;
+    pthread_mutex_unlock(&g_subdec_lock);
+    return entry;
+}
+
+static void npa_sub_add(AVSubtitle *app, AVSubtitle *modern)
+{
+    npa_sub_shadow *entry = calloc(1, (size_t)sizeof(*entry));
+
+    entry->app = app;
+    entry->modern = modern;
+    pthread_mutex_lock(&g_subdec_lock);
+    entry->next = g_sub_shadows;
+    g_sub_shadows = entry;
+    pthread_mutex_unlock(&g_subdec_lock);
+}
+
+static void npa_sub_remove(const AVSubtitle *app)
+{
+    npa_sub_shadow **link;
+
+    pthread_mutex_lock(&g_subdec_lock);
+    for (link = &g_sub_shadows; *link; link = &(*link)->next) {
+        if ((*link)->app == app) {
+            npa_sub_shadow *doomed = *link;
+            *link = doomed->next;
+            free(doomed);
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_subdec_lock);
+}
+
+/* Fill the app's legacy-shaped structure from a decoded modern one. The plane
+ * pointers are mirrored, not copied: the app consumes them inside the same
+ * function that frees the subtitle (sub_100A04BCC copies bitmap planes in
+ * sub_100A05EEC and calls avsubtitle_free at the end), and the shim keeps the
+ * modern object alive until exactly then. */
+static void npa_sub_materialise(AVSubtitle *app, const AVSubtitle *modern)
+{
+    struct npa_legacy_subtitle *out = (struct npa_legacy_subtitle *)app;
+    unsigned i;
+
+    memset(out, 0, (size_t)NPA_LEGACY_SUB_SIZE);
+    out->format = (uint16_t)modern->format;
+    out->start_display_time = modern->start_display_time;
+    out->end_display_time = modern->end_display_time;
+    out->num_rects = modern->num_rects;
+    out->pts = modern->pts;
+    if (modern->num_rects == 0)
+        return;
+    {
+        struct npa_legacy_subtitle_rect **rects =
+            calloc(modern->num_rects, (size_t)sizeof(*rects));
+        if (!rects)
+            abort();
+        out->rects = rects;
+        for (i = 0; i < modern->num_rects; i++) {
+            const AVSubtitleRect *src = modern->rects[i];
+            struct npa_legacy_subtitle_rect *dst;
+            int j;
+
+            if (!src)
+                continue;
+            dst = calloc(1, (size_t)sizeof(*dst));
+            if (!dst)
+                abort();
+            rects[i] = dst;
+            dst->x = src->x;
+            dst->y = src->y;
+            dst->w = src->w;
+            dst->h = src->h;
+            dst->nb_colors = src->nb_colors;
+            for (j = 0; j < 4; j++) {
+                dst->data[j] = src->data[j];
+                dst->linesize[j] = src->linesize[j];
+            }
+            dst->type = (int)src->type;
+            if (src->text) {
+                dst->text = av_strdup(src->text);
+                if (!dst->text)
+                    abort();
+            }
+            if (src->ass) {
+                dst->ass = av_strdup(src->ass);
+                if (!dst->ass)
+                    abort();
+            }
+            dst->flags = src->flags;
+        }
+    }
+}
+
+static void npa_sub_release_legacy(AVSubtitle *app)
+{
+    struct npa_legacy_subtitle *out = (struct npa_legacy_subtitle *)app;
+    struct npa_legacy_subtitle_rect **rects = out->rects;
+    uint32_t i;
+
+    if (rects) {
+        for (i = 0; i < out->num_rects; i++) {
+            if (!rects[i])
+                continue;
+            av_freep(&rects[i]->text);
+            av_freep(&rects[i]->ass);
+            free(rects[i]);
+        }
+        free(rects);
+    }
+    memset(out, 0, (size_t)NPA_LEGACY_SUB_SIZE);
+}
+
 /* ---- entry points ----------------------------------------------------- */
 
 NPA_EXPORT const AVCodec *npa_subdec_avcodec_find_decoder(enum AVCodecID id)
@@ -492,16 +609,66 @@ NPA_EXPORT int npa_subdec_avcodec_parameters_to_context(AVCodecContext *ctx,
 NPA_EXPORT int npa_subdec_avcodec_decode_subtitle2(AVCodecContext *avctx, AVSubtitle *sub,
                                                    int *got_sub_ptr, const AVPacket *avpkt)
 {
-    (void)avctx;
-    (void)sub;
-    (void)got_sub_ptr;
-    (void)avpkt;
-    npa_not_implemented("npa_subdec_avcodec_decode_subtitle2");
-    return 0;
+    npa_ctx_shadow *entry = npa_ctx_find(avctx);
+    AVSubtitle *modern;
+    AVPacket *packet;
+    int ret;
+    int got = 0;
+
+    if (!entry || !sub || !got_sub_ptr)
+        abort();
+    /* The app frees each decoded subtitle before reusing the structure
+     * (sub_100A04BCC ends with avsubtitle_free on every path). */
+    if (npa_sub_find(sub))
+        abort();
+    modern = av_mallocz(sizeof(*modern));
+    packet = av_packet_alloc();
+    if (!modern || !packet)
+        abort();
+    if (avpkt) {
+        /* The app's packet is stack-local and non-refcounted, so the modern
+         * view owns a copy of the bytes; the subtitle decoders are small
+         * enough that the copy is not worth avoiding. */
+        const void *data = NPA_LD(avpkt, NPA_LEGACY_PKT_DATA, void *);
+        int size = NPA_LD(avpkt, NPA_LEGACY_PKT_SIZE, int);
+
+        packet->pts = NPA_LD(avpkt, NPA_LEGACY_PKT_PTS, int64_t);
+        packet->dts = NPA_LD(avpkt, NPA_LEGACY_PKT_DTS, int64_t);
+        packet->duration = NPA_LD(avpkt, NPA_LEGACY_PKT_DURATION, int64_t);
+        packet->flags = NPA_LD(avpkt, NPA_LEGACY_PKT_FLAGS, int);
+        if (size > 0) {
+            if (!data)
+                abort();
+            if (av_new_packet(packet, size) < 0)
+                abort();
+            memcpy(packet->data, data, (size_t)size);
+        }
+    }
+    ret = avcodec_decode_subtitle2(entry->modern, modern, &got, packet);
+    av_packet_free(&packet);
+    if (ret < 0 || !got) {
+        avsubtitle_free(modern);
+        av_free(modern);
+        *got_sub_ptr = got;
+        return ret;
+    }
+    npa_sub_add(sub, modern);
+    npa_sub_materialise(sub, modern);
+    *got_sub_ptr = 1;
+    return ret;
 }
 
 NPA_EXPORT void npa_subdec_avsubtitle_free(AVSubtitle *sub)
 {
-    (void)sub;
-    npa_not_implemented("npa_subdec_avsubtitle_free");
+    npa_sub_shadow *entry;
+
+    if (!sub)
+        return;
+    entry = npa_sub_find(sub);
+    if (!entry)
+        abort();
+    npa_sub_remove(sub);
+    avsubtitle_free(entry->modern);
+    av_free(entry->modern);
+    npa_sub_release_legacy(sub);
 }

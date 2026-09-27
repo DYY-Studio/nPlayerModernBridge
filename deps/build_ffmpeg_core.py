@@ -85,6 +85,11 @@ def build_dav1d(lock: dict[str, Any]) -> None:
     """Build libdav1d into the closure prefix (meson, arm64 iOS 13)."""
 
     source = build_deps.extract_source(DAV1D_SOURCE, lock)
+    version = lock["sources"][DAV1D_SOURCE]["version"]
+    if f"version: '{version}'" not in (source / "meson.build").read_text(
+        encoding="utf-8"
+    ):
+        raise ValueError(f"dav1d source tree is not {version}")
     prefix = ROOT / lock["prefix"]
     build = ROOT / "build" / "deps" / "build" / "dav1d-core"
     if build.exists():

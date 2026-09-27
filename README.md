@@ -36,13 +36,14 @@ No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processi
     4.4.8 and `LibFFmpegBridge.dylib` carries the `sws_*`/`swr_*` entry points at
     **9.0.2**. Choices 1 and 2 cover the same call sites, so the tool refuses a mix,
   3. **9.0.2 core** (experimental) - `LibFFmpegCore902Bridge.dylib` carries FFmpeg
-    **9.0.2** `libavformat` for the pure-playback demuxer's 25 class-A call sites
-    plus 9.0.2 libswscale and libswresample, in one dylib. Those 25 sites are the
-    4.4.8 core's demux face, so this choice is mutually exclusive with the
-    `ffmpeg-core` unit of choices 1 and 2 and with the standalone
-    `LibFFmpegBridge.dylib`; class B subtitles, class C remux, the mux face and
-    avcodec stay on the app's own 4.4.5, behind a translated legacy-shaped shadow
-    context,
+    **9.0.2** `libavformat` for the app's demux call sites - the pure-playback
+    demuxer's and the external-subtitle loader's, 15 APIs over 38 call sites -
+    plus 9.0.2 libswscale and libswresample, in one dylib. All but one of those
+    sites are also the 4.4.8 core's demux face, so this choice is mutually
+    exclusive with the `ffmpeg-core` unit of choices 1 and 2 and with the
+    standalone `LibFFmpegBridge.dylib`; container-embedded subtitle tracks,
+    class C remux, the mux face and avcodec stay on the app's own 4.4.5, behind a
+    translated legacy-shaped shadow context,
 - `Frameworks/LibASSBridge.dylib` is added. It statically links libass 0.17.5,
   FreeType, **HarfBuzz**, FriBidi, fontconfig and expat, with no third-party
   dynamic dependency,
@@ -75,9 +76,11 @@ still share one libavutil.
   - the 9.0.2 core dylib carries the `ffmpeg-demux`, `libswscale` and
 libswresample units together, so it replaces a 4.4.8 face and the
 scaler/resampler at once. `ffmpeg-demux` is a demux-only slice of 9.0.2
-`libavformat` that keeps a 4.4.x avcodec behind a translated legacy-shaped
-shadow context, and it patches the same 25 call sites as the core unit's demux
-face, so the tool refuses to select the two together.
+`libavformat`, serving the playback demuxer and the loader for external
+subtitle files, that keeps a 4.4.x avcodec behind a translated legacy-shaped
+shadow context. It patches the core unit's demux call sites, except
+`avformat_seek_file`, which the core unit never bound, so the tool refuses to
+select the two together.
 - A unit is only installed when its dylib is selected,
 so `npa-patch --dylib libass` produces an artifact that is byte-identical to
 the libass-only patch of the same input.

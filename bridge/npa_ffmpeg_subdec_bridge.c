@@ -41,12 +41,15 @@
  */
 
 #include "ffmpeg-subdec-abi.h"
+#include "ffmpeg-demux-enum-map.h"
 
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <libavutil/mem.h>
+#include <libavutil/avstring.h>
+#include <libavutil/mathematics.h>
 
 #define NPA_EXPORT __attribute__((visibility("default")))
 
@@ -54,6 +57,21 @@
  * aligned, so the casts are safe. */
 #define NPA_LD(ptr, off, type) (*(type *)((char *)(ptr) + (off)))
 #define NPA_ST(ptr, off, type, value) (*(type *)((char *)(ptr) + (off)) = (value))
+
+/* The generated map in ffmpeg-demux-enum-map.h goes modern -> legacy, which is
+ * the direction every shadow needs. These entries also have to go the other
+ * way, because the app hands this shim its own 4.4.x codec id. */
+static int npa_subdec_modern_codec_id(int legacy)
+{
+    unsigned i;
+
+    if (legacy < 0)
+        return legacy;
+    for (i = 0; i < sizeof(npa_codec_id_map) / sizeof(npa_codec_id_map[0]); i++)
+        if (npa_codec_id_map[i].legacy == legacy)
+            return npa_codec_id_map[i].modern;
+    return legacy;
+}
 
 /* A codec context this shim owns: the modern object plus the shadow the app
  * holds. Both are looked up by either pointer. */
@@ -179,12 +197,15 @@ static void npa_params_remove(const void *shadow)
  * so that 9.0.2 can release it with its own allocator. */
 static void npa_ctx_set_extradata(AVCodecContext *modern, const void *data, int size)
 {
+    void *copy = NULL;
+
+    /* npa_ctx_out publishes this buffer into the shadow, so a shadow that was
+     * read back may alias it: copy before releasing the old one. */
+    if (size > 0 && data)
+        copy = av_memdup(data, (size_t)size);
     av_freep(&modern->extradata);
-    modern->extradata_size = 0;
-    if (size > 0 && data) {
-        modern->extradata = av_memdup(data, (size_t)size);
-        modern->extradata_size = modern->extradata ? size : 0;
-    }
+    modern->extradata = copy;
+    modern->extradata_size = copy ? size : 0;
 }
 
 static void npa_ctx_in(AVCodecContext *modern, const void *shadow)
@@ -193,7 +214,8 @@ static void npa_ctx_in(AVCodecContext *modern, const void *shadow)
     int64_t layout = NPA_LD(shadow, NPA_LEGACY_CTX_CHANNEL_LAYOUT, int64_t);
 
     modern->codec_type = (enum AVMediaType)NPA_LD(shadow, NPA_LEGACY_CTX_CODEC_TYPE, int);
-    modern->codec_id = (enum AVCodecID)NPA_LD(shadow, NPA_LEGACY_CTX_CODEC_ID, unsigned);
+    modern->codec_id = (enum AVCodecID)npa_subdec_modern_codec_id(
+        (int)NPA_LD(shadow, NPA_LEGACY_CTX_CODEC_ID, unsigned));
     modern->codec_tag = NPA_LD(shadow, NPA_LEGACY_CTX_CODEC_TAG, unsigned);
     modern->bit_rate = NPA_LD(shadow, NPA_LEGACY_CTX_BIT_RATE, int64_t);
     modern->time_base = NPA_LD(shadow, NPA_LEGACY_CTX_TIME_BASE, AVRational);
@@ -230,7 +252,19 @@ static void npa_ctx_in(AVCodecContext *modern, const void *shadow)
 static void npa_ctx_out(void *shadow, const AVCodecContext *modern)
 {
     NPA_ST(shadow, NPA_LEGACY_CTX_CODEC_TYPE, int, (int)modern->codec_type);
-    NPA_ST(shadow, NPA_LEGACY_CTX_CODEC_ID, unsigned, (unsigned)modern->codec_id);
+    /*
+     * The app reads codec before it decodes anything - sub_100A04BCC bails out
+     * when it is NULL (0x100A04D00) - and avcodec_open2 is the only thing that
+     * ever fills it. The app also reads extradata right after opening a
+     * subtitle decoder to seed libass (0x100A047F8), so both have to be
+     * published here; the shadow aliases the modern buffers, which is safe
+     * because the in-bound copy takes its own copy first.
+     */
+    NPA_ST(shadow, NPA_LEGACY_CTX_CODEC, void *, (void *)(uintptr_t)modern->codec);
+    NPA_ST(shadow, NPA_LEGACY_CTX_EXTRADATA, void *, modern->extradata);
+    NPA_ST(shadow, NPA_LEGACY_CTX_EXTRADATA_SIZE, int, modern->extradata_size);
+    NPA_ST(shadow, NPA_LEGACY_CTX_CODEC_ID, unsigned,
+           (unsigned)npa_codec_id_to_legacy((int)modern->codec_id));
     NPA_ST(shadow, NPA_LEGACY_CTX_CODEC_TAG, unsigned, modern->codec_tag);
     NPA_ST(shadow, NPA_LEGACY_CTX_BIT_RATE, int64_t, modern->bit_rate);
     NPA_ST(shadow, NPA_LEGACY_CTX_TIME_BASE, AVRational, modern->time_base);
@@ -261,7 +295,8 @@ static void npa_params_in(AVCodecParameters *modern, const void *shadow)
     int64_t layout = NPA_LD(shadow, NPA_LEGACY_PARAMS_CHANNEL_LAYOUT, int64_t);
 
     modern->codec_type = (enum AVMediaType)NPA_LD(shadow, NPA_LEGACY_PARAMS_CODEC_TYPE, int);
-    modern->codec_id = (enum AVCodecID)NPA_LD(shadow, NPA_LEGACY_PARAMS_CODEC_ID, unsigned);
+    modern->codec_id = (enum AVCodecID)npa_subdec_modern_codec_id(
+        (int)NPA_LD(shadow, NPA_LEGACY_PARAMS_CODEC_ID, unsigned));
     modern->codec_tag = NPA_LD(shadow, NPA_LEGACY_PARAMS_CODEC_TAG, unsigned);
     modern->format = NPA_LD(shadow, NPA_LEGACY_PARAMS_FORMAT, int);
     modern->bit_rate = NPA_LD(shadow, NPA_LEGACY_PARAMS_BIT_RATE, int64_t);
@@ -271,22 +306,26 @@ static void npa_params_in(AVCodecParameters *modern, const void *shadow)
         if (modern->ch_layout.nb_channels == 0)
             modern->ch_layout.nb_channels = channels;
     }
-    av_freep(&modern->extradata);
-    modern->extradata_size = 0;
     {
         int size = NPA_LD(shadow, NPA_LEGACY_PARAMS_EXTRADATA_SIZE, int);
         void *data = NPA_LD(shadow, NPA_LEGACY_PARAMS_EXTRADATA, void *);
-        if (size > 0 && data) {
-            modern->extradata = av_memdup(data, (size_t)size);
-            modern->extradata_size = modern->extradata ? size : 0;
-        }
+        void *copy = NULL;
+
+        /* npa_params_out aliases this buffer into the shadow, so the copy has
+         * to be taken before the previous one is released. */
+        if (size > 0 && data)
+            copy = av_memdup(data, (size_t)size);
+        av_freep(&modern->extradata);
+        modern->extradata = copy;
+        modern->extradata_size = copy ? size : 0;
     }
 }
 
 static void npa_params_out(void *shadow, const AVCodecParameters *modern)
 {
     NPA_ST(shadow, NPA_LEGACY_PARAMS_CODEC_TYPE, int, (int)modern->codec_type);
-    NPA_ST(shadow, NPA_LEGACY_PARAMS_CODEC_ID, unsigned, (unsigned)modern->codec_id);
+    NPA_ST(shadow, NPA_LEGACY_PARAMS_CODEC_ID, unsigned,
+           (unsigned)npa_codec_id_to_legacy((int)modern->codec_id));
     NPA_ST(shadow, NPA_LEGACY_PARAMS_CODEC_TAG, unsigned, modern->codec_tag);
     NPA_ST(shadow, NPA_LEGACY_PARAMS_EXTRADATA, void *, modern->extradata);
     NPA_ST(shadow, NPA_LEGACY_PARAMS_EXTRADATA_SIZE, int, modern->extradata_size);
@@ -305,8 +344,13 @@ static AVCodecContext *npa_ctx_of(void *ptr, AVCodecContext **temp)
     npa_ctx_shadow *entry = npa_ctx_find(ptr);
 
     *temp = NULL;
-    if (entry)
+    if (entry) {
+        /* The shadow is the app's copy of the object: everything it wrote since
+         * the last crossing has to reach the modern one before it is used, or
+         * the app's codec id, extradata and time base are silently ignored. */
+        npa_ctx_in(entry->modern, entry->shadow);
         return entry->modern;
+    }
     if (!ptr)
         abort();
     *temp = avcodec_alloc_context3(NULL);
@@ -339,6 +383,75 @@ static void npa_ctx_require_own(AVCodecContext *avctx)
 }
 
 /* ---- subtitles -------------------------------------------------------- */
+
+/* 4.4.x's avcodec_decode_subtitle2 rewrote a Matroska-form ASS event ("ReadOrder,
+ * Layer,Style,...") into a standalone ASS dialogue line with real timestamps
+ * (FF_API_ASS_TIMING), gated on avctx->sub_text_format. 9.0.2 dropped both the
+ * rewrite and the field, but the app hands rect->ass straight to libass
+ * (sub_100A04BCC @0x100A0529C), so the shim has to keep producing it. */
+#define NPA_SUB_TEXT_FMT_ASS_WITH_TIMINGS 1
+
+static void npa_ass_insert_ts(char *out, size_t size, int ts)
+{
+    if (ts == -1) {
+        snprintf(out, size, "9:59:59.99,");
+    } else {
+        int h = ts / 360000, m, s;
+
+        ts -= 360000 * h;
+        m = ts / 6000;
+        ts -= 6000 * m;
+        s = ts / 100;
+        ts -= 100 * s;
+        snprintf(out, size, "%d:%02d:%02d.%02d,", h, m, s, ts);
+    }
+}
+
+static void npa_sub_convert_ass(const void *shadow, AVSubtitle *sub,
+                                const AVPacket *pkt)
+{
+    AVRational pkt_tb = NPA_LD(shadow, NPA_LEGACY_CTX_PKT_TIMEBASE, AVRational);
+    AVRational tb = pkt_tb.num ? pkt_tb
+                               : NPA_LD(shadow, NPA_LEGACY_CTX_TIME_BASE, AVRational);
+    unsigned i;
+
+    for (i = 0; i < sub->num_rects; i++) {
+        AVSubtitleRect *rect = sub->rects[i];
+        const char *dialog;
+        int ts_start, ts_duration = -1;
+        char start[32], end[32];
+        long layer;
+        char *final;
+
+        if (!rect || rect->type != SUBTITLE_ASS || !rect->ass)
+            continue;
+        if (!strncmp(rect->ass, "Dialogue: ", 10))
+            continue;
+        dialog = strchr(rect->ass, ',');
+        if (!dialog)
+            continue;
+        dialog++;
+        layer = strtol(dialog, (char **)&dialog, 10);
+        if (*dialog != ',')
+            continue;
+        dialog++;
+
+        ts_start = av_rescale_q(pkt->pts, tb, av_make_q(1, 100));
+        if (pkt->duration != -1)
+            ts_duration = av_rescale_q(pkt->duration, tb, av_make_q(1, 100));
+        if (sub->end_display_time < (unsigned)(10 * ts_duration))
+            sub->end_display_time = (unsigned)(10 * ts_duration);
+
+        npa_ass_insert_ts(start, sizeof(start), ts_start);
+        npa_ass_insert_ts(end, sizeof(end),
+                          ts_duration == -1 ? -1 : ts_start + ts_duration);
+        final = av_asprintf("Dialogue: %ld,%s%s%s\r\n", layer, start, end, dialog);
+        if (!final)
+            continue;
+        av_freep(&rect->ass);
+        rect->ass = final;
+    }
+}
 
 static npa_sub_shadow *npa_sub_find(const AVSubtitle *ptr)
 {
@@ -465,7 +578,9 @@ static void npa_sub_release_legacy(AVSubtitle *app)
 
 NPA_EXPORT const AVCodec *npa_subdec_avcodec_find_decoder(enum AVCodecID id)
 {
-    return avcodec_find_decoder(id);
+    /* The app asks with its own 4.4.x id; the codec ids in the subtitle range
+     * were renumbered in 9.0.2 (see npa_subdec_modern_codec_id). */
+    return avcodec_find_decoder(npa_subdec_modern_codec_id((int)id));
 }
 
 NPA_EXPORT AVCodecContext *npa_subdec_avcodec_alloc_context3(const AVCodec *codec)
@@ -482,6 +597,14 @@ NPA_EXPORT AVCodecContext *npa_subdec_avcodec_alloc_context3(const AVCodec *code
     }
     npa_ctx_add(modern, shadow);
     npa_ctx_out(shadow, modern);
+    /*
+     * 9.0.2 no longer has sub_text_format, so npa_ctx_out cannot carry it. Its
+     * 4.4.x default is FF_SUB_TEXT_FMT_ASS_WITH_TIMINGS (options_table.h), and
+     * the app reads the shadow to decide whether a decoded ASS event still
+     * needs the standalone dialogue form - see npa_sub_convert_ass.
+     */
+    NPA_ST(shadow, NPA_LEGACY_CTX_SUB_TEXT_FORMAT, int,
+           NPA_SUB_TEXT_FMT_ASS_WITH_TIMINGS);
     return shadow;
 }
 
@@ -597,6 +720,7 @@ NPA_EXPORT int npa_subdec_avcodec_parameters_to_context(AVCodecContext *ctx,
 
     if (!entry)
         abort();
+    npa_ctx_in(entry->modern, entry->shadow);
     modern_par = npa_params_of((void *)par, &temp);
     ret = avcodec_parameters_to_context(entry->modern, modern_par);
     if (ret >= 0)
@@ -617,6 +741,9 @@ NPA_EXPORT int npa_subdec_avcodec_decode_subtitle2(AVCodecContext *avctx, AVSubt
 
     if (!entry || !sub || !got_sub_ptr)
         abort();
+    /* The app writes more context fields after opening it (pkt_timebase and the
+     * text format, sub_100A03DF4), so the modern twin is refreshed here too. */
+    npa_ctx_in(entry->modern, avctx);
     /* The app frees each decoded subtitle before reusing the structure
      * (sub_100A04BCC ends with avsubtitle_free on every path). */
     if (npa_sub_find(sub))
@@ -632,10 +759,6 @@ NPA_EXPORT int npa_subdec_avcodec_decode_subtitle2(AVCodecContext *avctx, AVSubt
         const void *data = NPA_LD(avpkt, NPA_LEGACY_PKT_DATA, void *);
         int size = NPA_LD(avpkt, NPA_LEGACY_PKT_SIZE, int);
 
-        packet->pts = NPA_LD(avpkt, NPA_LEGACY_PKT_PTS, int64_t);
-        packet->dts = NPA_LD(avpkt, NPA_LEGACY_PKT_DTS, int64_t);
-        packet->duration = NPA_LD(avpkt, NPA_LEGACY_PKT_DURATION, int64_t);
-        packet->flags = NPA_LD(avpkt, NPA_LEGACY_PKT_FLAGS, int);
         if (size > 0) {
             if (!data)
                 abort();
@@ -643,8 +766,18 @@ NPA_EXPORT int npa_subdec_avcodec_decode_subtitle2(AVCodecContext *avctx, AVSubt
                 abort();
             memcpy(packet->data, data, (size_t)size);
         }
+        /* av_new_packet() resets the timing fields, so they are set after it;
+         * the ASS rewrite needs the packet's real pts and duration. */
+        packet->pts = NPA_LD(avpkt, NPA_LEGACY_PKT_PTS, int64_t);
+        packet->dts = NPA_LD(avpkt, NPA_LEGACY_PKT_DTS, int64_t);
+        packet->duration = NPA_LD(avpkt, NPA_LEGACY_PKT_DURATION, int64_t);
+        packet->flags = NPA_LD(avpkt, NPA_LEGACY_PKT_FLAGS, int);
     }
     ret = avcodec_decode_subtitle2(entry->modern, modern, &got, packet);
+    if (ret >= 0 && got && modern->num_rects &&
+        NPA_LD(avctx, NPA_LEGACY_CTX_SUB_TEXT_FORMAT, int) ==
+            NPA_SUB_TEXT_FMT_ASS_WITH_TIMINGS)
+        npa_sub_convert_ass(avctx, modern, packet);
     av_packet_free(&packet);
     if (ret < 0 || !got) {
         avsubtitle_free(modern);
@@ -661,14 +794,18 @@ NPA_EXPORT int npa_subdec_avcodec_decode_subtitle2(AVCodecContext *avctx, AVSubt
 NPA_EXPORT void npa_subdec_avsubtitle_free(AVSubtitle *sub)
 {
     npa_sub_shadow *entry;
+    AVSubtitle *modern;
 
     if (!sub)
         return;
     entry = npa_sub_find(sub);
     if (!entry)
         abort();
+    /* npa_sub_remove releases the entry, so the modern object has to be taken
+     * out of it first. */
+    modern = entry->modern;
     npa_sub_remove(sub);
-    avsubtitle_free(entry->modern);
-    av_free(entry->modern);
+    avsubtitle_free(modern);
+    av_free(modern);
     npa_sub_release_legacy(sub);
 }

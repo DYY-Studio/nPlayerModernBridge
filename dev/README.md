@@ -74,15 +74,16 @@ the closure is built with `deps/ios-arm64.cross` and `deps/macos-arm64.native`.
 4. Append the device, iOS version, install method and both results to
    `acceptance.json`.
 
-The expected packaged main hashes after the 2026-09-26 fixes are
-`e84ef5b5e10cb10940ecffe73c3509f932a4aa6d2cba053052a7d9e7549792fe` for
-`--dylib libass`, `a5243f0a36baf5ef5209d51f312bd9d6f0c8d3b05d4053fcbbaa48735339f83b`
+The expected packaged main hashes, after the 2026-09-26 fixes and with the
+manifest's app-level site applied to every selection (2026-09-28), are
+`09dcc851d8a26fb27a6d7dbc789e3147f146ff4a7e6f1eb6b9df82bf105fd469` for
+`--dylib libass`, `6ecb085b98f04abe6af27d909a51a7a90a14f748efcc35d97acd195d452ccb52`
 for `--dylib ffmpeg` and
-`3bee29d20c4cc6e5979f594dc8df34a6c0fd96e48240e1c2d6a0065fe69be810` for
+`9f7acf21d112c5711cd505ce7d54c17742c577bcebb2c04d5f2aea7662cd6ded` for
 libass + ffmpeg. The default selection, libass plus the whole FFmpeg 4.4.8, is
-`f22d7af623272032e3c529b0cfc0e1b9340b42e310756f6b817f438e57f6758a`; the split
+`0ab724dc04125b44b69806fb60b30aad240289a59787d2bbe8be4aeaa88d98f4`; the split
 alternative, libass + ffmpeg-core + ffmpeg, is
-`638c00d9602b2797d3f18030ebc6ada4bf825a3f871f2f549374fbdecddcdd78`. The pre-fix values
+`3dbcf7de246581c5b876e533a463960a094643f88e790cda118240462de9a9de`. The pre-fix values
 (`19d3447193bcd66e03b850876a1281c4bceac087dd50cf6db534e0527fb3a887` and
 `4d7e79ba3d2a6a1afaa68948002ee3da36ed9c33cf1e7801df122539572b2272` for the
 default selection) are void: those payloads never activated the bridge (see

@@ -19,16 +19,17 @@ MANIFESTS = ROOT / "manifests"
 BUILD = ROOT / "build"
 BRIDGE = BUILD / "LibASSBridge.dylib"
 BASENAME = "LibASSBridge.dylib"
-# the main member of the device-accepted bridge.ipa, signed under the name nPlayer
-PACKAGED_MAIN_SHA256 = "e84ef5b5e10cb10940ecffe73c3509f932a4aa6d2cba053052a7d9e7549792fe"
+# the libass-only selection, signed under the name nPlayer. Every selection also
+# carries the manifest's app-level site, so these anchors moved on 2026-09-28,
+# when that site started being applied to all of them.
+PACKAGED_MAIN_SHA256 = "09dcc851d8a26fb27a6d7dbc789e3147f146ff4a7e6f1eb6b9df82bf105fd469"
 # the default selection: libass plus the whole FFmpeg 4.4.8 in one dylib
 FULL_PACKAGED_MAIN_SHA256 = (
-    "f22d7af623272032e3c529b0cfc0e1b9340b42e310756f6b817f438e57f6758a"
+    "0ab724dc04125b44b69806fb60b30aad240289a59787d2bbe8be4aeaa88d98f4"
 )
-# the split alternative: libass plus core 4.4.8 plus the 9.0.2 scaler/resampler,
-# i.e. the three-unit artifact the bridge was device-accepted on
+# the split alternative: libass plus core 4.4.8 plus the 9.0.2 scaler/resampler
 SPLIT_PACKAGED_MAIN_SHA256 = (
-    "638c00d9602b2797d3f18030ebc6ada4bf825a3f871f2f549374fbdecddcdd78"
+    "3dbcf7de246581c5b876e533a463960a094643f88e790cda118240462de9a9de"
 )
 
 

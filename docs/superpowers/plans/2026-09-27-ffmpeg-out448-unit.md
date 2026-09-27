@@ -226,6 +226,10 @@ git commit -m "feat: forward the output-side faces into the 4.4.8 closure"
 
 ## Task 4: 进程内驱动与判读（HLS、SPDIF；我出结果，不产生仓库提交）
 
+> **顺序修订（2026-09-27 执行时裁定）**：本任务依赖**用户安装新产物之后**的已安装 app——新增 dylib 不能靠
+> 本地换 dylib 生效（主程序只弱加载选择里声明过的 dylib）。执行顺序 = Task 5 Step 1（打产物）→ 用户安装 →
+> 本任务 → Task 5 Steps 3-4（状态字与回退 A/B）→ Task 6。SPDIF 行见 Task 5 Step 2 的说明。
+
 **Files:**
 - Create（仓库外，沿用既有约定）：`/Volumes/990EP/Work/Mac/nPlayer_Backup/nPlayerFridaHook/probe-out448-hls.js` / `probe-out448-hls.py`
 - Create（仓库外）：`/Volumes/990EP/Work/Mac/nPlayer_Backup/nPlayerFridaHook/probe-out448-spdif.js` / `probe-out448-spdif.py`
@@ -286,6 +290,10 @@ sha256 与 UUID（二者因重签名不同，条目里写明）。
 
 用户跑：**影片信息面板 / 海报**（覆盖 MJPEG 编码路径）；以及 P0–P2 的既有行
 （软解 H.264/HEVC/HEVC Main10、Opus/Vorbis、字幕、AV1 缩略图 + 软解 + 硬解）不得改变。
+
+**SPDIF 行（执行时裁定）**：要跑到 `media::SPDIF` 需要活的 `media::MediaPlayer` 把 `+0x88`（SPDIFOutput）
+置 1，Frida 侧拿不到该实例 ⇒ 这一行改为**由用户在设置里打开数字音频透传 + 播 AC3/DTS** 实测；
+若用户也无法触发，则如实记为"本环境不可验证"（只保留站点/构建级证据，不假称通过）。
 
 - [ ] **Step 3: 读 9 个单元状态字**
 

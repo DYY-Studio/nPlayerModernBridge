@@ -47,49 +47,70 @@
 
 **Interfaces:**
 - Consumes: P2-A 的 manifest 结构。
-- Produces: domain `ffmpeg-codec`（12 API / 39 站点），挂在 `ffmpeg-core902` 的 `domains` 末尾；
+- Produces: domain `ffmpeg-codec`（12 API / **44** 站点，2026-09-27 修订见文末与 spec 同名小节），挂在 `ffmpeg-core902` 的 `domains` 末尾；
   符号命名 `npa_codec_<name>`，`old_target` 取 `ffmpeg-core` 域 `npa_<name>` 的 `old_target`。
 
-**站点表（冻结，39 站点）**
+**站点表（2026-09-27 修订：44 站点）**
 
-| 符号 | video | audio | probe |
-|---|---|---|---|
-| `npa_codec_avcodec_alloc_context3` | `0x100A80F9C` | `0x100A898D4` | `0x100A467B8` |
-| `npa_codec_avcodec_free_context` | `0x100A80ED8` `0x100A80F4C` `0x100A81078` `0x100A81104` | `0x100A89770` `0x100A89880` `0x100A899D0` | `0x100A468EC` |
-| `npa_codec_avcodec_find_decoder` | `0x100A80F8C` | `0x100A898C4` | `0x100A467B0` |
-| `npa_codec_avcodec_open2` | `0x100A81020` | `0x100A89914` | `0x100A467DC` |
-| `npa_codec_avcodec_close` | — | — | `0x100A468E0` |
-| `npa_codec_avcodec_flush_buffers` | `0x100A815AC` | `0x100A89FF4` | — |
-| `npa_codec_avcodec_parameters_alloc` | `0x100A80FA8` | `0x100A898E0` | — |
-| `npa_codec_avcodec_parameters_free` | `0x100A80FCC` | `0x100A89904` | — |
-| `npa_codec_avcodec_parameters_from_context` | `0x100A80FB8` | `0x100A898F0` | — |
-| `npa_codec_avcodec_parameters_to_context` | `0x100A80FC4` | `0x100A898FC` | `0x100A467C8` |
-| `npa_codec_avcodec_send_packet` | `0x100A81280` `0x100A812AC` | `0x100A89BD8` `0x100A89C04` | `0x100A468A8` `0x100A46998` |
-| `npa_codec_avcodec_receive_frame` | `0x100A812F8` | `0x100A89C8C` | `0x100A468B4` `0x100A469AC` |
+| 符号 | video | audio | probe | helper / SPDIF |
+|---|---|---|---|---|
+| `npa_codec_avcodec_alloc_context3` | `0x100A80F9C` | `0x100A898D4` | `0x100A467B8` | `0x100A8A514` |
+| `npa_codec_avcodec_free_context` | `0x100A80ED8` `0x100A80F4C` `0x100A81078` `0x100A81104` | `0x100A89770` `0x100A89880` `0x100A899D0` | `0x100A468EC` | `0x100A8A684` `0x100B300F0` `0x100B63F88` |
+| `npa_codec_avcodec_find_decoder` | `0x100A80F8C` | `0x100A898C4` | `0x100A467B0` | — |
+| `npa_codec_avcodec_open2` | `0x100A81020` | `0x100A89914` | `0x100A467DC` | — |
+| `npa_codec_avcodec_close` | — | — | `0x100A468E0` | — |
+| `npa_codec_avcodec_flush_buffers` | `0x100A815AC` | `0x100A89FF4` | — | — |
+| `npa_codec_avcodec_parameters_alloc` | `0x100A80FA8` | `0x100A898E0` | — | — |
+| `npa_codec_avcodec_parameters_free` | `0x100A80FCC` | `0x100A89904` | — | — |
+| `npa_codec_avcodec_parameters_from_context` | `0x100A80FB8` | `0x100A898F0` | — | `0x100B6400C` |
+| `npa_codec_avcodec_parameters_to_context` | `0x100A80FC4` | `0x100A898FC` | `0x100A467C8` | — |
+| `npa_codec_avcodec_send_packet` | `0x100A81280` `0x100A812AC` | `0x100A89BD8` `0x100A89C04` | `0x100A468A8` `0x100A46998` | — |
+| `npa_codec_avcodec_receive_frame` | `0x100A812F8` | `0x100A89C8C` | `0x100A468B4` `0x100A469AC` | — |
+
+> **为什么多了 helper / SPDIF 这 5 个站点**：源 ctx 的 `avcodec_alloc_context3` 在 `sub_100A8A4F8`，
+> 而它的 `avcodec_free_context` 落在 5 个 caller 上（3 处本就在表内、2 处在 SPDIF）。
+> 若只移动 caller 的 free，就会出现"alloc 在 4.4.5、free 在 shim"，违反 spec §2.4。
+> 经用户裁定把该对象的 alloc/consume/free 一并纳入。证据：`notes/ida-investigation-p2-site-attribution.md`
+> 的追加 1/追加 2；spec 文末同名修订小节。
 
 **在同一批函数内但按策略保留 4.4.5**（不进本单元）：`av_frame_alloc/free/unref/ref`（21 站点，帧由 app 自己
 分配、shim 就地物化，缓冲 legacy 归属）、`av_init_packet`(5)、`av_packet_unref`(4)、`av_dict_*`(4)、
 `av_image_*`(4)、`av_reduce`(2)、`av_get_bytes_per_sample`/`av_get_default_channel_layout`/
 `av_sample_fmt_is_planar`/`av_samples_get_buffer_size`/`avcodec_descriptor_get`/`avcodec_get_name`/
-`av_malloc`/`av_freep`。理由与 P2-A 的 16 站点同源：本单元只产出/消费 ctx 与 params。
+`av_malloc`/`av_freep`，以及 **`avcodec_parameters_copy`**（两个操作数都是 legacy 形状的影子，4.4.5 的实现
+正好按该布局工作；移动无收益——spec §2.5 同日裁定）。理由与 P2-A 的 16 站点同源：本单元只产出/消费 ctx 与 params。
+
+**helper `sub_100A8A4F8` 的认领是部分的（2/6 个 API 站点）**：它的 params 链
+（`parameters_alloc`@`0x100A8A528`、`parameters_copy`@`0x100A8A538`、`parameters_to_context`@`0x100A8A544`、
+`parameters_free`@`0x100A8A54C`）与 `av_malloc`（`0x100A8A5B8`/`0x100A8A650`）继续走 4.4.5。
+⇒ 实现时必须保证 shim 的 `alloc_context3` 交出的影子**能被 legacy 代码继续填充**，且 `free_context`
+对 legacy `av_malloc` 出来的 `ctx+0x58`(extradata) 的回收语义与 4.4.5 对齐（Task 3，须有证据）。
 
 **UI 两个函数**（`sub_100A233C4`/`sub_100A237B0`，spec §1.1 曾列入）经核**贡献 0 站点**：它们只操作 app
 自定义帧包装对象并调 `av_image_*` 与 sws，不碰 FFmpeg 结构（`field-surface` §5）。因此本单元不含它们。
 
-- [ ] **Step 1: 复核 spec §7.2（先做，未通过就停）**
+- [x] **Step 1: 复核 spec §7.2（先做，未通过就停）** —— **已完成，结论：原假设被推翻，经用户裁定扩展站点集**
 
-用 IDA（只读，`save:false`）确认 `sub_100A8A4F8`（`0x100A8A4F8`）的调用者只把它建的 ctx 用于**读**：
-`sub_100A80F14`/`sub_100A810CC`（视频）与 `sub_100A897D4`（音频）**不**把该 ctx 传给本单元任何被移入口以外的
-东西；其 `avcodec_alloc_context3`/`free_context` 站点都在 helper 内且平衡。把结论写进
-`notes/ida-investigation-p2-site-attribution.md` 的追加小节（地址 + 证据 + Confirmed/Probable）。
-**若发现该 ctx 外溢到被移入口，停止并回到用户重新设计。**
+用 IDA（只读，`save:false`）复核 `sub_100A8A4F8`（`0x100A8A4F8`）建的临时源 ctx：
+
+- ✅ 只读使用（4 个 consumer 零写入）；✅ 不进 app 对象；✅ 不进被移入的
+  `open2`/`send_packet`/`receive_frame`/`close`/`flush_buffers`（那些站点一律取 `[obj+0x10]` 的另一个 ctx）。
+- ❌ **"建与弃都在该函数内"不成立**：alloc 在 helper（`0x100A8A514`），free 落在 5 个 caller 上
+  （`0x100A80F4C`/`0x100A81104`/`0x100A89880` + SPDIF 的 `0x100B300F0`/`0x100B63F88`）；
+  caller 实为 5 个（原判 3 个）。按原站点表移动即构成"alloc 在 4.4.5、free 在 shim"，违反 spec §2.4。
+
+**用户裁定（2026-09-27）：扩展站点集**（39 → 44，见上表新增列），使该对象生命周期整体落在本单元内。
+证据与逐条指令见 `notes/ida-investigation-p2-site-attribution.md` 的追加 1/追加 2；spec 文末有同名修订小节。
+本步的**门禁现在是**：修订后的站点集满足"同一对象 alloc/consume/free 同单元"，且不与既有四域重复认领。
 
 - [ ] **Step 2: 写守卫测试**
 
 `tests/test_codec_manifest.py`：结构与 `tests/test_demux_manifest.py` 相同，断言符号集合、逐符号站点、
-并集恰为 39、与 `ffmpeg-demux`/`libswscale`/`libswresample`/`ffmpeg-subdecode` 无交集、`old_target` 与
+并集恰为 **44**、与 `ffmpeg-demux`/`libswscale`/`libswresample`/`ffmpeg-subdecode` 无交集、`old_target` 与
 `ffmpeg-core` 同名 API 一致，以及**排除断言**：`0x100A469FC`（MJPEG 编码器函数）的 13 站点、
 `sub_100B94DA0`/`sub_100B98A38`/`sub_100B9A294`/`sub_100B9A534`（HLS/mux/编码）的全部站点都不在集合内。
+（注意：`sub_100A8A4F8`、`sub_100B30054`、`sub_100B63EDC`、`sub_100B63FA4` 自 2026-09-27 起**是部分认领**的
+——只含上表 helper/SPDIF 列里的那 5 个站点，其余站点仍属 4.4.5，别整函数排除。）
 
 - [ ] **Step 3: 跑测试确认失败**
 

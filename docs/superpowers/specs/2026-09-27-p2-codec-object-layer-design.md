@@ -57,10 +57,10 @@
 
 | 对象 | 原因 |
 |---|---|
-| mux / HLS session / SPDIF / 编码器：`0x100B98A38` `0x100B94DA0` `0x100B9A294` `0x100B9A534` `0x100B96C48` `0x100B9E588` `0x100B9A384` `0x100B9AA64`、SPDIF 的 `0x100B30054` `0x100B3010C` `0x100B303C0` `0x100B30430` | 本环境不可驱动（路线图 P3）；`0x100B94DA0` 虽含解码 API，但属 HLS 会话，**列入未决问题**（§6） |
+| mux / HLS session / SPDIF / 编码器：`0x100B98A38` `0x100B94DA0` `0x100B9A294` `0x100B9A534` `0x100B96C48` `0x100B9E588` `0x100B9A384` `0x100B9AA64`、SPDIF 的 `0x100B30054` `0x100B3010C` `0x100B303C0` `0x100B30430` | 本环境不可驱动（路线图 P3）；`0x100B94DA0` 虽含解码 API，但属 HLS 会话，**列入未决问题**（§6）。**例外（2026-09-27 修订）：**`sub_100B30054` / `sub_100B63EDC` / `sub_100B63FA4` 各有一个站点参与源 ctx 的生命周期，必须并入解码单元（见文末修订） |
 | poster 路径里的编码器 `sub_100A469FC`（`avcodec_find_encoder`=MJPEG @`0x100A46AC0`） | 它是**编码**入口，只因位置在 poster 路径内；不属解码单元 |
 | 全局初始化 `sub_100A8A1E8`（`avformat_network_init`/`av_log_set_level`，8 个跨路径 caller） | 纯环境调用，无对象，被多单元共用 |
-| 共享 helper `sub_100A8A4F8` 的全部站点（video+audio+**SPDIF** 共用） | 它建的是 4.4.5 的**临时源 ctx**，经 `parameters_from_context` **以参数形式**导出，建与弃都在该函数内 ⇒ 不移动即可，且避免把不可测的 SPDIF 拉进来（见 §2.5/§7） |
+| ~~共享 helper `sub_100A8A4F8` 的全部站点~~ **（2026-09-27 修订：前提被推翻）** | 原判据是"它建的是 4.4.5 临时源 ctx，**建与弃都在该函数内**"。只读复核证明**不成立**：alloc 在 helper（`0x100A8A514`），而 free 落在 5 处 caller（3 处本就要接管、2 处是 SPDIF）。⇒ 该 ctx 的 **alloc/consume/free 必须整体并入解码单元**，helper 的 2 个站点 + 3 个 caller 站点（见文末修订） |
 | 已被 `ffmpeg-demux` 域认领的站点（含落在解码函数内的 `av_read_frame@0x100A46964`、`avio_size@0x100A46874`、`av_seek_frame@0x100A46944`、`avformat_close_input@0x100A415B4`、`avformat_free_context@0x100A415D4` 等） | 同一 dylib 内一个站点只能被认领一次 |
 
 ### 1.4 不变量
@@ -135,7 +135,7 @@ flush 时清零 `skip_loop_filter/skip_idct/skip_frame(0x33C/0x340/0x344)`。
 判据：**会被调用在 shim 产出对象上的才移动**；只吃枚举/整数、或只写 app 自有内存的，保留 4.4.5。
 
 - **移动**：`avcodec_alloc_context3`、`free_context`、`open2`、`close`、`flush_buffers`、`find_decoder`、
-  `parameters_alloc|free|copy|from_context|to_context`、`decode_subtitle2`、`avsubtitle_free`、
+  `parameters_alloc|free|from_context|to_context`、`decode_subtitle2`、`avsubtitle_free`、
   `send_packet`、`receive_frame`；`av_frame_alloc|free|unref|ref`；
   `av_packet_alloc|free|unref|ref|copy_props|move_ref`、`av_new_packet`。
 - **保留 4.4.5（不认领）**：
@@ -145,7 +145,9 @@ flush 时清零 `skip_loop_filter/skip_idct/skip_frame(0x33C/0x340/0x344)`。
   - 只写 app 自有内存：`av_image_fill_arrays`、`av_image_get_buffer_size`、`av_image_copy`、`av_image_alloc`、
     `av_samples_get_buffer_size`、`avcodec_fill_audio_frame`；
   - `av_init_packet`（初始化的是 app 自己的栈上 legacy packet；真正的翻译发生在 send/decode 入口）；
-  - `sub_100A8A4F8` 的全部站点（临时源 ctx，见 §1.3）；
+  - `avcodec_parameters_copy`（**2026-09-27 裁定**：两个操作数都是 legacy 形状的影子，4.4.5 的实现正好按该
+    布局工作，且影子里的 `extradata` 指向现代缓冲、对 4.4.5 只读；移动它没有收益）;
+  - `sub_100A8A4F8` 里**未被 §1.3 修订纳入**的站点（该 helper 的 params 链与 `av_malloc`，见文末修订）；
   - `sub_100A8A1E8`（全局 init）；
   - demux 域已认领的 `avformat_*`/`avio_*`（含落在解码函数内的）。
 
@@ -258,3 +260,39 @@ flush 时清零 `skip_loop_filter/skip_idct/skip_frame(0x33C/0x340/0x344)`。
 9. 不引入新依赖（原生 AV1）；`libdav1d ≥1.0.0` 仅在原生不达标时提出，并需用户确认。
 10. **落地顺序**：先字幕解码单元（冷路径、字幕矩阵已验），再播放/probe 单元（热路径）。前者通过设备验收
     后才动后者；两个单元共享影子基础设施，但各自独立回落，因此顺序推进不会互相阻塞。
+
+---
+
+## 修订（2026-09-27）：§7 第二步复核结论与站点集扩展
+
+**背景**：实施计划（P2-B）Task 1 Step 1 要求先证明 §1.3 的假设——`sub_100A8A4F8` 建的临时源 ctx
+"建与弃都在该函数内"，因此它的全部站点都不必移动。
+
+**复核结论**（只读 IDA；证据见 `notes/ida-investigation-p2-site-attribution.md` 的追加 1/追加 2）：
+
+- ✅ 该 ctx 只读使用（4 个 consumer 零写入）、✅ 不进 app 对象、✅ 不进被移入的
+  `open2`/`send_packet`/`receive_frame`/`close`/`flush_buffers`（这些站点取的是 `[obj+0x10]` 的另一个 dest ctx）；
+- ❌ **假设不成立**：`avcodec_alloc_context3` 在 helper（`0x100A8A514`），而 `avcodec_free_context`
+  落在 5 个 caller 上——其中 3 处（`0x100A80F4C`/`0x100A81104`/`0x100A89880`）本来就在本单元站点表内，
+  另 2 处（`0x100B300F0`/`0x100B63F88`）在 SPDIF caller 里；caller 实为 **5 个**（原写 3 个）。
+
+⇒ 若按原站点表移动，就会出现"alloc 在 4.4.5、free 在 shim"，直接违反 §2.4 的硬约束。
+
+**用户裁定（2026-09-27）**：**扩展站点集**，使该对象的 `alloc`/`consume`/`free` 全在同一单元内。
+本单元因此从 12 API / 39 站点扩展为 **12 API / 44 站点**，新增：
+
+| 地址 | 符号 | 所在函数 | 角色 |
+|---|---|---|---|
+| `0x100A8A514` | `avcodec_alloc_context3` | `sub_100A8A4F8` | alloc |
+| `0x100A8A684` | `avcodec_free_context` | `sub_100A8A4F8` | free（该 helper 唯一内部 free，仅错误出口） |
+| `0x100B300F0` | `avcodec_free_context` | `sub_100B30054`（SPDIF） | free |
+| `0x100B63F88` | `avcodec_free_context` | `sub_100B63EDC`（SPDIF） | free |
+| `0x100B6400C` | `avcodec_parameters_from_context` | `sub_100B63FA4`（SPDIF） | consume（读该 ctx） |
+
+**随之而来的实现约束**（Task 2/3 必须处理，不得静默回避）：
+
+- helper 只认领 2/6 个 API 站点：它的 params 链（`parameters_alloc`/`copy`/`to_context`/`free`）与
+  `av_malloc` 仍走 4.4.5 ⇒ shim 的 `alloc_context3` 必须交出**可被 legacy 代码继续填充**的影子；
+- helper 用 **legacy `av_malloc`** 写 `ctx+0x58`(extradata) ⇒ `free_context` 的回收语义要与 4.4.5 对齐
+  （谁分配谁释放；descriptor 路径给的是借用指针，两者不可混淆——实现时须有证据地决定，见 Task 3）；
+- `sub_100B63FA4` 只认领 1/5，其自有 ctx/params 与析构全部留在 legacy，**自洽**（且该 ctx 从不 open）。

@@ -591,3 +591,53 @@ NPA_EXPORT int npa_demux_av_read_frame(AVFormatContext *ctx, AVPacket *pkt)
     av_packet_free(&tmp);
     return ret;
 }
+
+/*
+ * The external-subtitle loader (media::FFmpegSubtitle) reaches five entry
+ * points the playback demuxer does not. It mounts its own buffered
+ * AVIOContext (4096 bytes plus its own read/seek callbacks) and probes or
+ * forces the input format, but the AVIOContext and AVInputFormat it stores and
+ * hands back are objects this unit created and they never leave the class, so
+ * those four are plain forwards. The seek is the exception: it takes the
+ * shadow context the app holds, so it needs the same translation as
+ * npa_demux_av_seek_frame.
+ */
+
+NPA_EXPORT const AVInputFormat *npa_demux_av_find_input_format(const char *short_name)
+{
+    return av_find_input_format(short_name);
+}
+
+NPA_EXPORT int npa_demux_av_probe_input_buffer(
+    AVIOContext *pb,
+    const AVInputFormat **fmt,
+    const char *url,
+    void *logctx,
+    unsigned int offset,
+    unsigned int max_probe_size
+)
+{
+    return av_probe_input_buffer(pb, fmt, url, logctx, offset, max_probe_size);
+}
+
+NPA_EXPORT int npa_demux_avio_read(AVIOContext *s, unsigned char *buf, int size)
+{
+    return avio_read(s, buf, size);
+}
+
+NPA_EXPORT int64_t npa_demux_avio_seek(AVIOContext *s, int64_t offset, int whence)
+{
+    return avio_seek(s, offset, whence);
+}
+
+NPA_EXPORT int npa_demux_avformat_seek_file(
+    AVFormatContext *s, int stream_index, int64_t min_ts, int64_t ts, int64_t max_ts, int flags
+)
+{
+    npa_shadow *shadow = shadow_lookup((void *)s);
+
+    if (!shadow || !shadow->modern)
+        return AVERROR(EINVAL);
+    shadow_to_modern(shadow);
+    return avformat_seek_file(shadow->modern, stream_index, min_ts, ts, max_ts, flags);
+}

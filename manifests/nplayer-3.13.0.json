@@ -667,22 +667,22 @@
       "apis": [
         {
           "symbol": "npa_demux_avformat_alloc_context",
-          "call_sites": ["0x100A3E390", "0x100AED780", "0x100AEF684"],
+          "call_sites": ["0x100A3E390", "0x100AED780", "0x100AEF684", "0x100AB4DF4"],
           "old_target": "0x1007DCCF8"
         },
         {
           "symbol": "npa_demux_avformat_open_input",
-          "call_sites": ["0x100A3E900", "0x100AED878", "0x100AEF778"],
+          "call_sites": ["0x100A3E900", "0x100AED878", "0x100AEF778", "0x100AB451C", "0x100AB4E1C"],
           "old_target": "0x10081FADC"
         },
         {
           "symbol": "npa_demux_avformat_find_stream_info",
-          "call_sites": ["0x100A3E910", "0x100AED8E8", "0x100AEF7A8"],
+          "call_sites": ["0x100A3E910", "0x100AED8E8", "0x100AEF7A8", "0x100AB4E2C"],
           "old_target": "0x100824C8C"
         },
         {
           "symbol": "npa_demux_av_read_frame",
-          "call_sites": ["0x100A46964", "0x100AEE510", "0x100AEEC60", "0x100AEFE28"],
+          "call_sites": ["0x100A46964", "0x100AEE510", "0x100AEEC60", "0x100AEFE28", "0x100AB4934", "0x100AB4FE0"],
           "old_target": "0x100821298"
         },
         {
@@ -692,7 +692,7 @@
         },
         {
           "symbol": "npa_demux_avformat_close_input",
-          "call_sites": ["0x100A415B4", "0x100AEFA04"],
+          "call_sites": ["0x100A415B4", "0x100AEFA04", "0x100AB4470"],
           "old_target": "0x100827B08"
         },
         {
@@ -702,7 +702,7 @@
         },
         {
           "symbol": "npa_demux_avio_alloc_context",
-          "call_sites": ["0x100A3E388", "0x100AED778"],
+          "call_sites": ["0x100A3E388", "0x100AED778", "0x100AB4DCC"],
           "old_target": "0x10073AD30"
         },
         {
@@ -714,6 +714,31 @@
           "symbol": "npa_demux_av_index_search_timestamp",
           "call_sites": ["0x100AECEE0"],
           "old_target": "0x10082295C"
+        },
+        {
+          "symbol": "npa_demux_avformat_seek_file",
+          "call_sites": ["0x100AB4F7C"],
+          "old_target": "0x100823AA8"
+        },
+        {
+          "symbol": "npa_demux_av_find_input_format",
+          "call_sites": ["0x100AB4D74"],
+          "old_target": "0x100755304"
+        },
+        {
+          "symbol": "npa_demux_av_probe_input_buffer",
+          "call_sites": ["0x100AB4DEC"],
+          "old_target": "0x1007558B0"
+        },
+        {
+          "symbol": "npa_demux_avio_read",
+          "call_sites": ["0x100AB4B00"],
+          "old_target": "0x10073C2F0"
+        },
+        {
+          "symbol": "npa_demux_avio_seek",
+          "call_sites": ["0x100AB4B14"],
+          "old_target": "0x10073B228"
         }
       ]
     }

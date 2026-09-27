@@ -26,14 +26,24 @@
  * codec parameters and, in the playback unit, the temporary source context
  * built by sub_100A8A4F8 are read by their frozen layout.
  *
- * Not synchronised in this unit, deliberately:
- *   - AVCodecContext.pix_fmt: the 4.4 and 9.0.2 enums are renumbered, and the
- *     subtitle path neither writes nor reads it. The playback unit owns that
- *     translation (spec section 3.3).
- *   - bits_per_coded_sample: 9.0.2 removed the field; the subtitle path does
- *     not use it either.
- *   - AVCodecContext.channel_layout on the way out: the modern side carries an
- *     AVChannelLayout and the reverse mapping is the playback unit's concern.
+ * The second unit on this shim is the playback/probe decoder face. It shares
+ * the context and parameter entries and adds the frame side: send_packet hands
+ * the app's stack-local packet to 9.0.2, receive_frame materialises the modern
+ * frame into the app's own 4.4 frame with legacy-owned buffers, and close and
+ * flush_buffers follow 4.4's observable behaviour (9.0.2 removed avcodec_close).
+ * Because it carries real video parameters, format values are translated in
+ * both directions here - AVCodecContext.pix_fmt, AVCodecParameters.format and
+ * AVFrame.format are 4.4 values on the app side (spec section 3.3), while
+ * AVSampleFormat is the same enum in both versions.
+ *
+ * Deliberately not carried across (both units):
+ *   - bits_per_coded_sample: 9.0.2 dropped the context field; nothing in these
+ *     two faces reads or writes it.
+ *   - frame metadata, frame side data, pkt_pos/pkt_size and reordered_opaque:
+ *     9.0.2 dropped some of these fields and the app reads none of them; the
+ *     side data stays on the modern frame and is released with it.
+ *   - AVCodecContext fields 9.0.2 added (alpha_mode, coded_side_data and the
+ *     like): no 4.4 counterpart, so there is nothing to publish.
  *
  * A pointer arriving that this shim did not allocate is either a legacy object
  * built by 4.4.5 code (read by its frozen layout) or a misuse: every entry
@@ -78,6 +88,7 @@ static int npa_subdec_modern_codec_id(int legacy)
 typedef struct npa_ctx_shadow {
     AVCodecContext *modern;
     AVCodecContext *shadow;
+    int closed; /* avcodec_close has no 9.0.2 counterpart; see npa_codec_close */
     struct npa_ctx_shadow *next;
 } npa_ctx_shadow;
 
@@ -221,6 +232,12 @@ static void npa_ctx_in(AVCodecContext *modern, const void *shadow)
     modern->time_base = NPA_LD(shadow, NPA_LEGACY_CTX_TIME_BASE, AVRational);
     modern->width = NPA_LD(shadow, NPA_LEGACY_CTX_WIDTH, int);
     modern->height = NPA_LD(shadow, NPA_LEGACY_CTX_HEIGHT, int);
+    /* The app's pixel formats are 4.4 values - its own format table
+     * (0x1016A58B8) is 4.4-numbered - so the modern decoder needs the
+     * translated one. The app never writes this on a shim-owned context, but
+     * the temporary 4.4.5 source context carries it, and this is the only way
+     * the video open path learns the pixel format. */
+    modern->pix_fmt = npa_modern_pixfmt(NPA_LD(shadow, NPA_LEGACY_CTX_PIX_FMT, int));
     modern->sample_aspect_ratio =
         NPA_LD(shadow, NPA_LEGACY_CTX_SAMPLE_ASPECT_RATIO, AVRational);
     modern->color_primaries =
@@ -270,6 +287,11 @@ static void npa_ctx_out(void *shadow, const AVCodecContext *modern)
     NPA_ST(shadow, NPA_LEGACY_CTX_TIME_BASE, AVRational, modern->time_base);
     NPA_ST(shadow, NPA_LEGACY_CTX_WIDTH, int, modern->width);
     NPA_ST(shadow, NPA_LEGACY_CTX_HEIGHT, int, modern->height);
+    /* Format values cross in the legacy direction (spec section 3.3): the app
+     * hands whatever it reads here straight to sws_getContext and to its own
+     * 4.4-numbered format table. */
+    NPA_ST(shadow, NPA_LEGACY_CTX_PIX_FMT, int,
+           npa_pix_fmt_to_legacy((int)modern->pix_fmt));
     NPA_ST(shadow, NPA_LEGACY_CTX_SAMPLE_ASPECT_RATIO, AVRational,
            modern->sample_aspect_ratio);
     NPA_ST(shadow, NPA_LEGACY_CTX_COLOR_PRIMARIES, int, (int)modern->color_primaries);
@@ -277,6 +299,11 @@ static void npa_ctx_out(void *shadow, const AVCodecContext *modern)
     NPA_ST(shadow, NPA_LEGACY_CTX_COLORSPACE, int, (int)modern->colorspace);
     NPA_ST(shadow, NPA_LEGACY_CTX_SAMPLE_RATE, int, modern->sample_rate);
     NPA_ST(shadow, NPA_LEGACY_CTX_CHANNELS, int, modern->ch_layout.nb_channels);
+    /* The audio frame consumer reads this (sub_100A89A28 @0x100A89CA0) and
+     * falls back to av_get_default_channel_layout when it is zero, so the
+     * round trip through the shadow has to carry the real mask. */
+    NPA_ST(shadow, NPA_LEGACY_CTX_CHANNEL_LAYOUT, int64_t,
+           npa_legacy_mask_from_layout(&modern->ch_layout));
     NPA_ST(shadow, NPA_LEGACY_CTX_SAMPLE_FMT, int, (int)modern->sample_fmt);
     NPA_ST(shadow, NPA_LEGACY_CTX_BLOCK_ALIGN, int, modern->block_align);
     NPA_ST(shadow, NPA_LEGACY_CTX_THREAD_COUNT, int, modern->thread_count);
@@ -293,18 +320,72 @@ static void npa_params_in(AVCodecParameters *modern, const void *shadow)
 {
     int channels = NPA_LD(shadow, NPA_LEGACY_PARAMS_CHANNELS, int);
     int64_t layout = NPA_LD(shadow, NPA_LEGACY_PARAMS_CHANNEL_LAYOUT, int64_t);
+    int type = NPA_LD(shadow, NPA_LEGACY_PARAMS_CODEC_TYPE, int);
 
-    modern->codec_type = (enum AVMediaType)NPA_LD(shadow, NPA_LEGACY_PARAMS_CODEC_TYPE, int);
+    modern->codec_type = (enum AVMediaType)type;
     modern->codec_id = (enum AVCodecID)npa_subdec_modern_codec_id(
         (int)NPA_LD(shadow, NPA_LEGACY_PARAMS_CODEC_ID, unsigned));
     modern->codec_tag = NPA_LD(shadow, NPA_LEGACY_PARAMS_CODEC_TAG, unsigned);
-    modern->format = NPA_LD(shadow, NPA_LEGACY_PARAMS_FORMAT, int);
     modern->bit_rate = NPA_LD(shadow, NPA_LEGACY_PARAMS_BIT_RATE, int64_t);
-    modern->sample_rate = NPA_LD(shadow, NPA_LEGACY_PARAMS_SAMPLE_RATE, int);
-    if (layout || channels) {
-        npa_layout_from_legacy_mask(&modern->ch_layout, layout);
-        if (modern->ch_layout.nb_channels == 0)
-            modern->ch_layout.nb_channels = channels;
+    modern->bits_per_coded_sample =
+        NPA_LD(shadow, NPA_LEGACY_PARAMS_BITS_PER_CODED_SAMPLE, int);
+    modern->bits_per_raw_sample =
+        NPA_LD(shadow, NPA_LEGACY_PARAMS_BITS_PER_RAW_SAMPLE, int);
+    modern->profile = NPA_LD(shadow, NPA_LEGACY_PARAMS_PROFILE, int);
+    modern->level = NPA_LD(shadow, NPA_LEGACY_PARAMS_LEVEL, int);
+    /*
+     * The playback unit carries real video and audio parameters through the
+     * app: the video open path is source context -> parameters_from_context ->
+     * parameters_to_context -> decoder context, and every hop goes through this
+     * translation. A field left out here is not "unused", it is a value the
+     * decoder never sees.
+     */
+    switch (type) {
+    case AVMEDIA_TYPE_VIDEO:
+        modern->format = npa_modern_pixfmt(NPA_LD(shadow, NPA_LEGACY_PARAMS_FORMAT, int));
+        modern->width = NPA_LD(shadow, NPA_LEGACY_PARAMS_WIDTH, int);
+        modern->height = NPA_LD(shadow, NPA_LEGACY_PARAMS_HEIGHT, int);
+        modern->sample_aspect_ratio =
+            NPA_LD(shadow, NPA_LEGACY_PARAMS_SAMPLE_ASPECT_RATIO, AVRational);
+        modern->field_order =
+            (enum AVFieldOrder)NPA_LD(shadow, NPA_LEGACY_PARAMS_FIELD_ORDER, int);
+        modern->color_range =
+            (enum AVColorRange)NPA_LD(shadow, NPA_LEGACY_PARAMS_COLOR_RANGE, int);
+        modern->color_primaries =
+            (enum AVColorPrimaries)NPA_LD(shadow, NPA_LEGACY_PARAMS_COLOR_PRIMARIES, int);
+        modern->color_trc =
+            (enum AVColorTransferCharacteristic)NPA_LD(shadow, NPA_LEGACY_PARAMS_COLOR_TRC, int);
+        modern->color_space =
+            (enum AVColorSpace)NPA_LD(shadow, NPA_LEGACY_PARAMS_COLORSPACE, int);
+        modern->chroma_location =
+            (enum AVChromaLocation)NPA_LD(shadow, NPA_LEGACY_PARAMS_CHROMA_LOCATION, int);
+        modern->video_delay = NPA_LD(shadow, NPA_LEGACY_PARAMS_VIDEO_DELAY, int);
+        break;
+    case AVMEDIA_TYPE_AUDIO:
+        /* AVSampleFormat is numbered the same in both versions. */
+        modern->format = NPA_LD(shadow, NPA_LEGACY_PARAMS_FORMAT, int);
+        modern->sample_rate = NPA_LD(shadow, NPA_LEGACY_PARAMS_SAMPLE_RATE, int);
+        if (layout || channels) {
+            npa_layout_from_legacy_mask(&modern->ch_layout, layout);
+            if (modern->ch_layout.nb_channels == 0)
+                modern->ch_layout.nb_channels = channels;
+        }
+        modern->block_align = NPA_LD(shadow, NPA_LEGACY_PARAMS_BLOCK_ALIGN, int);
+        modern->frame_size = NPA_LD(shadow, NPA_LEGACY_PARAMS_FRAME_SIZE, int);
+        modern->initial_padding = NPA_LD(shadow, NPA_LEGACY_PARAMS_INITIAL_PADDING, int);
+        modern->trailing_padding = NPA_LD(shadow, NPA_LEGACY_PARAMS_TRAILING_PADDING, int);
+        modern->seek_preroll = NPA_LD(shadow, NPA_LEGACY_PARAMS_SEEK_PREROLL, int);
+        break;
+    case AVMEDIA_TYPE_SUBTITLE:
+        /* 4.4's avcodec_parameters_to_context copies the stored dimensions for
+         * subtitles too; the format field is unused for them. */
+        modern->format = NPA_LD(shadow, NPA_LEGACY_PARAMS_FORMAT, int);
+        modern->width = NPA_LD(shadow, NPA_LEGACY_PARAMS_WIDTH, int);
+        modern->height = NPA_LD(shadow, NPA_LEGACY_PARAMS_HEIGHT, int);
+        break;
+    default:
+        modern->format = NPA_LD(shadow, NPA_LEGACY_PARAMS_FORMAT, int);
+        break;
     }
     {
         int size = NPA_LD(shadow, NPA_LEGACY_PARAMS_EXTRADATA_SIZE, int);
@@ -329,10 +410,52 @@ static void npa_params_out(void *shadow, const AVCodecParameters *modern)
     NPA_ST(shadow, NPA_LEGACY_PARAMS_CODEC_TAG, unsigned, modern->codec_tag);
     NPA_ST(shadow, NPA_LEGACY_PARAMS_EXTRADATA, void *, modern->extradata);
     NPA_ST(shadow, NPA_LEGACY_PARAMS_EXTRADATA_SIZE, int, modern->extradata_size);
-    NPA_ST(shadow, NPA_LEGACY_PARAMS_FORMAT, int, modern->format);
     NPA_ST(shadow, NPA_LEGACY_PARAMS_BIT_RATE, int64_t, modern->bit_rate);
-    NPA_ST(shadow, NPA_LEGACY_PARAMS_CHANNELS, int, modern->ch_layout.nb_channels);
-    NPA_ST(shadow, NPA_LEGACY_PARAMS_SAMPLE_RATE, int, modern->sample_rate);
+    NPA_ST(shadow, NPA_LEGACY_PARAMS_BITS_PER_CODED_SAMPLE, int,
+           modern->bits_per_coded_sample);
+    NPA_ST(shadow, NPA_LEGACY_PARAMS_BITS_PER_RAW_SAMPLE, int,
+           modern->bits_per_raw_sample);
+    NPA_ST(shadow, NPA_LEGACY_PARAMS_PROFILE, int, modern->profile);
+    NPA_ST(shadow, NPA_LEGACY_PARAMS_LEVEL, int, modern->level);
+    switch ((int)modern->codec_type) {
+    case AVMEDIA_TYPE_VIDEO:
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_FORMAT, int,
+               npa_pix_fmt_to_legacy((int)modern->format));
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_WIDTH, int, modern->width);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_HEIGHT, int, modern->height);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_SAMPLE_ASPECT_RATIO, AVRational,
+               modern->sample_aspect_ratio);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_FIELD_ORDER, int, (int)modern->field_order);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_COLOR_RANGE, int, (int)modern->color_range);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_COLOR_PRIMARIES, int,
+               (int)modern->color_primaries);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_COLOR_TRC, int, (int)modern->color_trc);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_COLORSPACE, int, (int)modern->color_space);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_CHROMA_LOCATION, int,
+               (int)modern->chroma_location);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_VIDEO_DELAY, int, modern->video_delay);
+        break;
+    case AVMEDIA_TYPE_AUDIO:
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_FORMAT, int, (int)modern->format);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_CHANNEL_LAYOUT, int64_t,
+               npa_legacy_mask_from_layout(&modern->ch_layout));
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_CHANNELS, int, modern->ch_layout.nb_channels);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_SAMPLE_RATE, int, modern->sample_rate);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_BLOCK_ALIGN, int, modern->block_align);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_FRAME_SIZE, int, modern->frame_size);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_INITIAL_PADDING, int, modern->initial_padding);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_TRAILING_PADDING, int, modern->trailing_padding);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_SEEK_PREROLL, int, modern->seek_preroll);
+        break;
+    case AVMEDIA_TYPE_SUBTITLE:
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_FORMAT, int, (int)modern->format);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_WIDTH, int, modern->width);
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_HEIGHT, int, modern->height);
+        break;
+    default:
+        NPA_ST(shadow, NPA_LEGACY_PARAMS_FORMAT, int, (int)modern->format);
+        break;
+    }
 }
 
 /* The modern object behind an app-visible codec context. A pointer this shim
@@ -365,8 +488,14 @@ static AVCodecParameters *npa_params_of(void *ptr, AVCodecParameters **temp)
     npa_params_shadow *entry = npa_params_find(ptr);
 
     *temp = NULL;
-    if (entry)
+    if (entry) {
+        /* Same rule as npa_ctx_of: the shadow is the app's copy, so anything
+         * written into it since the last crossing - the app's own stores, or
+         * the 4.4.5 avcodec_parameters_copy that fills a shim-allocated shadow
+         * in the source-context helper - has to reach the modern object. */
+        npa_params_in(entry->modern, entry->shadow);
         return entry->modern;
+    }
     if (!ptr)
         abort();
     *temp = avcodec_parameters_alloc();
@@ -647,6 +776,8 @@ static int npa_shadow_avcodec_open2(AVCodecContext *avctx, const AVCodec *codec,
     npa_ctx_in(entry->modern, avctx);
     ret = avcodec_open2(entry->modern, codec, options);
     npa_ctx_out(avctx, entry->modern);
+    if (ret >= 0)
+        entry->closed = 0;
     return ret;
 }
 
@@ -906,36 +1037,253 @@ NPA_EXPORT int npa_codec_avcodec_parameters_to_context(AVCodecContext *ctx,
     return npa_shadow_avcodec_parameters_to_context(ctx, par);
 }
 
-/*
- * The frame side of the codec unit is not implemented yet. These entries trap
- * instead of falling back to 4.4.5, so a call that reaches them is a defect and
- * not a silent pass; the task that adds frame materialisation replaces them.
- * avcodec_close has no 9.0.2 counterpart at all and stays shim-implemented.
- */
+/* ---- decoded frames ---------------------------------------------------- */
 
-NPA_EXPORT void npa_codec_avcodec_close(AVCodecContext *avctx)
+/*
+ * One legacy AVBuffer owns one modern frame. The app's 4.4 av_frame_unref and
+ * av_buffer_unref drive this frozen layout, so the refcount lives there and the
+ * last reference releases the modern frame. The app refs a received frame into
+ * its own wrapper (sub_100A817AC: av_frame_ref(wrapper+0x40, src)) before using
+ * it, which is exactly what that refcount is for.
+ */
+static void npa_frame_buffer_free(void *opaque, uint8_t *data)
 {
-    (void)avctx;
-    __builtin_trap();
+    AVFrame *modern = opaque;
+
+    (void)data;
+    av_frame_free(&modern);
 }
 
-NPA_EXPORT int npa_codec_avcodec_flush_buffers(AVCodecContext *avctx)
+/* The free callback doubles as the ownership tag: a buffer slot whose callback
+ * is not this function was not put there by this shim. */
+static int npa_frame_ref_is_ours(const void *ref_ptr)
 {
-    (void)avctx;
-    __builtin_trap();
+    const struct npa_legacy_avbuffer_ref *ref = ref_ptr;
+
+    return ref && ref->buffer && ref->buffer->free == npa_frame_buffer_free;
+}
+
+/*
+ * Drop the buffers a previous call installed in the app's frame. The app's own
+ * av_frame_unref normally did that already (its get_frame_defaults put
+ * extended_data back on the inline array), so this usually finds empty slots;
+ * anything still filled has to be ours.
+ */
+static void npa_frame_wipe(struct npa_legacy_frame *frame)
+{
+    unsigned i;
+
+    for (i = 0; i < 8; i++) {
+        if (!frame->buf[i])
+            continue;
+        if (!npa_frame_ref_is_ours(frame->buf[i]))
+            abort();
+        legacy_ref_release((struct npa_legacy_avbuffer_ref **)&frame->buf[i]);
+    }
+    if (frame->extended_buf || frame->nb_extended_buf)
+        abort();
+    /* This unit never builds the >8-channel pointer array, so anything but the
+     * inline one is a state it does not model. */
+    if (frame->extended_data && frame->extended_data != frame->data)
+        abort();
+    frame->extended_data = frame->data;
+}
+
+/*
+ * Materialise one modern frame into the app's legacy frame. The modern frame's
+ * ownership moves into the legacy buffers installed here, so the caller must
+ * not release it afterwards; the app's own releases do that when the last
+ * reference goes.
+ *
+ * Deliberately not carried across, because 9.0.2 no longer has the field or the
+ * app never reads it: pkt_pos/pkt_size and reordered_opaque (9.0.2 dropped
+ * them; 4.4.5 filled them from the packet and the context), the frame's
+ * metadata dictionary and its side data (the app reads neither; the side data
+ * stays with the modern frame and is released with it), and pkt_pts, which is
+ * the deprecated alias of pts.
+ */
+static void npa_frame_materialise(struct npa_legacy_frame *frame, AVFrame *modern,
+                                  int is_video)
+{
+    struct npa_legacy_avbuffer *buffer;
+    unsigned i;
+    unsigned planes = 0;
+
+    if (modern->hw_frames_ctx)
+        abort(); /* hardware frames are outside this unit */
+    if (modern->extended_buf || modern->nb_extended_buf)
+        abort(); /* more planes than the legacy array can point at */
+    if (modern->ch_layout.nb_channels > 8)
+        abort(); /* would need the extended pointer array */
+    for (i = 0; i < 8; i++)
+        if (modern->data[i])
+            planes++;
+    if (!planes)
+        abort();
+
+    buffer = calloc(1, sizeof(*buffer));
+    if (!buffer)
+        abort();
+    buffer->data = modern->data[0];
+    buffer->size = modern->buf[0] ? (int)modern->buf[0]->size : 0;
+    buffer->free = npa_frame_buffer_free;
+    buffer->opaque = modern;
+    atomic_init(&buffer->refcount, planes);
+
+    for (i = 0; i < 8; i++) {
+        struct npa_legacy_avbuffer_ref *ref;
+
+        if (!modern->data[i])
+            continue;
+        ref = calloc(1, sizeof(*ref));
+        if (!ref)
+            abort();
+        ref->buffer = buffer;
+        ref->data = modern->data[i];
+        ref->size = modern->buf[i] ? (int)modern->buf[i]->size
+                                   : (modern->buf[0] ? (int)modern->buf[0]->size : 0);
+        frame->buf[i] = ref;
+        frame->data[i] = modern->data[i];
+        frame->linesize[i] = modern->linesize[i];
+    }
+
+    frame->extended_data = frame->data;
+    frame->width = modern->width;
+    frame->height = modern->height;
+    frame->nb_samples = modern->nb_samples;
+    /* Format values cross in the legacy direction (spec section 3.3). Video is
+     * the renumbered enum; AVSampleFormat is the same in both versions. */
+    frame->format = is_video ? npa_pix_fmt_to_legacy((int)modern->format)
+                             : (int)modern->format;
+    frame->key_frame = (modern->flags & AV_FRAME_FLAG_KEY) ? 1 : 0;
+    frame->pict_type = (int)modern->pict_type;
+    frame->sample_aspect_ratio = modern->sample_aspect_ratio;
+    frame->pts = modern->pts;
+    frame->pkt_dts = modern->pkt_dts;
+    frame->repeat_pict = modern->repeat_pict;
+    frame->interlaced_frame = (modern->flags & AV_FRAME_FLAG_INTERLACED) ? 1 : 0;
+    frame->top_field_first = (modern->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) ? 1 : 0;
+    frame->reordered_opaque = 0; /* 4.4.5 took this from the context, which is 0 */
+    frame->sample_rate = modern->sample_rate;
+    frame->channel_layout = (uint64_t)npa_legacy_mask_from_layout(&modern->ch_layout);
+    frame->flags = modern->flags &
+                   (NPA_LEGACY_FRAME_FLAG_CORRUPT | NPA_LEGACY_FRAME_FLAG_DISCARD);
+    frame->color_range = (int)modern->color_range;
+    frame->color_primaries = (int)modern->color_primaries;
+    frame->color_trc = (int)modern->color_trc;
+    frame->colorspace = (int)modern->colorspace;
+    frame->chroma_location = (int)modern->chroma_location;
+    frame->best_effort_timestamp = modern->best_effort_timestamp;
+    /* 9.0.2 renamed the field: 4.4's pkt_duration is modern's duration. */
+    frame->pkt_duration = modern->duration;
+    frame->decode_error_flags = modern->decode_error_flags;
+    frame->channels = modern->ch_layout.nb_channels;
 }
 
 NPA_EXPORT int npa_codec_avcodec_send_packet(AVCodecContext *avctx,
-                                             const AVPacket *pkt)
+                                             const void *legacy_packet)
 {
-    (void)avctx;
-    (void)pkt;
-    __builtin_trap();
+    npa_ctx_shadow *entry = npa_ctx_find(avctx);
+    AVPacket *packet = NULL;
+    int ret;
+
+    if (!entry)
+        abort();
+    if (entry->closed)
+        abort(); /* decode after close */
+    /* No context refresh here: the app writes its decoder configuration before
+     * open2 (thread_count/thread_type), not per packet, and several of the
+     * fields a full refresh would write back are owned by the decoder while it
+     * runs. Writing those back every packet is not harmless - 9.0.2's H.264
+     * decoder then discards every non-key frame (measured: 17 decoded frames
+     * instead of 424 on a stream this shim decodes in full when the refresh is
+     * gone). See npa_ctx_in's callers for where the refresh does belong. */
+    if (legacy_packet) {
+        const void *data = NPA_LD(legacy_packet, NPA_LEGACY_PKT_DATA, void *);
+        int size = NPA_LD(legacy_packet, NPA_LEGACY_PKT_SIZE, int);
+
+        if (size < 0 || (size > 0 && !data))
+            abort();
+        packet = av_packet_alloc();
+        if (!packet)
+            abort();
+        /* The modern packet borrows the app's stack-local bytes; 9.0.2's
+         * avcodec_send_packet refs the packet, and a packet without a buffer is
+         * copied, so the app's memory never outlives the call. */
+        packet->data = (uint8_t *)(uintptr_t)data;
+        packet->size = size;
+        packet->pts = NPA_LD(legacy_packet, NPA_LEGACY_PKT_PTS, int64_t);
+        packet->dts = NPA_LD(legacy_packet, NPA_LEGACY_PKT_DTS, int64_t);
+        packet->duration = NPA_LD(legacy_packet, NPA_LEGACY_PKT_DURATION, int64_t);
+        packet->flags = NPA_LD(legacy_packet, NPA_LEGACY_PKT_FLAGS, int);
+        packet->stream_index = NPA_LD(legacy_packet, NPA_LEGACY_PKT_STREAM_INDEX, int);
+        packet->pos = NPA_LD(legacy_packet, NPA_LEGACY_PKT_POS, int64_t);
+    }
+    ret = avcodec_send_packet(entry->modern, packet);
+    av_packet_free(&packet);
+    return ret;
 }
 
-NPA_EXPORT int npa_codec_avcodec_receive_frame(AVCodecContext *avctx, AVFrame *frame)
+NPA_EXPORT int npa_codec_avcodec_receive_frame(AVCodecContext *avctx, void *legacy)
 {
-    (void)avctx;
-    (void)frame;
-    __builtin_trap();
+    npa_ctx_shadow *entry = npa_ctx_find(avctx);
+    struct npa_legacy_frame *frame = legacy;
+    AVFrame *modern;
+    int ret;
+
+    if (!entry || !frame)
+        abort();
+    if (entry->closed)
+        abort(); /* decode after close */
+    /* No context refresh: see npa_codec_avcodec_send_packet. */
+    /* 4.4's avcodec_receive_frame unrefs the frame it is given first; on
+     * EAGAIN the app must find it empty, exactly as before. */
+    npa_frame_wipe(frame);
+    modern = av_frame_alloc();
+    if (!modern)
+        abort();
+    ret = avcodec_receive_frame(entry->modern, modern);
+    if (ret < 0) {
+        av_frame_free(&modern);
+        return ret;
+    }
+    npa_frame_materialise(frame, modern, entry->modern->codec_type == AVMEDIA_TYPE_VIDEO);
+    return 0;
+}
+
+NPA_EXPORT void npa_codec_avcodec_flush_buffers(AVCodecContext *avctx)
+{
+    npa_ctx_shadow *entry = npa_ctx_find(avctx);
+
+    if (!entry)
+        abort();
+    if (entry->closed)
+        abort();
+    /* The app clears skip_loop_filter/skip_idct/skip_frame just before it
+     * flushes (sub_100A81590), and those have to reach the modern decoder for
+     * the discard behaviour to survive a seek. */
+    npa_ctx_in(entry->modern, avctx);
+    avcodec_flush_buffers(entry->modern);
+}
+
+/*
+ * 9.0.2 removed avcodec_close: releasing the decoder state is what
+ * avcodec_free_context does now. The app's close and free_context calls are
+ * adjacent (the thumbnail path ends with both), so the shim flushes and marks
+ * the context closed instead of releasing it early, and mirrors the one field
+ * the app could look at afterwards - 4.4's close cleared avctx->codec.
+ */
+NPA_EXPORT int npa_codec_avcodec_close(AVCodecContext *avctx)
+{
+    npa_ctx_shadow *entry = npa_ctx_find(avctx);
+
+    if (!entry)
+        abort();
+    if (entry->closed)
+        abort();
+    npa_ctx_in(entry->modern, avctx);
+    avcodec_flush_buffers(entry->modern);
+    entry->closed = 1;
+    NPA_ST(avctx, NPA_LEGACY_CTX_CODEC, void *, NULL);
+    return 0;
 }

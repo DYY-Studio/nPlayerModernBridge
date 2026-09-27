@@ -120,6 +120,14 @@ flush 时清零 `skip_loop_filter/skip_idct/skip_frame(0x33C/0x340/0x344)`。
 **回调 / `priv_data` / hw 字段：app 全无写入**（`get_buffer2`/`draw_horiz_band`/`get_format`/`execute*`/
 `priv_data`/`hw_device_ctx`/`hw_frames_ctx`/`refcounted_frames`；三处 `open2` 的 options 均为 NULL）。
 
+**同步时机（2026-09-27 实测裁定）**：全量 `npa_ctx_in` 只发生在**配置型入口**——`open2`、
+`parameters_to_context`、`flush_buffers`（app 在 flush 前清零 `skip_*`），以及字幕解码入口
+（app 在 `open2` 之后写 `pkt_timebase`）。**数据路径（`send_packet`/`receive_frame`）不回写 ctx**：
+app 在这条路径上不写配置（上面那张写入表里，播放路径的写都发生在 `open2` 之前），而若干字段是
+解码器运行期自有的。实测证据：把 `sample_aspect_ratio` 每包回写一次，9.0.2 的 H.264 解码器会把
+**除关键帧以外的每一帧都丢掉**——同一路流、同一份 shim，回写时解出 17 帧，不回写时解出 424 帧
+（音频与 MJPEG 不受影响，两者每次都是全量）。这条约束同样适用于以后新增的入口。
+
 ### 2.4 缓冲归属与释放
 
 - 跨 shim 的缓冲一律用 **9.0.2 自己的 `av_buffer_create(...)`** 表达（现代侧）；app 侧仍是 legacy 的

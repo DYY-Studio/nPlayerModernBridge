@@ -51,14 +51,15 @@ libass+ffmpeg selection
 selection, libass plus the whole FFmpeg 4.4.8, is
 `0ab724dc04125b44b69806fb60b30aad240289a59787d2bbe8be4aeaa88d98f4`; the split
 alternative, libass with the 4.4.8 core and the 9.0.2 scaler/resampler, is
-`3dbcf7de246581c5b876e533a463960a094643f88e790cda118240462de9a9de`. Every
-selection carries the manifest's app-level sites (see the README), so these
-anchors moved on 2026-09-28: first when the UPnP site started being applied to
-all of them, and the `--dylib ffmpeg` one again when the two font guards became
-app-level, since that is the only selection without libass. The artifacts the
-earlier matrix was accepted on therefore carry the previous hashes. Both
-selections rewrite the same 485 call sites plus the two font NOP guards, so they
-differ only in which dylibs carry the units.
+`3dbcf7de246581c5b876e533a463960a094643f88e790cda118240462de9a9de`, the three-unit
+artifact the bridge was device-accepted on. Every selection carries the
+manifest's app-level sites (see the README), so these anchors moved on
+2026-09-28: first when the UPnP site started being applied to all of them, and
+the `--dylib ffmpeg` one again when the two font guards became app-level, since
+that is the only selection without libass. The artifacts the earlier matrix was
+accepted on therefore carry the previous hashes. Both selections rewrite the
+same 485 call sites plus the two font NOP guards, so they differ only in which
+dylibs carry the units.
 
 The whole-4.4.8 dylib carries the `ffmpeg-core` code and the scaler/resampler of
 the same closure, so it inherits every core result below; the new part is that
@@ -95,3 +96,45 @@ the queue empties rather than frames being dropped). Retiming `0x100AE3C7C` to
 alike, and a build left at 1000 ms stalls in the same place with the whole
 FFmpeg 4.4.8 payload installed - the stall follows that constant, not the FFmpeg
 version. Measured with VP9 4K60 material.
+
+## 2026-09-27: the decode faces, and the output side at 4.4.8
+
+Two more faces landed on the 9.0.2 core after the demux face, and the output side
+landed beside them on 4.4.8.
+
+- `ffmpeg-subdecode` (subtitle decoding) and `ffmpeg-codec` (playback, probe and
+  poster software decode, 12 APIs over 46 call sites) join `ffmpeg-demux`,
+  `libswscale` and `libswresample` in `LibFFmpegCore902Bridge.dylib`. Their device
+  rows are the `subtitle-demux-face` / `subtitle-decode` and `ffmpeg-codec`
+  entries in `dev/acceptance.json`.
+- `LibFFmpegOut448Bridge.dylib` carries the **output** side at 4.4.8 in three
+  units - `ffmpeg-hls448`, `ffmpeg-spdif448`, `ffmpeg-mjpeg448`, 154 call sites
+  over 90 entry points, no translation and no shadow - and is selectable
+  together with the 9.0.2 input side. The two generations coexist in one process:
+  playing an AC3 file and a subtitle sample leaves all six 9.0.2-side units
+  `NEW` with no crash. Its own rows: the user's info-panel/poster row reads
+  `ffmpeg-mjpeg448` `NEW`; the SPDIF face reads `NEW` under an in-process drive
+  that raises the app's SPDIF flag (the app enables SPDIF only on an HDMI route,
+  so it never builds `media::SPDIF` here on its own); with the dylib removed the
+  same drive reads `OLD` while the other units keep `NEW`, so the whole-dylib
+  fallback holds. The HLS face is not drivable in this environment - the app
+  traps before `MediaServer::CreateHLSSession` - so it keeps site/build-level
+  evidence only, and the SPDIF muxer output was not byte-asserted.
+- Defect found on the way, in the already accepted `ffmpeg-codec` face rather
+  than in the new unit: playing an AC3 file aborted the app. The
+  AudioToolboxDecoder builder (`sub_100B63FA4`) hands its own 4.4.5
+  `AVCodecParameters` (allocated at `0x100B63FFC`) to a claimed
+  `avcodec_parameters_from_context` site, so the shim found no shadow and aborted
+  by design. Claiming `0x100B63FFC`/`0x100B64020` makes that object the unit's,
+  while the context pair (`0x100B63FF4`/`0x100B63E5C`) and `to_context` stay on
+  4.4.5 and never cross. Device-verified; the same fix is on
+  `feat/ffmpeg-demux-class-a`.
+- Anchors: the 4.4.8 selections and the default are 09dcc851..., 56b96f63...,
+  9f7acf21..., 0ab724dc..., 3dbcf7de... in the order above; the 9.0.2 pair is
+  e823aa1a... (`libass + ffmpeg-core902`, moved twice: 5a33aa13... -> b7a8f017...
+  with the AC3 fix -> e823aa1a... with the app-level sites) and c0990ab7...
+  (`libass + ffmpeg-core902 + ffmpeg-out448`, was 4abfb2ae...).
+- The recipes used for the output side - reading the state words by PID, the
+  SPDIF flag drive, the site-byte payload check, lldb on an abort - are recorded
+  in `notes/playcover-debug-path.md` section 14.
+

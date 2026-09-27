@@ -216,6 +216,19 @@ static void npa_layout_from_legacy_mask(AVChannelLayout *layout, int64_t mask)
     }
 }
 
+/*
+ * The other direction: a modern layout as the 4.4 int64 mask. 4.4 could only
+ * express a native mask, so a custom or ambisonic layout has no legacy value
+ * and reports 0 - the state a 4.4 context was in when it knew only a channel
+ * count. npa_ctx_out publishes the count next to it, so nothing is lost.
+ */
+static int64_t npa_legacy_mask_from_layout(const AVChannelLayout *layout)
+{
+    if (layout->order == AV_CHANNEL_ORDER_NATIVE)
+        return (int64_t)layout->u.mask;
+    return 0;
+}
+
 NPA_EXPORT struct SwrContext *npa_swr_alloc_set_opts(
     struct SwrContext *context,
     int64_t outChannelLayout,

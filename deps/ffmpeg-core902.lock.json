@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "target": "arm64-apple-ios13.0",
+  "sources": {
+    "ffmpeg-core902": {
+      "version": "9.0.2",
+      "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+      "archive_sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+      "archive_name": "ffmpeg-9.0.2.tar.xz"
+    },
+    "dav1d-core902": {
+      "version": "1.5.4",
+      "url": "https://download.videolan.org/pub/videolan/dav1d/1.5.4/dav1d-1.5.4.tar.xz",
+      "archive_sha256": "686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5",
+      "archive_name": "dav1d-1.5.4.tar.xz",
+      "build_options": {
+        "enable_asm": true,
+        "enable_tools": false,
+        "enable_tests": false,
+        "enable_examples": false,
+        "logging": true,
+        "bitdepths": "8,16"
+      }
+    }
+  },
+  "prefix": "build/deps/ffmpeg-core902",
+  "include_root": "build/deps/ffmpeg-core902/include",
+  "lib_root": "build/deps/ffmpeg-core902/lib",
+  "pkgconfig_root": "build/deps/ffmpeg-core902/pkgconfig",
+  "closure": "build/deps/ffmpeg-core902-closure.txt",
+  "verification": "build/deps/ffmpeg-core902-verification.json",
+  "output_archives": [
+    "build/deps/ffmpeg-core902/lib/libavformat.a",
+    "build/deps/ffmpeg-core902/lib/libavcodec.a",
+    "build/deps/ffmpeg-core902/lib/libswscale.a",
+    "build/deps/ffmpeg-core902/lib/libswresample.a",
+    "build/deps/ffmpeg-core902/lib/libavutil.a",
+    "build/deps/ffmpeg-core902/lib/libdav1d.a"
+  ],
+  "system_link_args": [
+    "-lz",
+    "-lbz2",
+    "-liconv",
+    "-framework",
+    "VideoToolbox",
+    "-framework",
+    "CoreMedia",
+    "-framework",
+    "CoreVideo",
+    "-framework",
+    "Security",
+    "-framework",
+    "CoreFoundation",
+    "-framework",
+    "CoreServices"
+  ],
+  "configure_args": [
+    "--prefix={prefix}",
+    "--target-os=darwin",
+    "--arch=arm64",
+    "--enable-cross-compile",
+    "--enable-pic",
+    "--cc={cc}",
+    "--as={cc}",
+    "--ar={ar}",
+    "--ranlib={ranlib}",
+    "--nm={nm}",
+    "--strip={strip}",
+    "--sysroot={sdk}",
+    "--extra-cflags={cflags}",
+    "--extra-ldflags={ldflags}",
+    "--disable-autodetect",
+    "--disable-doc",
+    "--disable-programs",
+    "--disable-avdevice",
+    "--disable-avfilter",
+    "--disable-shared",
+    "--enable-static",
+    "--enable-zlib",
+    "--enable-bzlib",
+    "--enable-iconv",
+    "--enable-videotoolbox",
+    "--enable-securetransport",
+    "--enable-libdav1d",
+    "--disable-decoder=av1"
+  ],
+  "notes": [
+    "AV1 is decoded by libdav1d here, and the native av1 decoder is switched off: 9.0.2's av1dec is hardware-only (get_pixel_format() returns AVERROR(ENOSYS) without avctx->hwaccel, upstream comment \"Since now the av1 decoder doesn't support native decode\"), and the app never hands FFmpeg a hardware device, so with the native decoder registered first find_decoder(AV_CODEC_ID_AV1) could only ever fail. The 4.4 closures keep dav1d 0.9.2 (they need dav1d_apply_grain), so this closure uses its own dav1d-core902 source key."
+  ]
+}

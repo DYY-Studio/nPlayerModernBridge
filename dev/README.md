@@ -75,8 +75,8 @@ the closure is built with `deps/ios-arm64.cross` and `deps/macos-arm64.native`.
    `acceptance.json`.
 
 The expected packaged main hashes, after the 2026-09-26 fixes and with the
-manifest's app-level sites (the two font guards and the UPnP retiming) applied
-to every selection (2026-09-28), are
+manifest's app-level sites (the two font guards and the UPnP retiming) applied to
+every selection (2026-09-28), are
 `09dcc851d8a26fb27a6d7dbc789e3147f146ff4a7e6f1eb6b9df82bf105fd469` for
 `--dylib libass`, `56b96f63a8f751f8cca791a53b6ebcd7fe92b594c7a633028bd0561603bb63b5`
 for `--dylib ffmpeg` and
@@ -84,8 +84,15 @@ for `--dylib ffmpeg` and
 libass + ffmpeg. The default selection, libass plus the whole FFmpeg 4.4.8, is
 `0ab724dc04125b44b69806fb60b30aad240289a59787d2bbe8be4aeaa88d98f4`; the split
 alternative, libass + ffmpeg-core + ffmpeg, is
-`3dbcf7de246581c5b876e533a463960a094643f88e790cda118240462de9a9de`. The pre-fix values
-(`19d3447193bcd66e03b850876a1281c4bceac087dd50cf6db534e0527fb3a887` and
+`3dbcf7de246581c5b876e533a463960a094643f88e790cda118240462de9a9de`. The 9.0.2
+selections: `libass + ffmpeg-core902` is
+`e823aa1a3806edf331e46eaba9c1d297112de9ddbe7c101df7e68a4273672a50` and
+`libass + ffmpeg-core902 + ffmpeg-out448`, which adds the 4.4.8 output side, is
+`c0990ab70cf7c79cada52923fe889b7e4ffea47cc0481d37b00bfd22285d3fa5`. Every value
+here was measured on the merged tree on 2026-09-28; the two 9.0.2 ones moved with
+the app-level sites, and `libass + ffmpeg-core902` had already moved once before
+that with the AC3 fix (b7a8f017..., 4abfb2ae... are the pre-merge values). The
+pre-fix values(`19d3447193bcd66e03b850876a1281c4bceac087dd50cf6db534e0527fb3a887` and
 `4d7e79ba3d2a6a1afaa68948002ee3da36ed9c33cf1e7801df122539572b2272` for the
 default selection) are void: those payloads never activated the bridge (see
 `acceptance.json`).
@@ -109,8 +116,9 @@ re-check the offsets asserted in `bridge/ffmpeg-core-abi.h`.
 
 1. `make bridge` and `make verify`.
 2. Publish `build/LibASSBridge.dylib`, `build/LibFFmpegFullBridge.dylib`,
-   `build/LibFFmpegBridge.dylib` and `build/LibFFmpegCoreBridge.dylib`, plus
-   `libkeystone.dylib`, as release assets together with their SHA-256, plus
+   `build/LibFFmpegBridge.dylib`, `build/LibFFmpegCoreBridge.dylib`,
+   `build/LibFFmpegCore902Bridge.dylib` and `build/LibFFmpegOut448Bridge.dylib`,
+   plus `libkeystone.dylib`, as release assets together with their SHA-256, plus
    `LICENSE` and `THIRD-PARTY.md`. These are host-side products; `make bootstrap`
    reproduces the assembler.
 3. When any pinned dependency version changes, update `THIRD-PARTY.md` and the

@@ -18,7 +18,10 @@ UNITS = MANIFEST.units()
 BUILD = ROOT / "build" / "macho"
 BRIDGES = {
     "libass": ROOT / "build" / "LibASSBridge.dylib",
+    "ffmpeg": ROOT / "build" / "LibFFmpegBridge.dylib",
+    "ffmpeg-core": ROOT / "build" / "LibFFmpegCoreBridge.dylib",
     "ffmpeg-full": ROOT / "build" / "LibFFmpegFullBridge.dylib",
+    "ffmpeg-core902": ROOT / "build" / "LibFFmpegCore902Bridge.dylib",
 }
 
 

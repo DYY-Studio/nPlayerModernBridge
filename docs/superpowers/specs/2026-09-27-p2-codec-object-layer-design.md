@@ -175,6 +175,14 @@ app 在这条路径上不写配置（上面那张写入表里，播放路径的�
    `libsvtav1` 自造 AV1 样本能解、能播、不崩。后备方案 = 给 9.0.2 闭包加 `libdav1d ≥1.0.0`
    （`deps/build_ffmpeg_core.py::build_dav1d` 路径现成，meson 在项目 venv 里），仅在原生不达标时启用，
    且必须经用户确认。
+
+   **（2026-09-27 落地：后备方案被触发。）** 原生解码器**只支持硬解**——`av1dec.c::get_pixel_format()`
+   在 `avctx->hwaccel` 为空时直接返回 `AVERROR(ENOSYS)`（上游注释 "Since now the av1 decoder doesn't
+   support native decode"），而 app 从不给 FFmpeg 传硬解设备。设备实测：`find_decoder(32797)` 成功、
+   `open2` 返回 0、`send_packet` 返回 **-78**、`receive_frame` 恒 EAGAIN。用户裁定采用
+   **加 libdav1d（1.5.4）+ 关掉原生 `av1` 解码器**：`--enable-libdav1d` 与 `--disable-decoder=av1`，
+   于是 `find_decoder(AV_CODEC_ID_AV1)` 自然返回软件解码器，shim 侧无需任何按名择优。宿主探针：
+   AV1 250/250 帧，H.264/AAC/MJPEG 不变（424/733/425）。
 2. **解码器集合对账**：`avcodec_find_decoder` 从此在 9.0.2 自己的表里查找。现有
    `dev/tools/enable_set_diff.py` 对 `LibFFmpegCore902Bridge.dylib` 报出「app 有、闭包没有」= `libdav1d`
    等 4 项。计划里要把该差分**收敛到只比解码器名**，并逐项给出处置（补齐 / 接受差异 / 记为不覆盖）。

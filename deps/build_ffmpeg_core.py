@@ -33,14 +33,30 @@ import build_deps
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = Path(__file__).resolve().parent / "ffmpeg-core.lock.json"
-DAV1D_SOURCE = "dav1d"
+DAV1D_PREFIX = "dav1d"
 TARGET = build_deps.TARGET
+
+
+def dav1d_source_key(lock: dict[str, Any]) -> str | None:
+    """The lock's dav1d source key, if it declares one.
+
+    The key is per-lock on purpose: extract_source() hands back an existing
+    build/deps/sources/<key>/tree verbatim, so two closures that need different
+    dav1d releases (the 4.4 core wants 0.9.2 for dav1d_apply_grain, the 9.0.2
+    core wants >= 1.0.0) must not share the key.
+    """
+
+    return next(
+        (name for name in lock["sources"] if name.startswith(DAV1D_PREFIX)), None
+    )
 
 
 def ffmpeg_source_key(lock: dict[str, Any]) -> str:
     """The lock's single non-dav1d source key."""
 
-    return next(name for name in lock["sources"] if name != DAV1D_SOURCE)
+    return next(
+        name for name in lock["sources"] if not name.startswith(DAV1D_PREFIX)
+    )
 
 
 def load_lock(path: Path = LOCK_PATH) -> dict[str, Any]:
@@ -53,7 +69,7 @@ def load_lock(path: Path = LOCK_PATH) -> dict[str, Any]:
     if (
         not isinstance(sources, dict)
         or not 1 <= len(sources) <= 2
-        or (len(sources) == 2 and DAV1D_SOURCE not in sources)
+        or (len(sources) == 2 and dav1d_source_key(data) is None)
     ):
         raise ValueError("lock must declare one FFmpeg source and optional dav1d")
     for name, entry in sources.items():
@@ -72,7 +88,7 @@ def load_lock(path: Path = LOCK_PATH) -> dict[str, Any]:
         path = Path(item)
         if path.parent != prefix / "lib" or path.suffix != ".a":
             raise ValueError(f"output path is unsafe: {item}")
-    if DAV1D_SOURCE in sources and not any(
+    if dav1d_source_key(data) is not None and not any(
         Path(item).name == "libdav1d.a" for item in data["output_archives"]
     ):
         raise ValueError("closure must carry libdav1d.a when it builds dav1d")
@@ -88,7 +104,9 @@ def archive_paths(lock: dict[str, Any]) -> tuple[Path, ...]:
 def build_dav1d(lock: dict[str, Any]) -> None:
     """Build libdav1d into the closure prefix (meson, arm64 iOS 13)."""
 
-    source = build_deps.extract_source(DAV1D_SOURCE, lock)
+    key = dav1d_source_key(lock)
+    assert key is not None
+    source = build_deps.extract_source(key, lock)
     prefix = ROOT / lock["prefix"]
     build = ROOT / "build" / "deps" / "build" / "dav1d-core"
     if build.exists():
@@ -123,7 +141,7 @@ def build_dav1d(lock: dict[str, Any]) -> None:
         "-Dincludedir=include",
         "-Ddefault_library=static",
     ]
-    for key, value in lock["sources"][DAV1D_SOURCE]["build_options"].items():
+    for key, value in lock["sources"][dav1d_source_key(lock)]["build_options"].items():
         rendered = "true" if value is True else "false" if value is False else str(value)
         arguments.append(f"-D{key}={rendered}")
     build_deps.run(arguments, env)
@@ -191,7 +209,7 @@ def verify_closure(
     report_archives = {
         path.name: build_deps._validate_archive(path, env) for path in archives
     }
-    if DAV1D_SOURCE in lock["sources"] and "libdav1d.a" not in report_archives:
+    if dav1d_source_key(lock) is not None and "libdav1d.a" not in report_archives:
         raise ValueError("closure is missing libdav1d.a")
 
     paths = list(archives) + [path for path in include_root.rglob("*") if path.is_file()]
@@ -214,8 +232,8 @@ def verify_closure(
         "system_link_args": list(lock["system_link_args"]),
         "path_hygiene": "passed",
     }
-    if DAV1D_SOURCE in lock["sources"]:
-        report["dav1d"] = lock["sources"][DAV1D_SOURCE]["version"]
+    if dav1d_source_key(lock) is not None:
+        report["dav1d"] = lock["sources"][dav1d_source_key(lock)]["version"]
     verification = ROOT / lock["verification"]
     verification.parent.mkdir(parents=True, exist_ok=True)
     verification.write_text(
@@ -236,7 +254,7 @@ def build(lock_path: Path = LOCK_PATH) -> dict[str, Any]:
     prefix = ROOT / lock["prefix"]
     if prefix.exists():
         shutil.rmtree(prefix)
-    if DAV1D_SOURCE in lock["sources"]:
+    if dav1d_source_key(lock) is not None:
         build_dav1d(lock)
 
     env = build_deps.isolated_environment(

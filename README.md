@@ -7,10 +7,13 @@ Replace the bundled ...
 - FFmpeg 4.4.5 libs with one of
   1. Full **FFmpeg 4.4.8** 
   2. Swscale + Swresample **FFmpeg 9.0.2** + Core **FFmpeg 4.4.8**
+  3. Input **FFmpeg 9.0.2** (Nightly) + Output **FFmpeg 4.4.8**
 
 ... in your own **nPlayer 3.13.0** install. 
 
 No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processing to this great player.
+
+Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framerate limits.
 
 > [!Warning]
 >
@@ -20,33 +23,38 @@ No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processi
 
 `npa-patch` takes a decrypted nPlayer IPA you own and writes a patched copy:
 
-- three sites are declared at app level, so every selection carries them - even a
-  `--dylib ffmpeg` patch with no libass: the two guards that are turned into
-  NOPs, which is what lets ASS/SSA font attachments work for every video in a
-  playback sequence rather than only the first, and a UPnP/SSDP retry wait
-  retimed from 1000 ms to 50 ms, which removes the stall the app used to take as
+- three sites are declared at app level, so every selection carries them
+  - the two guards that are turned into NOPs, which is what lets ASS/SSA font attachments work for every video in a
+  playback sequence rather than only the first
+  - a UPnP/SSDP retry wait retimed from 1000 ms to 50 ms, which removes the stall the app used to take as
   playback starts;
-- libass 0.17.5 (with FreeType, HarfBuzz, FriBidi, fontconfig and expat) takes
+- libass 0.17.5 (with FreeType, **HarfBuzz**, FriBidi, fontconfig and expat) takes
   over the 15 libass entry points the app calls;
-- FFmpeg is replaced per unit, one generation at a time (table below); each unit
-  arbitrates its own state at first call and falls back to the app's own build on
-  its own.
+- FFmpeg is replaced per unit, and each unit is one generation of the library (table below);
+  - Units can be selected on their own or in the combinations the table notes.
+  - Each arbitrates its own state at first call and falls back to the app's own build on its own.
 
 | selection | dylib | carries | ffmpeg |
 |---|---|---|---|
 | `libass` | `LibASSBridge.dylib` | subtitles | libass 0.17.5 |
 | `ffmpeg-full` *(default)* | `LibFFmpegFullBridge.dylib` | the whole surface: demux, decode, encode, mux, bitstream filters, scaler, resampler | 4.4.8 |
-| `ffmpeg` + `ffmpeg-core` | `LibFFmpegBridge.dylib` + `LibFFmpegCoreBridge.dylib` | the same call sites as `ffmpeg-full`, split: core at 4.4.8, scaler/resampler at 9.0.2 | 4.4.8 / 9.0.2 |
-| `ffmpeg-core902` | `LibFFmpegCore902Bridge.dylib` | the input side: demux, subtitle decoding, playback/probe/poster decoding, scaler, resampler | 9.0.2 |
-| `ffmpeg-out448` | `LibFFmpegOut448Bridge.dylib` | the output side: HLS session and muxer, SPDIF, poster encoding - pairs with `ffmpeg-core902` | 4.4.8 |
+| `ffmpeg-core` | `LibFFmpegCoreBridge.dylib` | the core: demux, decode, encode, mux, bitstream filters | 4.4.8 |
+| `ffmpeg` | `LibFFmpegBridge.dylib` | the scaler and resampler - usually pairs with `ffmpeg-core` | 9.0.2 |
+| `ffmpeg-core902` *(nightly)* | `LibFFmpegCore902Bridge.dylib` | the input side: demux, subtitle decoding, playback/probe/poster decoding, scaler, resampler | 9.0.2 |
+| `ffmpeg-out448` | `LibFFmpegOut448Bridge.dylib` | the output side: HLS session and muxer, SPDIF, poster encoding - usually pairs with `ffmpeg-core902` | 4.4.8 |
+
+> [!Important]
+> 
+> Selecting `ffmpeg` and `ffmpeg-core` together is the verified form, 
+> each alone is selectable but unverified.
 
 Selections whose call sites overlap are mutually exclusive: the tool refuses the
-combination before writing anything. Every dylib is built from this repository and
+combination before writing anything. 
+
+Every dylib is built from this repository and
 links system libraries and frameworks only. What the units are, why they are
 grouped this way, what each dylib links and how a fallback behaves are in
 [docs/Internals.md](docs/Internals.md).
-
-Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framerate limits.
 
 ## Requirements
 

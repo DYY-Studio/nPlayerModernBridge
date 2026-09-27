@@ -358,25 +358,42 @@ git commit -m "test: record the subtitle decode unit acceptance"
 
 ---
 
-## Task 7: 整 dylib 回退 A/B（**用户停点 B**）
+## Task 7: 整 dylib 回退 A/B
 
 **Files:**
 - Modify: `dev/acceptance.json`（同一条目的回退行）
 
 **Interfaces:**
-- Consumes: Task 6 的素材与产物。
+- Consumes: Task 6 的素材与**已安装**产物。
 - Produces: R7 的证明记录。
 
-- [ ] **Step 1: 打一个只选 `libass` 的产物（我来做）**
+**做法：不另做产物，直接从已安装的包里抽掉桥 dylib**——弱加载使 app 仍能启动，而身份校验（dylib 在期望
+路径、basename 与导出符号对得上）失败正是单元发布 `OLD` 的条件。
 
-即不含 `ffmpeg-core902`；记下锚点。
+- [ ] **Step 1: 备份并抽掉 dylib**
 
-- [ ] **Step 2: 请用户安装并读状态字（停下来等）**
+```bash
+APP=~/Library/Containers/io.playcover.PlayCover/Applications/com.newin.nplayer.basic.app
+BK=/private/var/folders/rx/pf75s9k53vg45_mtzdbkh7hh0000gn/T/opencode
+cp "$APP/Frameworks/LibFFmpegCore902Bridge.dylib" "$BK/LibFFmpegCore902Bridge.dylib.bak"
+rm "$APP/Frameworks/LibFFmpegCore902Bridge.dylib"
+```
+
+- [ ] **Step 2: 重启 app、驱动、读状态字**
+
+`open -b com.newin.nplayer.basic`，再按 `notes/playcover-debug-path.md` §3 喂一个媒体文件、§4 读数。
 
 Expected: `ffmpeg-core902` 承载的**全部 4 个单元**（`ffmpeg-demux`/`libswscale`/`libswresample`/
 `ffmpeg-subdecode`）读 `3 (OLD)`，`libass` 保持 `2 (NEW)`，字幕与播放行为等同 app 自带 4.4.5。
 
-- [ ] **Step 3: 写进条目并 Commit**
+（若 app 因包签名失效拒绝启动：把备份拷回 `Frameworks/`；需要时改用"只选 `libass` 的产物"这条路，
+并在条目里写明用的是哪种做法。）
+
+- [ ] **Step 3: 还原并写条目**
+
+把 dylib 拷回 `Frameworks/`，确认状态字恢复 `2 (NEW)`，把两种状态的结果都写进条目。
+
+- [ ] **Step 4: Commit**
 
 ```bash
 git add dev/acceptance.json

@@ -92,7 +92,7 @@ rows = re.findall(r"^\| `npa_", appendix, re.M)
 print("API 行", len(rows))
 PY
 ```
-Expected: 附录站点数 = 171（若有站点被移出则等于新数字）、剔除 = 2、API 行 = 72，与 §3.2 表格一致。
+Expected: 附录站点数 = **155**、剔除 = **1**、API 行 = **67**，与 §3.2 表格（认领 154）一致。
 
 - [ ] **Step 4: Commit**
 
@@ -122,10 +122,11 @@ git commit -m "docs: freeze the output-side site table after attribution"
 
 ```python
 # 1. 三个域存在，逐域站点集合等于冻结表
-# 2. 并集恰为 169（或 Task 1 修正后的数字），且三域两两不相交
+# 2. 并集恰为 154，且三域两两不相交
 # 3. 与 9.0.2 五域按“地址”零重叠（不要用 (地址, 符号) 配对比较）
 # 4. 每个 API 的 old_target == ffmpeg-core 域同名 API 的 old_target
-# 5. exclusion：0x100B300F0 / 0x100B63F88 / 0x100A469C0 / 0x100A469E0 / 0x100A469E8 不在集合内
+# 5. exclusion：0x100B300F0 / 0x100A469C0 / 0x100A469E0 / 0x100A469E8，
+#    以及 0x100B63xxx-0x100B64xxx 的 16 个（主播放音频路径）都不在集合内
 # 6. ffmpeg-out448 的 conflicts 与 ffmpeg-core / ffmpeg-full 对称
 ```
 
@@ -185,7 +186,7 @@ for s in syms:
 PY
 ```
 
-Expected: **72**（与 spec §4 一致）。
+Expected: **67**（与 spec §4 一致）。
 
 - [ ] **Step 2: 写 bridge 源**
 
@@ -310,8 +311,8 @@ sha256 与 UUID（二者因重签名不同，条目里写明）。
 
 - [ ] **Step 1: 写验收条目**
 
-variant `ffmpeg-out448`，内容：产物锚点与三份 dylib 哈希；域与站点数（130/26/13，认领 169）；条目要点 =
-零翻译零影子、复用 4.4.8 闭包、72 导出、`old_target` 与 `ffmpeg-core` 一致、两个剔除项留给 `ffmpeg-codec`、
+variant `ffmpeg-out448`，内容：产物锚点与三份 dylib 哈希；域与站点数（130/11/13，认领 154，入口 67）；条目要点 =
+零翻译零影子、复用 4.4.8 闭包、67 导出、`old_target` 与 `ffmpeg-core` 一致、两个剔除项留给 `ffmpeg-codec`、
 与 9.0.2 五域地址级零重叠、与 4.4.8 全核故意重叠由 conflicts 正当化；行 = HLS（驱动 + `canPassthru==0` 断言 +
 分片 ffprobe）、SPDIF（驱动 + IEC 61937 帧头断言）、封面（用户信息面板行）、状态字 9 项、整 dylib 回退 A/B、
 P0–P2 回归；未实测/盲区照 spec §9 列出。

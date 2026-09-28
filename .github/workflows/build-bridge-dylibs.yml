@@ -34,9 +34,10 @@ permissions:
 
 env:
   # The release set (dev/README.md, Release checklist), declared once so the
-  # hash step and the upload cannot drift apart. A listed file that is missing
-  # fails the hash step; a dylib the build produced that nobody listed fails
-  # the check that follows it.
+  # hash step and the upload cannot drift apart. It is checked in both
+  # directions: the hash step fails on a listed file that is missing, and the
+  # "Check the artifact list covers every dylib built" step fails on a dylib the
+  # build produced that nobody listed.
   ARTIFACTS: |-
     build/LibASSBridge.dylib
     build/LibFFmpegFullBridge.dylib
@@ -222,3 +223,8 @@ jobs:
             build/bridge/*-verification.json
             PROVENANCE.txt
           if-no-files-found: error
+          # A re-run of this workflow is a new attempt at the same run, whose
+          # previous artifacts still exist, and upload-artifact refuses a name
+          # that is already taken. Replace this run's copy instead of failing
+          # the re-run over it.
+          overwrite: true

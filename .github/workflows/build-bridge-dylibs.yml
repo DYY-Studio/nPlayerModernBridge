@@ -1,14 +1,22 @@
 # Build the seven bridge dylibs and the host assembler from the pinned sources
-# in this repository, and publish them as one downloadable Actions artifact,
-# so a release asset set can be reproduced without a local toolchain.
+# in this repository, and publish them together with the reports that verify
+# them, so a release asset set can be rebuilt without a local toolchain.
 #
 # Manual only: the run takes about an hour and its output is a release product.
 #
-# Everything that fed a build is recorded in the run summary next to the
-# SHA-256 of each file it produced: the runner image, the Xcode it selected and
-# the iOS SDK that carried, uv, and Python. The SDK is the one input that moves
-# the numbers frozen in the manifest's `target_abi`, which is why it is
-# selectable and always logged.
+# These dylibs are NOT byte-reproducible, and this workflow does not pretend
+# otherwise: `make deps` rebuilds the static closures from scratch, so the
+# archives, and the dylibs linked from them, differ on every run
+# (dev/acceptance.json, "reproducibility"). The contract for a shipped dylib is
+# its verification report, which is why the artifact carries
+# build/bridge/<id>-verification.json next to each dylib, and why the hash table
+# this run prints is labelled as belonging to that one build.
+#
+# What is pinned is every input that decides what gets built: the dependency
+# locks, the runner image, the Xcode selected below and the iOS SDK it carries,
+# uv and Python. PROVENANCE.txt records all of them and ships inside the
+# artifact; the SDK is the one that moves the numbers frozen in the manifest's
+# `target_abi`, which is why it is selectable and always logged.
 name: Build bridge dylibs
 
 on:
@@ -25,10 +33,11 @@ permissions:
   contents: read
 
 env:
-  # The release set (dev/README.md, Release checklist), in one place so the
-  # hash step and the upload cannot drift apart. Hashing fails the step on a
-  # missing file, so the upload never publishes a partial set.
-  ARTIFACTS: |
+  # The release set (dev/README.md, Release checklist), declared once so the
+  # hash step and the upload cannot drift apart. A listed file that is missing
+  # fails the hash step; a dylib the build produced that nobody listed fails
+  # the check that follows it.
+  ARTIFACTS: |-
     build/LibASSBridge.dylib
     build/LibFFmpegFullBridge.dylib
     build/LibFFmpegBridge.dylib
@@ -71,9 +80,18 @@ jobs:
             fi
             sudo xcode-select -s "$selected"
           fi
-          echo "developer dir: $(xcode-select -p)"
-          echo "xcode: $(xcodebuild -version | head -1)"
-          echo "iphoneos SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+          # Assignments, not `echo "$(cmd)"`: the status of a command
+          # substitution inside an echo is discarded, so a missing SDK would
+          # print an empty value and carry on.
+          developer_dir=$(xcode-select -p)
+          xcode=$(xcodebuild -version)
+          xcode_version=$(printf '%s\n' "$xcode" | sed -n '1p')
+          xcode_build=$(printf '%s\n' "$xcode" | sed -n '2p')
+          sdk_version=$(xcrun --sdk iphoneos --show-sdk-version)
+          echo "developer dir: $developer_dir"
+          echo "xcode: $xcode_version"
+          echo "xcode build: $xcode_build"
+          echo "iphoneos SDK: $sdk_version"
 
       - name: Check the host build tools
         # meson, ninja and lief come from the dev group below. These two do not
@@ -107,42 +125,100 @@ jobs:
         # so no separate `make verify` is needed.
         run: make bridge
 
+      - name: Check the artifact list covers every dylib built
+        # The hash step catches a listed file that is missing. This catches the
+        # other direction: a dylib added to manifests/nplayer-3.13.0.json is
+        # built and verified by `make bridge` and then silently not published,
+        # because the list above is hand-written. build/ is fresh in CI, so the
+        # comparison is exact.
+        run: |
+          set -euo pipefail
+          declared=$(printf '%s\n' $ARTIFACTS | grep '^build/Lib.*\.dylib$' | sed 's|^build/||' | sort)
+          built=$(ls -1 build | grep '^Lib.*\.dylib$' | sort)
+          if [ "$declared" != "$built" ]; then
+            echo "::error::the artifact list and the built dylib set disagree"
+            diff <(printf '%s\n' "$declared") <(printf '%s\n' "$built") || true
+            exit 1
+          fi
+          echo "all $(printf '%s\n' "$built" | wc -l | tr -d ' ') built dylibs are declared"
+
       - name: Run the test suites
-        # dev/tests re-checks the built closure is iOS 13 arm64 and asserts the
-        # Dl_info ABI read from this runner's SDK equals the manifest's frozen
-        # target_abi: it is the tripwire for an SDK that drifted.
         run: |
           set -euo pipefail
           uv run pytest -q
-          uv run pytest -q dev/tests
+          # dev/tests carries the SDK-drift tripwire: it asserts the Dl_info ABI
+          # read from this runner's SDK still equals the manifest's frozen
+          # target_abi, and re-checks the built closure is iOS 13 arm64. Its
+          # fixtures call pytest.skip() when the SDK or the Keystone library is
+          # absent, and a skipped test is a green run, so read the
+          # machine-readable report instead of trusting the exit code.
+          uv run pytest dev/tests -q --junitxml=build/devtests.xml
+          if grep -q 'skipped="[1-9]' build/devtests.xml; then
+            echo "::error::a dev test skipped, so the tripwire did not run"
+            grep -o 'skipped="[0-9]*"' build/devtests.xml
+            exit 1
+          fi
+          echo "no dev test skipped"
 
-      - name: Record provenance and artifact hashes
+      - name: Record the provenance and this build's hashes
         run: |
           set -euo pipefail
+          xcode=$(xcodebuild -version)
+          xcode_version=$(printf '%s\n' "$xcode" | sed -n '1p')
+          xcode_build=$(printf '%s\n' "$xcode" | sed -n '2p')
+          sdk_version=$(xcrun --sdk iphoneos --show-sdk-version)
+          uv_version=$(uv --version)
+          python_version=$(uv run python --version)
+          macos_version=$(sw_vers -productVersion)
+          machine=$(uname -m)
           {
-            echo "## Provenance"
+            echo "Build provenance"
+            echo "================"
             echo
-            echo "- runner: macOS $(sw_vers -productVersion) / $(uname -m)"
-            echo "- xcode: $(xcodebuild -version | head -1)"
-            echo "- iphoneos SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
-            echo "- uv: $(uv --version)"
+            echo "commit:       $GITHUB_SHA ($GITHUB_REF_NAME)"
+            echo "runner image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            echo "macOS:        $macos_version / $machine"
+            echo "xcode:        $xcode_version"
+            echo "xcode build:  $xcode_build"
+            echo "iphoneos SDK: $sdk_version"
+            echo "uv:           $uv_version"
+            echo "python:       $python_version"
             echo
-            echo "## Artifacts"
-            echo
-            echo "| file | sha256 |"
-            echo "| --- | --- |"
+            echo "Artifacts (sha256)"
+            echo "------------------"
             while read -r file; do
               [ -n "$file" ] || continue
               # An assignment takes the pipeline's status, so a missing file
               # ends the step here rather than printing an empty hash.
               digest=$(shasum -a 256 "$file" | cut -d' ' -f1)
-              echo "| \`$(basename "$file")\` | \`$digest\` |"
+              echo "$digest  $(basename "$file")"
             done <<< "$ARTIFACTS"
+            echo
+            echo "These hashes identify this build only. The dylibs are not"
+            echo "byte-reproducible - make deps rebuilds the static closures from"
+            echo "scratch - so they differ between runs and must not be compared"
+            echo "across them. The contract for a shipped dylib is its own"
+            echo "<id>-verification.json, shipped next to it, which records the"
+            echo "exports, install name, dependencies, initializers and host paths"
+            echo "the manifest freezes. See dev/acceptance.json, \"reproducibility\"."
+          } > PROVENANCE.txt
+          {
+            echo "## Provenance"
+            echo
+            echo '```'
+            cat PROVENANCE.txt
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish the dylibs
+      - name: Publish the dylibs, their reports and the provenance
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bridge-dylibs
-          path: ${{ env.ARTIFACTS }}
+          # Every dylib report is written by the verify step inside `make
+          # bridge`, which fails the run if one dylib fails its checks, so this
+          # glob cannot silently under-match.
+          path: |
+            ${{ env.ARTIFACTS }}
+            build/bridge/*-verification.json
+            PROVENANCE.txt
           if-no-files-found: error

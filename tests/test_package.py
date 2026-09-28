@@ -141,6 +141,33 @@ class ArchiveWriterTests(_PackageFixture):
 
 
 class PackageOrchestrationTests(_PackageFixture):
+    def test_windows_prefers_the_root_ldid_over_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root_ldid = root / "ldid.exe"
+            root_ldid.write_bytes(b"ldid")
+            with (
+                mock.patch.object(package, "ROOT", root),
+                mock.patch("sys.platform", "win32"),
+                mock.patch.object(
+                    package.shutil,
+                    "which",
+                    side_effect=AssertionError("searched PATH"),
+                ),
+            ):
+                self.assertEqual(package._tool("ldid"), str(root_ldid.resolve()))
+
+    def test_missing_ldid_error_includes_the_windows_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                mock.patch.object(package, "ROOT", Path(directory)),
+                mock.patch.object(package.shutil, "which", return_value=None),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, r"Windows.*ldid_w64_x86_64"
+                ):
+                    package._tool("ldid")
+
     def test_signs_scratch_copies_without_external_archive_tools(self):
         output = self.root / "output directory" / "patched app.ipa"
         work = self.root / "work directory"

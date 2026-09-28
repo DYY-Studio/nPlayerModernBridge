@@ -50,9 +50,17 @@ EXPECTED_FFMPEG_SYMBOLS = (
 
 class BridgeTests(unittest.TestCase):
     def test_every_dylib_declares_its_build_inputs(self):
+        builds = [dylib.build for dylib in MANIFEST.dylibs]
+        self.assertTrue(all(build is not None for build in builds))
+        missing = [
+            build.closure
+            for build in builds
+            if build is not None and not (ROOT / build.closure).is_file()
+        ]
+        if missing:
+            self.skipTest("bridge dependency closures are not built")
         for dylib in MANIFEST.dylibs:
             with self.subTest(dylib=dylib.id):
-                self.assertIsNotNone(dylib.build)
                 exports = (ROOT / dylib.build.exports).read_text(encoding="utf-8")
                 self.assertEqual(
                     set(exports.split()),

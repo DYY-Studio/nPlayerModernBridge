@@ -12,6 +12,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Mapping
@@ -24,7 +25,11 @@ MAIN_MEMBER = (APP_DIR / "nPlayer").as_posix()
 FRAMEWORKS = APP_DIR / "Frameworks"
 LINKEDIT = "ldid"
 TOOL_HINTS = {
-    "ldid": "brew install ldid on macOS; on Linux use a prebuilt ldid binary",
+    "ldid": (
+        "brew install ldid on macOS; on Linux use a prebuilt binary; on Windows "
+        "copy the Procursus ldid_w64_x86_64 release to the repository root as "
+        "ldid.exe, or put it on PATH"
+    ),
 }
 
 
@@ -38,6 +43,10 @@ def _require(condition: bool, message: str) -> None:
 
 
 def _tool(name: str) -> str:
+    if sys.platform == "win32" and name == LINKEDIT:
+        root_tool = ROOT / "ldid.exe"
+        if root_tool.is_file():
+            return str(root_tool.resolve())
     path = shutil.which(name)
     if path is None:
         raise RuntimeError(f"{name} is required to assemble the IPA ({TOOL_HINTS[name]})")

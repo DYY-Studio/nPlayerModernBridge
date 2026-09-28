@@ -12,10 +12,19 @@ Replace the bundled ...
   1. Full **FFmpeg 4.4.8** 
   2. Swscale + Swresample **FFmpeg 9.0.2** + Core **FFmpeg 4.4.8**
   3. Input **FFmpeg 9.0.2** (Nightly) + Output **FFmpeg 4.4.8**
+   
+Fix the bugs
+- ASS/SSA font attachments only avaliable for the first video in playback sequence
+- Playback may stalled for about a second 
+
+Update to modern
+- High-Bit output when software decoding (S/W, nightly, opt-in)
 
 ... in your own **nPlayer 3.13.0** install. 
 
 No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processing to this great player.
+
+Specially designed for sideloading and non-JIT [LiveContainer](https://github.com/LiveContainer/LiveContainer).
 
 Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framerate limits.
 

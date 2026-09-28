@@ -48,10 +48,7 @@ Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framera
 | `ffmpeg` | `LibFFmpegBridge.dylib` | the scaler and resampler - usually pairs with `ffmpeg-core` | 9.0.2 |
 | `ffmpeg-core902` *(nightly)* | `LibFFmpegCore902Bridge.dylib` | the input side: demux, subtitle decoding, playback/probe/poster decoding, scaler, resampler | 9.0.2 |
 | `ffmpeg-out448` | `LibFFmpegOut448Bridge.dylib` | the output side: HLS session and muxer, SPDIF, poster encoding - usually pairs with `ffmpeg-core902` | 4.4.8 |
-| `renderer-highbit` *(experimental, opt-in)* | `LibRendererHighBitBridge.dylib` | converts P010 and planar 10-bit frames to `x420` / `x422` / `x444`, plus planar 12-bit and 16-bit frames to `sv22` / `sv44`; independent of the selected FFmpeg bridge | app 3.13.0 frame ABI |
-
-The default selection omits `renderer-highbit`. Add it explicitly to any supported
-FFmpeg selection to enable the experimental high-bit-depth renderer path.
+| `renderer-highbit` *(nightly, opt-in)* | `LibRendererHighBitBridge.dylib` | (S/W) converts P010 and planar 10-bit frames to `x420` / `x422` / `x444`, plus planar 12-bit and 16-bit frames to `sv22` / `sv44`; independent of the selected FFmpeg bridge | app 3.13.0 frame ABI |
 
 > [!Important]
 > 
@@ -60,6 +57,9 @@ FFmpeg selection to enable the experimental high-bit-depth renderer path.
 
 Selections whose call sites overlap are mutually exclusive: the tool refuses the
 combination before writing anything. 
+
+The default selection omits `renderer-highbit`. Add it explicitly to any supported
+FFmpeg selection to enable the experimental high-bit-depth renderer path.
 
 Every dylib is built from this repository and
 links system libraries and frameworks only. What the units are, why they are

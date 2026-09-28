@@ -1,0 +1,141 @@
+# Build the seven bridge dylibs and the host assembler from the pinned sources
+# in this repository, and publish them as one downloadable Actions artifact,
+# so a release asset set can be reproduced without a local toolchain.
+#
+# Manual only: the run takes about an hour and its output is a release product.
+#
+# Everything that fed a build is recorded in the run summary next to the
+# SHA-256 of each file it produced: the runner image, the Xcode it selected and
+# the iOS SDK that carried, uv, and Python. The SDK is the one input that moves
+# the numbers frozen in the manifest's `target_abi`, which is why it is
+# selectable and always logged.
+name: Build bridge dylibs
+
+on:
+  workflow_dispatch:
+    inputs:
+      xcode:
+        description: >-
+          Xcode to build against. "default" keeps the runner image's own Xcode;
+          otherwise an installed version, e.g. 16.3 or 26.3.
+        type: string
+        default: default
+
+permissions:
+  contents: read
+
+env:
+  # The release set (dev/README.md, Release checklist), in one place so the
+  # hash step and the upload cannot drift apart. Hashing fails the step on a
+  # missing file, so the upload never publishes a partial set.
+  ARTIFACTS: |
+    build/LibASSBridge.dylib
+    build/LibFFmpegFullBridge.dylib
+    build/LibFFmpegBridge.dylib
+    build/LibFFmpegCoreBridge.dylib
+    build/LibFFmpegCore902Bridge.dylib
+    build/LibFFmpegOut448Bridge.dylib
+    build/LibRendererHighBitBridge.dylib
+    libkeystone.dylib
+
+jobs:
+  build:
+    # arm64 is required, not preferred: deps/ios-arm64.cross and
+    # deps/macos-arm64.native drive `xcrun --sdk ...` from the runner image,
+    # and tools/keystone.py builds the assembler for this host with
+    # -DCMAKE_OSX_ARCHITECTURES=arm64.
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Select Xcode
+        env:
+          REQUESTED: ${{ inputs.xcode }}
+        run: |
+          set -euo pipefail
+          if [ "$REQUESTED" != default ]; then
+            selected="/Applications/Xcode_${REQUESTED}.app"
+            if [ ! -d "$selected" ]; then
+              echo "::error::this runner image has no $selected"
+              ls -d /Applications/Xcode*.app
+              exit 1
+            fi
+            sudo xcode-select -s "$selected"
+          fi
+          echo "developer dir: $(xcode-select -p)"
+          echo "xcode: $(xcodebuild -version | head -1)"
+          echo "iphoneos SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+
+      - name: Check the host build tools
+        # meson, ninja and lief come from the dev group below. These two do not
+        # come from the project, so require them of the runner image instead of
+        # installing them silently.
+        run: |
+          set -euo pipefail
+          command -v pkg-config
+          pkg-config --version
+          command -v cmake
+          cmake --version | head -1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.12.19"
+          # The environment this toolchain was developed on. Left to
+          # requires-python, uv would take the runner image's 3.14, which
+          # nothing here has been exercised against.
+          python-version: "3.12.11"
+          enable-cache: "false"
+
+      - name: Build the host assembler
+        run: make bootstrap
+
+      - name: Build the dependency closures
+        run: make deps
+
+      - name: Build and verify the bridge dylibs
+        # Links each dylib and verifies it against its frozen manifest entry,
+        # so no separate `make verify` is needed.
+        run: make bridge
+
+      - name: Run the test suites
+        # dev/tests re-checks the built closure is iOS 13 arm64 and asserts the
+        # Dl_info ABI read from this runner's SDK equals the manifest's frozen
+        # target_abi: it is the tripwire for an SDK that drifted.
+        run: |
+          set -euo pipefail
+          uv run pytest -q
+          uv run pytest -q dev/tests
+
+      - name: Record provenance and artifact hashes
+        run: |
+          set -euo pipefail
+          {
+            echo "## Provenance"
+            echo
+            echo "- runner: macOS $(sw_vers -productVersion) / $(uname -m)"
+            echo "- xcode: $(xcodebuild -version | head -1)"
+            echo "- iphoneos SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+            echo "- uv: $(uv --version)"
+            echo
+            echo "## Artifacts"
+            echo
+            echo "| file | sha256 |"
+            echo "| --- | --- |"
+            while read -r file; do
+              [ -n "$file" ] || continue
+              # An assignment takes the pipeline's status, so a missing file
+              # ends the step here rather than printing an empty hash.
+              digest=$(shasum -a 256 "$file" | cut -d' ' -f1)
+              echo "| \`$(basename "$file")\` | \`$digest\` |"
+            done <<< "$ARTIFACTS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the dylibs
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: bridge-dylibs
+          path: ${{ env.ARTIFACTS }}
+          if-no-files-found: error

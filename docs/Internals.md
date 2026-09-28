@@ -51,6 +51,7 @@ every call site.
 |---|---|---|
 | `libass` | libass 0.17.5 | `libass` 15 / 16 |
 | `ffmpeg-full` (default) | 4.4.8 | `ffmpeg-core` 99 / 449, `libswscale` 5 / 13, `libswresample` 6 / 7 = 110 / 469 |
+| `renderer-highbit` (experimental, opt-in) | app 3.13.0 frame ABI | renderer conversion 1 / 1 |
 | `ffmpeg-core` | 4.4.8 | `ffmpeg-core` 99 / 449 |
 | `ffmpeg` | 9.0.2 | `libswscale` 5 / 13, `libswresample` 6 / 7 = 11 / 20 |
 | `ffmpeg-core902` | 9.0.2 | `ffmpeg-demux` 15 / 38, `libswscale` 5 / 13, `libswresample` 6 / 7, `ffmpeg-subdecode` 10 / 16, `ffmpeg-codec` 12 / 46 = 48 / 120 |
@@ -89,6 +90,45 @@ already own its call sites at 4.4.8. `ffmpeg-out448` is meant to be paired with
   muxer, digital audio passthrough, poster/cover encoding), so one dylib keeps
   that closure single while each unit still falls back on its own.
 
+`renderer-highbit` is a standalone opt-in dylib. Its direct call site passes the
+app's `media::FFmpegVideoFrame` wrapper to the bridge; the bridge reads guarded
+width/height/format/AVFrame fields at
+`+0x18/+0x1C/+0x2C/+0x40`. It copies P010 frames (161) and packs planar
+`YUV420P10LE` (64), `YUV422P10LE` (66), and `YUV444P10LE` (70) frames into
+`x420`, `x422`, and `x444` Core Video pixel buffers. It also maps planar
+`YUV420P12LE` (125), `YUV422P12LE` (129), `YUV444P12LE` (133),
+`YUV420P16LE` (47), `YUV422P16LE` (49), and `YUV444P16LE` (51) frames to
+16-bit bi-planar Core Video buffers: 4:2:0 and 4:2:2 use `sv22`, while 4:4:4
+uses `sv44`. The 4:2:0 chroma rows are duplicated vertically when packing to
+4:2:2. Limited-range 12-bit samples are shifted left four bits; limited-range
+16-bit samples are preserved. Full-range input is explicitly scaled to video
+range before writing either target format. Other frame formats log and call the
+app's original converter. The pixel-buffer pool cache is keyed by width,
+height, and target Core Video format. It links only CoreVideo and CoreFoundation
+and does not import FFmpeg bridge symbols. Its compile-time headers pin the
+fixed AVFrame layout and supported pixel-format values to the app's FFmpeg 4.4
+ABI. The default selection omits it; it can be combined with any supported
+FFmpeg selection.
+
+The bridge preserves BT.709/BT.2020 primaries, transfer and matrix attachments.
+For the 16-bit targets, full-range luma maps to 4096..60160 and chroma maps
+around 32768 into 4096..61440, matching the ranges documented for `sv22` and
+`sv44` in the iPhoneOS CoreVideo header.
+Runtime acceptance with the PlayCover Main10 software-decode fixture found the installed bridge UUID
+`747CE7F4-08B2-31BA-B919-9DCF5912E102` matches the v3 build. All 24 enqueued
+samples used `x420` (`0x78343230`); the display layer reported
+`readyForDisplay=true`, `status=1` (`Rendering`) and `error=null`, and the user
+reported normal playback. This verified v3 renderer was embedded in
+`LibFFmpegFullBridge.dylib`; HDR metadata, final display precision and EDR
+output were not validated. The separated dylib was then installed in PlayCover:
+its UUID `D43CDF44-C1E5-3C91-8922-6E0C90B3470C` matched the modular build,
+all 24 observed software Main10 enqueues were `x420`, and the display layer
+was ready and rendering without error. Later runtime probes accepted planar
+10-bit 4:2:2/4:4:4 as `x422`/`x444`, and all six planar 12-bit/16-bit
+4:2:0/4:2:2/4:4:4 paths as `sv22`/`sv44`; each reached a ready, rendering
+display layer without error. The user reported normal playback for every sample.
+Other FFmpeg bridge combinations remain untested at runtime.
+
 ## What each dylib links
 
 Every dylib is built from this repository and depends on system libraries and
@@ -110,6 +150,9 @@ notices are in `THIRD-PARTY.md`.
 - `LibFFmpegOut448Bridge.dylib` statically links the same 4.4.8 closure the
   default selection uses. Nothing is translated there: the shim only branches
   into that closure, so no shadow context and no per-call conversion is involved.
+- `LibRendererHighBitBridge.dylib` links CoreVideo and CoreFoundation only; its
+  frame layout and pixel-format constants are compile-time pinned to the app's
+  legacy FFmpeg headers.
 
 ## Fallback
 

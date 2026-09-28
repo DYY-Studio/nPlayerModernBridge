@@ -48,6 +48,10 @@ Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framera
 | `ffmpeg` | `LibFFmpegBridge.dylib` | the scaler and resampler - usually pairs with `ffmpeg-core` | 9.0.2 |
 | `ffmpeg-core902` *(nightly)* | `LibFFmpegCore902Bridge.dylib` | the input side: demux, subtitle decoding, playback/probe/poster decoding, scaler, resampler | 9.0.2 |
 | `ffmpeg-out448` | `LibFFmpegOut448Bridge.dylib` | the output side: HLS session and muxer, SPDIF, poster encoding - usually pairs with `ffmpeg-core902` | 4.4.8 |
+| `renderer-highbit` *(experimental, opt-in)* | `LibRendererHighBitBridge.dylib` | converts P010 and planar 10-bit frames to `x420` / `x422` / `x444`, plus planar 12-bit and 16-bit frames to `sv22` / `sv44`; independent of the selected FFmpeg bridge | app 3.13.0 frame ABI |
+
+The default selection omits `renderer-highbit`. Add it explicitly to any supported
+FFmpeg selection to enable the experimental high-bit-depth renderer path.
 
 > [!Important]
 > 
@@ -84,6 +88,7 @@ grouped this way, what each dylib links and how a fallback behaves are in
   | `LibFFmpegCoreBridge.dylib` | FFmpeg 4.4.8 for iOS arm64, the core | `ffmpeg-core` |
   | `LibFFmpegCore902Bridge.dylib` | FFmpeg 9.0.2 for iOS arm64, the input side | `ffmpeg-core902` |
   | `LibFFmpegOut448Bridge.dylib` | FFmpeg 4.4.8 for iOS arm64, the output side | `ffmpeg-out448` |
+  | `LibRendererHighBitBridge.dylib` | standalone P010 and planar 10-bit / 12-bit / 16-bit renderer for iOS arm64 | `renderer-highbit` |
 
 - No Xcode, no iOS SDK, no jailbreak. `npa-patch` runs from the repository
   checkout, next to `manifests/`.
@@ -94,7 +99,8 @@ grouped this way, what each dylib links and how a fallback behaves are in
 git clone <this repository> && cd nplayer-libass-bridge
 # put LibASSBridge.dylib, LibFFmpegFullBridge.dylib,
 # LibFFmpegBridge.dylib, LibFFmpegCoreBridge.dylib, LibFFmpegCore902Bridge.dylib,
-# LibFFmpegOut448Bridge.dylib and libkeystone.dylib from the release assets here
+# LibFFmpegOut448Bridge.dylib and libkeystone.dylib from the release assets here;
+# LibRendererHighBitBridge.dylib is optional and enables the experimental renderer
 # (on Linux, run `make bootstrap` to build libkeystone.so instead)
 uv run npa-patch "/path/to/nPlayer_3.13.0.ipa"
 ```
@@ -132,6 +138,8 @@ uv run npa-patch --dylib libass --dylib ffmpeg-full "/path/to/nPlayer_3.13.0.ipa
 uv run npa-patch --dylib libass --dylib ffmpeg --dylib ffmpeg-core "/path/to/nPlayer_3.13.0.ipa"
 # subtitles plus the 9.0.2 input side with the output side at 4.4.8:
 uv run npa-patch --dylib libass --dylib ffmpeg-core902 --dylib ffmpeg-out448 "/path/to/nPlayer_3.13.0.ipa"
+# add the standalone high-bit-depth renderer to a selection:
+uv run npa-patch --dylib libass --dylib ffmpeg-full --dylib renderer-highbit "/path/to/nPlayer_3.13.0.ipa"
 ```
 The FFmpeg selections replace the same call sites, so they cannot be combined:
 the 4.4.8 core and the 9.0.2 core are exclusive, and `ffmpeg-out448` is refused

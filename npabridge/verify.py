@@ -128,7 +128,7 @@ def _require(condition: bool, message: str) -> None:
 
 def _host_paths(path: Path) -> str:
     data = path.read_bytes()
-    for prefix in FORBIDDEN_PATH_PREFIXES:
+    for prefix in (*FORBIDDEN_PATH_PREFIXES, str(ROOT) + "/"):
         _require(prefix.encode() not in data, f"host path in artifact: {prefix}")
     return "no host paths"
 

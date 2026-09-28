@@ -1,4 +1,5 @@
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -115,6 +116,7 @@ class BridgeTests(unittest.TestCase):
         self.assertNotIn(
             b"/Users/", FFMPEG.read_bytes()
         )
+        self.assertNotIn(str(ROOT).encode(), FFMPEG.read_bytes())
 
     def test_metadata_helpers_match_the_built_bridge(self):
         if not LIBASS.is_file():
@@ -132,6 +134,18 @@ class BridgeTests(unittest.TestCase):
                     "/usr/lib/libSystem.B.dylib",
                 ],
             )
+
+    def test_bridge_verifier_rejects_the_checkout_path(self):
+        if not LIBASS.is_file():
+            self.skipTest("LibASSBridge.dylib is not built")
+        with tempfile.TemporaryDirectory() as directory:
+            mutated = Path(directory) / LIBASS.name
+            mutated.write_bytes(LIBASS.read_bytes() + str(ROOT / "build").encode())
+            report = verify.verify_bridge(mutated, MANIFEST.dylib("libass"))
+
+        with self.assertRaises(verify.VerificationError) as caught:
+            report.require()
+        self.assertIn("bridge.host_paths", caught.exception.codes)
 
     def test_ffmpeg_shim_keeps_the_legacy_swresample_abi(self):
         if not FFMPEG_SOURCE.is_file() or not FFMPEG_INCLUDE.is_dir():

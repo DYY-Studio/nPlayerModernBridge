@@ -160,6 +160,7 @@ def link_dylib(
             "-dynamiclib",
             "-Wl,-install_name," + dylib.install_name,
             "-Wl,-exported_symbols_list," + str(export_list),
+            "-Wl,-oso_prefix," + str(ROOT) + "/",
             str(object_file),
             *(str(archive) for archive in archives),
             *system_link_args,

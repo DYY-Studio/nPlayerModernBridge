@@ -1,0 +1,15 @@
+# The build workflow pins its actions to commit SHAs, the only immutable
+# reference. SHA pins do not update themselves, so without this the workflow
+# would sit on a frozen action forever and never learn that a fix shipped.
+# One grouped PR for all of them; nothing else here is Dependabot's business,
+# because every native dependency is pinned by deps/*.lock.json and uv.lock.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"

@@ -14,6 +14,7 @@ from pathlib import Path
 LIBRARY_NAMES = {
     "darwin": "libkeystone.dylib",
     "linux": "libkeystone.so",
+    "win32": "keystone.dll",
 }
 ARCH_ARM64 = 2
 MODE_LITTLE_ENDIAN = 0

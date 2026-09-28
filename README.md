@@ -2,6 +2,10 @@
 
 > A small tribute to nPlayer, an exceptionally well-designed player that has served us reliably for years.
 
+> [!Warning]
+>
+> **Vibe Coding Project**
+
 Replace the bundled ...
 - libass 0.13.7 stack with **libass 0.17.5**
 - FFmpeg 4.4.5 libs with one of
@@ -15,9 +19,11 @@ No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processi
 
 Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framerate limits.
 
-> [!Warning]
+> [!Caution]
 >
-> **Vibe Coding Project**
+> This patch can only be applied to **Standard / Basic nPlayer 3.13.0**.
+>
+> **nPlayer Lite**, **nPlayer Plus** and **other Basic nPlayer version** is unsupported.
 
 ## What this does
 

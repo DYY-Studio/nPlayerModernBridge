@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -128,7 +129,8 @@ def _require(condition: bool, message: str) -> None:
 
 def _host_paths(path: Path) -> str:
     data = path.read_bytes()
-    for prefix in (*FORBIDDEN_PATH_PREFIXES, str(ROOT) + "/"):
+    checkout_prefixes = {str(ROOT) + os.sep, ROOT.as_posix() + "/"}
+    for prefix in (*FORBIDDEN_PATH_PREFIXES, *checkout_prefixes):
         _require(prefix.encode() not in data, f"host path in artifact: {prefix}")
     return "no host paths"
 

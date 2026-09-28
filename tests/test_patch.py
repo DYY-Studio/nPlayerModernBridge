@@ -103,9 +103,7 @@ class PatchFlowTests(unittest.TestCase):
                 "LibASSBridge.dylib",
                 "LibFFmpegFullBridge.dylib",
             ):
-                self.assertEqual(
-                    names.count(f"{package.APP_DIR}/Frameworks/{basename}"), 1
-                )
+                self.assertEqual(names.count(package.bridge_member(basename)), 1)
             self.assertEqual(
                 result.packaged_main_sha256, FULL_PACKAGED_MAIN_SHA256
             )

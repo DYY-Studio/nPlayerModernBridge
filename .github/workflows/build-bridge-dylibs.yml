@@ -89,12 +89,27 @@ jobs:
           xcode_version=$(printf '%s\n' "$xcode" | sed -n '1p')
           xcode_build=$(printf '%s\n' "$xcode" | sed -n '2p')
           sdk_version=$(xcrun --sdk iphoneos --show-sdk-version)
+          # `sed` succeeds on empty input, so an unexpected xcodebuild output
+          # would leave these empty and the provenance record incomplete
+          # instead of failing. The record is built from these values, so
+          # assert them here, where failing costs seconds rather than the hour
+          # the build takes.
+          for value in "$xcode_version" "$xcode_build" "$sdk_version"; do
+            [ -n "$value" ] || { echo "::error::the Xcode or SDK version came back empty"; exit 1; }
+          done
           echo "developer dir: $developer_dir"
           echo "xcode: $xcode_version"
           echo "xcode build: $xcode_build"
           echo "iphoneos SDK: $sdk_version"
+          # Hand the asserted values to the record, rather than looking the same
+          # tools up a second time later and hoping for the same answer.
+          {
+            echo "NPA_XCODE_VERSION=$xcode_version"
+            echo "NPA_XCODE_BUILD=$xcode_build"
+            echo "NPA_SDK_VERSION=$sdk_version"
+          } >> "$GITHUB_ENV"
 
-      - name: Check the host build tools
+      - name: Check the host build tools and the runner image
         # meson, ninja and lief come from the dev group below. These two do not
         # come from the project, so require them of the runner image instead of
         # installing them silently.
@@ -104,6 +119,16 @@ jobs:
           pkg-config --version
           command -v cmake
           cmake --version | head -1
+          # ImageOS and ImageVersion identify the runner image, which is what
+          # `runs-on: macos-15` pins and the reason a build can be traced at
+          # all. Absent means the premise broke, not that the record should
+          # print a placeholder, so fail here while it still costs seconds.
+          # `${VAR:-}` on purpose: plain $VAR would abort under set -u with a
+          # message of its own instead of the one below.
+          for value in "${ImageOS:-}" "${ImageVersion:-}"; do
+            [ -n "$value" ] || { echo "::error::ImageOS/ImageVersion are unset, so this is not a GitHub-hosted runner image and the image version cannot be recorded"; exit 1; }
+          done
+          echo "runner image: $ImageOS $ImageVersion"
 
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -164,10 +189,9 @@ jobs:
       - name: Record the provenance and this build's hashes
         run: |
           set -euo pipefail
-          xcode=$(xcodebuild -version)
-          xcode_version=$(printf '%s\n' "$xcode" | sed -n '1p')
-          xcode_build=$(printf '%s\n' "$xcode" | sed -n '2p')
-          sdk_version=$(xcrun --sdk iphoneos --show-sdk-version)
+          # The Xcode and SDK values were asserted before the build and reach
+          # this step through the environment. The rest are read once, directly,
+          # so a failed read aborts the step instead of recording nothing.
           uv_version=$(uv --version)
           python_version=$(uv run python --version)
           macos_version=$(sw_vers -productVersion)
@@ -177,11 +201,11 @@ jobs:
             echo "================"
             echo
             echo "commit:       $GITHUB_SHA ($GITHUB_REF_NAME)"
-            echo "runner image: ${ImageOS:-unknown} ${ImageVersion:-unknown}"
+            echo "runner image: $ImageOS $ImageVersion"
             echo "macOS:        $macos_version / $machine"
-            echo "xcode:        $xcode_version"
-            echo "xcode build:  $xcode_build"
-            echo "iphoneos SDK: $sdk_version"
+            echo "xcode:        $NPA_XCODE_VERSION"
+            echo "xcode build:  $NPA_XCODE_BUILD"
+            echo "iphoneos SDK: $NPA_SDK_VERSION"
             echo "uv:           $uv_version"
             echo "python:       $python_version"
             echo

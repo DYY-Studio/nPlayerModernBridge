@@ -1,18 +1,21 @@
-# nPlayer iOS Bridge
+# nPlayer iOS Modern Bridge
 
 > A small tribute to nPlayer, an exceptionally well-designed player that has served us reliably for years.
+
+A patching tool on macOS / Linux bringing modern ASS/SSA rendering and 
+media processing to your own **nPlayer 3.13.0**.
 
 > [!Warning]
 >
 > **Vibe Coding Project**
 
-Replace the bundled ...
-- libass 0.13.7 stack with **libass 0.17.5**
-- FFmpeg 4.4.5 libs with one of
+Replace the bundled libs with bridge dylib
+- libass 0.13.7 ->  **libass 0.17.5**
+- FFmpeg 4.4.5 -> one of
   1. Full **FFmpeg 4.4.8** 
   2. Swscale + Swresample **FFmpeg 9.0.2** + Core **FFmpeg 4.4.8**
   3. Input **FFmpeg 9.0.2** (Nightly) + Output **FFmpeg 4.4.8**
-   
+
 Fix the bugs
 - ASS/SSA font attachments only avaliable for the first video in playback sequence
 - Playback may stalled for about a second 
@@ -20,11 +23,8 @@ Fix the bugs
 Update to modern
 - High-Bit output when software decoding (S/W, nightly, opt-in)
 
-... in your own **nPlayer 3.13.0** install. 
-
-No jailbreak, no inline hooks, bring modern ASS/SSA rendering and media processing to this great player.
-
-Specially designed for sideloading and non-JIT [LiveContainer](https://github.com/LiveContainer/LiveContainer).
+No jailbreak, no inline hooks, specially designed for sideloading and
+non-JIT [LiveContainer](https://github.com/LiveContainer/LiveContainer).
 
 Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framerate limits.
 
@@ -34,7 +34,7 @@ Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framera
 >
 > **nPlayer Lite**, **nPlayer Plus** and **other Basic nPlayer version** is unsupported.
 
-## What this does
+## What this exactly does
 
 `npa-patch` takes a decrypted nPlayer IPA you own and writes a patched copy:
 

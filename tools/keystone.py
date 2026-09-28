@@ -92,7 +92,7 @@ def _built_library(build_dir: Path, suffix: str) -> Path:
     matches = sorted(
         path
         for path in (build_dir / "llvm" / "lib").glob(f"libkeystone{suffix}*")
-        if path.is_file() and not path.is_symlink()
+        if path.is_file()
     )
     if not matches:
         raise RuntimeError(f"CMake did not produce a Keystone library in {build_dir}")

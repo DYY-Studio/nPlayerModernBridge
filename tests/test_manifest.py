@@ -171,7 +171,7 @@ class ManifestTests(unittest.TestCase):
 
         The domain identity is pinned separately; what matters here is that the
         full dylib's three units are the core, the scaler and the resampler at
-        their frozen sizes, in that order.
+        their frozen sizes. The renderer is published separately.
         """
 
         self.assertEqual(

@@ -35,6 +35,16 @@
   "default_dylibs": ["libass", "ffmpeg-full"],
   "domains": [
     {
+      "id": "renderer-highbit",
+      "apis": [
+        {
+          "symbol": "npa_renderer_create_pixel_buffer",
+          "call_sites": ["0x100A23314"],
+          "old_target": "0x100A22F2C"
+        }
+      ]
+    },
+    {
       "id": "libass",
       "apis": [
         {
@@ -1393,6 +1403,19 @@
       },
       "domains": ["ffmpeg-core"],
       "conflicts": ["ffmpeg-full", "ffmpeg-core902", "ffmpeg-out448"]
+    },
+    {
+      "id": "renderer-highbit",
+      "library_version": "1.0",
+      "basename": "LibRendererHighBitBridge.dylib",
+      "build": {
+        "source": "bridge/npa_renderer_highbit_dylib.c",
+        "exports": "bridge/renderer-highbit.exports",
+        "closure": "deps/renderer-highbit-closure.txt",
+        "include_root": "build/deps/ffmpeg-core/include",
+        "lib_root": "build/deps/ffmpeg-core/lib"
+      },
+      "domains": ["renderer-highbit"]
     },
     {
       "id": "ffmpeg-full",

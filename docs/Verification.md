@@ -138,3 +138,22 @@ landed beside them on 4.4.8.
   SPDIF flag drive, the site-byte payload check, lldb on an abort - are recorded
   in `notes/playcover-debug-path.md` section 14.
 
+## 2026-09-28: high-bit-depth software renderer
+
+`renderer-highbit` is optional and independent of the selected FFmpeg bridge.
+The installed PlayCover artifact loaded the expected renderer UUID, and runtime
+probes observed the renderer return and enqueue the following Core Video formats:
+
+| software frame | output |
+|---|---|
+| P010 / planar 10-bit 4:2:0 | `x420` |
+| planar 10-bit 4:2:2 / 4:4:4 | `x422` / `x444` |
+| planar 12-bit or 16-bit 4:2:0 / 4:2:2 | `sv22` |
+| planar 12-bit or 16-bit 4:4:4 | `sv44` |
+
+Every tested sample reached `readyForDisplay=true`, display-layer status
+`Rendering`, and `error=null`; the user reported normal playback. The 4:2:0
+12-bit/16-bit paths deliberately duplicate chroma rows when converting to the
+4:2:2 `sv22` layout. Unit tests cover those sample values and the full-range to
+video-range conversion. These observations establish the software frame to
+display-layer path, not the final panel precision or EDR output.

@@ -100,7 +100,10 @@ class MachOTests(unittest.TestCase):
 
     def test_phase_b_changes_only_the_frozen_sites(self):
         self.assertEqual(self.phase_b_report["patched_call_sites"], 485)
-        self.assertEqual(self.phase_b_report["extra_sites"], [0x100A0392C, 0x100ACBC14, 0x100AE3C7C])
+        self.assertEqual(
+            self.phase_b_report["extra_sites"],
+            [0x100A0392C, 0x100ACBC14, 0x100AE3C7C],
+        )
         before = parse(self.layout)
         after = parse(self.patched)
         self.assertEqual(snapshot(before).segment_vas, snapshot(after).segment_vas)
@@ -162,7 +165,13 @@ class MachOTests(unittest.TestCase):
 
         expected = {site.site for site in MANIFEST.main_sites}
         self.assertTrue(expected, "the manifest declares no main_sites")
-        for selection in (None, ("libass",), ("ffmpeg",), ("ffmpeg-full",)):
+        for selection in (
+            None,
+            ("libass",),
+            ("ffmpeg",),
+            ("ffmpeg-full",),
+            ("renderer-highbit",),
+        ):
             with self.subTest(selection=selection):
                 selected = {
                     site.site

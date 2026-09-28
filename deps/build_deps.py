@@ -81,6 +81,20 @@ def run(
     )
 
 
+def sanitize_ffmpeg_configuration(config: Path, root: Path = ROOT) -> None:
+    lines = config.read_text(encoding="utf-8").splitlines(keepends=True)
+    prefix = "#define FFMPEG_CONFIGURATION "
+    matches = [index for index, line in enumerate(lines) if line.startswith(prefix)]
+    if len(matches) != 1:
+        raise ValueError(f"FFmpeg config has {len(matches)} configuration macros: {config}")
+    index = matches[0]
+    checkout = str(root)
+    if checkout not in lines[index]:
+        raise ValueError(f"FFmpeg configuration does not contain checkout path: {config}")
+    lines[index] = lines[index].replace(checkout, ".")
+    config.write_text("".join(lines), encoding="utf-8")
+
+
 def _xcrun(name: str, sdk: str) -> str:
     result = subprocess.run(
         ["/usr/bin/xcrun", "--sdk", sdk, "--find", name],

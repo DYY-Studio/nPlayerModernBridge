@@ -161,6 +161,7 @@ def build() -> dict[str, Any]:
         shutil.rmtree(prefix)
     env = build_deps.isolated_environment({"LC_ALL": "C"})
     build_deps.run(["./configure", *configure_command(lock, sdk)], env, source)
+    build_deps.sanitize_ffmpeg_configuration(source / "config.h")
     build_deps.run(["/usr/bin/make", f"-j{os.cpu_count() or 2}"], env, source)
     build_deps.run(["/usr/bin/make", "install"], env, source)
     return verify_closure(lock)

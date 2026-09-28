@@ -76,12 +76,13 @@ def load_closure(
         key, _, raw = line.partition("=")
         values[key.strip()] = raw.split()
     archives = tuple(lib_root / name for name in values.get("project_archives", []))
-    if not archives:
-        raise ValueError(f"dependency closure lists no archive: {path}")
+    system_link_args = tuple(values.get("system_link_args", []))
+    if not archives and not system_link_args:
+        raise ValueError(f"dependency closure has no link inputs: {path}")
     for archive in archives:
         if not archive.is_file():
             raise FileNotFoundError(archive)
-    return archives, tuple(values.get("system_link_args", []))
+    return archives, system_link_args
 
 
 def nm_exports(path: Path) -> list[str]:

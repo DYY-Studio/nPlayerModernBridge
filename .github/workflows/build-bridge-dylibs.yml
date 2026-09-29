@@ -235,16 +235,39 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish the dylibs, their reports and the provenance
+      - name: Check the release notices
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          keystone_sources=(build/sources/keystone-*)
+          if [ "${#keystone_sources[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one extracted Keystone source tree"
+            exit 1
+          fi
+          for file in \
+            LICENSE \
+            THIRD-PARTY.md \
+            "${keystone_sources[0]}/COPYING" \
+            "${keystone_sources[0]}/EXCEPTIONS-CLIENT" \
+            "${keystone_sources[0]}/llvm/LICENSE.TXT"
+          do
+            [ -f "$file" ] || { echo "::error::release notice is missing: $file"; exit 1; }
+          done
+
+      - name: Publish the binaries, reports, notices and provenance
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bridge-dylibs
           # Every dylib report is written by the verify step inside `make
-          # bridge`, which fails the run if one dylib fails its checks, so this
-          # glob cannot silently under-match.
+          # bridge`; the notice files are checked explicitly above.
           path: |
             ${{ env.ARTIFACTS }}
             build/bridge/*-verification.json
+            LICENSE
+            THIRD-PARTY.md
+            build/sources/keystone-*/COPYING
+            build/sources/keystone-*/EXCEPTIONS-CLIENT
+            build/sources/keystone-*/llvm/LICENSE.TXT
             PROVENANCE.txt
           if-no-files-found: error
           # A re-run of this workflow is a new attempt at the same run, whose

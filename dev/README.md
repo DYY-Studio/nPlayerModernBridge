@@ -117,10 +117,11 @@ re-check the offsets asserted in `bridge/ffmpeg-core-abi.h`.
 1. `make bridge` and `make verify`.
 2. Publish `build/LibASSBridge.dylib`, `build/LibFFmpegFullBridge.dylib`,
    `build/LibFFmpegBridge.dylib`, `build/LibFFmpegCoreBridge.dylib`,
-   `build/LibFFmpegCore902Bridge.dylib` and `build/LibFFmpegOut448Bridge.dylib`,
-   plus `libkeystone.dylib`, as release assets together with their SHA-256, plus
-   `LICENSE` and `THIRD-PARTY.md`. These are host-side products; `make bootstrap`
-   reproduces the assembler.
+   `build/LibFFmpegCore902Bridge.dylib`, `build/LibFFmpegOut448Bridge.dylib` and
+   `build/LibRendererHighBitBridge.dylib`, plus `libkeystone.dylib`, as release
+   assets together with their SHA-256. Include `LICENSE`, `THIRD-PARTY.md` and
+   Keystone's `COPYING`, `EXCEPTIONS-CLIENT` and `llvm/LICENSE.TXT`. These are
+   host-side products; `make bootstrap` reproduces the assembler.
 3. When any pinned dependency version changes, update `THIRD-PARTY.md` and the
    matching `dylibs[].library_version` in the manifest in the same commit.
 4. Run `uv run python dev/abi_probe.py` after an iOS SDK change and re-check

@@ -1,12 +1,16 @@
 # Third-party notices
 
-Each bridge dylib published as a release asset statically links the libraries
-listed for it below. Every one is built from pinned sources recorded in
+The release set contains seven bridge dylibs and a host Keystone assembler.
+The sections below identify the third-party code used by each distributed
+binary. The bridge dependencies are built from pinned sources recorded in
 `deps/sources.lock.json` (libass closure), `deps/ffmpeg.lock.json` (9.0.2
-scaler/resampler) or `deps/ffmpeg-core.lock.json` (the 4.4.8 closure);
-`dev/README.md` documents how to rebuild the same closures from those sources,
-which is what satisfies the source-availability requirement of the LGPL
-components.
+scaler/resampler), `deps/ffmpeg-core.lock.json` (the 4.4.8 closure) and
+`deps/ffmpeg-core902.lock.json` (the 9.0.2 core closure).
+
+The dependency locks and `dev/README.md` identify the exact inputs and build
+configuration. Anyone distributing these binaries is responsible for providing
+the license texts, corresponding source and relinking materials required by the
+applicable upstream licenses.
 
 No nPlayer code is included or redistributed by this project.
 
@@ -58,6 +62,51 @@ app's `sws_*` calls belong to `LibFFmpegBridge.dylib`.
 The same 4.4.8 closure as `LibFFmpegCoreBridge.dylib`, linked whole so that one
 dylib carries every FFmpeg entry point the app calls. Same licenses, same
 external libraries, no GPL part.
+
+## `LibFFmpegCore902Bridge.dylib`
+
+| Library | License | Version | Source |
+| --- | --- | --- | --- |
+| FFmpeg (libavformat, libavcodec, libavutil, libswscale, libswresample) | LGPL-2.1-or-later | 9.0.2 | https://ffmpeg.org/releases/ |
+| dav1d | BSD-2-Clause | 1.5.4 | https://code.videolan.org/videolan/dav1d |
+
+This closure uses Secure Transport and the system zlib, bzlib and iconv
+libraries. FFmpeg's native AV1 decoder is disabled and AV1 decoding is provided
+by dav1d. No GPL component is enabled.
+
+## `LibFFmpegOut448Bridge.dylib`
+
+| Library | License | Version | Source |
+| --- | --- | --- | --- |
+| FFmpeg (libavformat, libavcodec, libavutil) | LGPL-2.1-or-later | 4.4.8 | https://ffmpeg.org/releases/ |
+| dav1d | BSD-2-Clause | 1.5.4 | https://code.videolan.org/videolan/dav1d |
+
+This output-side bridge is built from the same pinned 4.4.8 closure as
+`LibFFmpegCoreBridge.dylib` and `LibFFmpegFullBridge.dylib`. No GPL component is
+enabled.
+
+## `LibRendererHighBitBridge.dylib`
+
+| Library | License | Version | Source |
+| --- | --- | --- | --- |
+| FFmpeg headers (libavutil) | LGPL-2.1-or-later | 4.4.8 | https://ffmpeg.org/releases/ |
+
+This bridge compiles against the pinned FFmpeg headers for ABI definitions but
+links no FFmpeg archive. Its runtime dependencies are Apple system frameworks.
+
+## Host patching tools
+
+| Tool | License | Version | Source |
+| --- | --- | --- | --- |
+| Keystone Engine (`libkeystone.dylib`) | GPL-2.0-only with the Keystone FOSS License Exception; bundled LLVM code under the University of Illinois/NCSA license | 0.9.2-compatible, commit `dc7932ef2b2c4a793836caec6ecab485005139d6` | https://github.com/keystone-engine/keystone/tree/dc7932ef2b2c4a793836caec6ecab485005139d6 |
+| LIEF | Apache-2.0 | 1.0.0 | https://github.com/lief-project/LIEF |
+
+`libkeystone.dylib` is a host-side release asset used to assemble patch
+payloads; it is not linked into an iOS bridge. The release artifact includes
+Keystone's `COPYING`, `EXCEPTIONS-CLIENT` and `llvm/LICENSE.TXT` files. LIEF is
+installed as a Python dependency and is not copied into the released binary
+set. `ldid` is an external prerequisite supplied separately by the user and is
+not redistributed by this project.
 
 The authoritative license texts are the `COPYING`/`LICENSE` files inside each
 upstream source tree. The versions above are the ones pinned by the dependency

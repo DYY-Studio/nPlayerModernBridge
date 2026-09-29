@@ -5,6 +5,27 @@ verification contract and the accepted artifacts live in
 [Verification.md](Verification.md) and `dev/acceptance.json`; the build, verify
 and device-acceptance workflow is in `dev/README.md`.
 
+## Input executable identity
+
+`npa-patch` identifies a supported decrypted executable with the normalized
+SHA-256 stored as `main_pin_sha256` in its manifest. A whole-file hash is not a
+stable identity: extraction tools may write different values to the inactive
+`LC_ENCRYPTION_INFO_64.cryptsize` field and replace the embedded code signature
+without changing the decrypted program.
+
+This was confirmed with two nPlayer 3.13.0 executables whose whole-file hashes
+were different. Outside the `LC_CODE_SIGNATURE` blob, their only differing
+bytes were the `cryptsize` value (`23445504` versus `4096`), while `cryptid` was
+zero in both and every manifest call site, old branch target, dynamic stub and
+extra-site guard matched.
+
+The identity pin therefore requires a thin Mach-O with valid encryption and
+code-signature commands, requires `cryptid == 0`, normalizes `cryptsize` and the
+signature `datasize`, and excludes the signature blob from the hash. Every
+other byte remains pinned, including code, data, other load-command fields and
+the signature offset. Parsing errors, encrypted inputs and any other byte
+change fail explicitly; there is no fallback to a less strict match.
+
 ## The payload and the units
 
 `npa-patch` rewrites the app's call sites so they jump into a `__NPATCH_TEXT`

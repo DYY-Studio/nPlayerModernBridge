@@ -206,10 +206,13 @@ fails to load or fails its identity check.
 
 Exactly the nPlayer versions listed in `manifests/`. 
 
-The input executable is
-matched by SHA-256 before anything is written, so an unsupported version, an
-already-patched IPA and an encrypted package all fail with a named reason
-instead of producing a broken bundle.
+Before anything is written, the input executable is matched by a normalized
+SHA-256 that excludes the embedded code signature and normalizes decrypted
+`cryptsize` metadata. All other executable bytes remain pinned, so an
+unsupported version, an already-patched IPA and an encrypted package fail with
+a named reason instead of producing a broken bundle. See
+[Internals.md](docs/Internals.md#input-executable-identity) for the exact
+identity contract.
 
 Adding a version means adding one manifest (addresses, call sites, frozen iOS
 ABI). That work needs the binary analyzed; see `dev/README.md`.
@@ -223,7 +226,7 @@ See [Verification.md](docs/Verification.md)
 | Message | Cause | Fix |
 | --- | --- | --- |
 | `still FairPlay-encrypted` | the IPA comes straight from the App Store | provide a decrypted dump of your own purchase |
-| `no manifest matches this main executable` | wrong nPlayer version, or the IPA already has the patch | use a supported, clean dump |
+| `no manifest matches this main executable` | wrong nPlayer version, an already-patched IPA, or bytes changed outside normalized extraction/signature metadata | use a supported, clean decrypted dump |
 | `bridge.exports` / `bridge.install_name` failed | wrong or stale dylib | use the dylib from the matching release |
 | `bridge dylib for <id> is missing` | the selected dylib is not in `--dylibs-dir` | copy it there or point `--dylibs-dir` at it |
 | `unknown dylib ids: <id>` | typo in `--dylib` | the ids are the manifest's `dylibs[].id` values |

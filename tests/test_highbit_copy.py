@@ -2,13 +2,16 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_highbit_copy_preserves_plane_rows_and_padding(tmp_path):
     compiler = shutil.which("clang")
-    assert compiler is not None, "Apple clang is required for the P010 copy test"
+    if compiler is None:
+        pytest.skip("Apple clang is required for the P010 copy test")
     executable = tmp_path / "highbit-copy-test"
     subprocess.run(
         [

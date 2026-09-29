@@ -115,6 +115,11 @@ def main(argv: list[str] | None = None) -> int:
     if OUTPUT.is_file() and "--force" not in arguments:
         print(f"keystone: reusing {OUTPUT} (pass --force to rebuild)")
         return 0
+    if sys.platform == "win32":
+        raise RuntimeError(
+            "Windows patching requires the official Keystone 0.9.2 "
+            f"keystone.dll copied to the repository root: {OUTPUT}"
+        )
     source = extract_source()
     apply_cmake_policy(source)
     print(build(source))

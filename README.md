@@ -2,7 +2,7 @@
 
 > A small tribute to nPlayer, an exceptionally well-designed player that has served us reliably for years.
 
-A patching tool on macOS / Linux bringing modern ASS/SSA rendering and 
+A patching tool on macOS, Linux and Windows bringing modern ASS/SSA rendering and
 media processing to your own **nPlayer 3.13.0**.
 
 > [!Warning]
@@ -24,13 +24,13 @@ Update to modern
 - High-Bit output when software decoding (S/W, nightly, opt-in)
 
 No jailbreak, no inline hooks, specially designed for sideloading and
-non-JIT [LiveContainer](https://github.com/LiveContainer/LiveContainer).
+[LiveContainer](https://github.com/LiveContainer/LiveContainer) JIT-less.
 
 Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framerate limits.
 
 > [!Caution]
 >
-> This patch can only be applied to **Standard / Basic nPlayer 3.13.0**.
+> This patch currently can only be applied to **Standard / Basic nPlayer 3.13.0**.
 >
 > **nPlayer Lite**, **nPlayer Plus** and **other Basic nPlayer version** is unsupported.
 
@@ -77,20 +77,25 @@ grouped this way, what each dylib links and how a fallback behaves are in
 
 ## Requirements
 
-- macOS (Dev and Patch) or Linux (Patch only)
-- Python ≥ 3.11, [uv](https://docs.astral.sh/uv/), `ldid`, `zip` and `unzip`. 
-  - macOS: Install ldid with `brew install ldid`
-  - Linux: Use a [prebuilt binary](https://github.com/ProcursusTeam/ldid/releases) or build it yourself.
+- macOS (development and patching), or Linux / 64-bit Windows (patching only).
+- Python ≥ 3.11, [uv](https://docs.astral.sh/uv/) and `ldid`.
+  - macOS: install ldid with `brew install ldid`.
+  - Linux: use a [prebuilt binary](https://github.com/ProcursusTeam/ldid/releases)
+    or build it yourself.
+  - Windows: download `ldid_w64_x86_64.exe` from the
+    [Procursus releases](https://github.com/ProcursusTeam/ldid/releases), rename
+    it to `ldid.exe`, and put it in the repository root or on `PATH`.
 - Your own **decrypted** nPlayer 3.13.0 IPA. 
   - App Store packages are FairPlay-encrypted and are rejected on purpose.
   - This project ships no IPA and no decryption.
-- The host files from the release assets. All are host-side build products;
-  `make bootstrap` builds the assembler and `make bridge` builds the dylibs
-  locally if you prefer that.
+- The host files from the release assets. On macOS, `make bootstrap` builds the
+  assembler and `make bridge` builds the dylibs locally; Linux can build its
+  host assembler with `make bootstrap`. Windows uses the official prebuilt
+  Keystone DLL as described below.
 
   | asset | what it is | selected by |
   |---|---|---|
-  | `libkeystone.dylib` | the assembler that encodes the dispatch payload (macOS arm64; on Linux, build `libkeystone.so` with `make bootstrap`) | every patch |
+  | `libkeystone.dylib` / `libkeystone.so` / `keystone.dll` | the Keystone 0.9.2 assembler that encodes the dispatch payload (macOS / Linux / Windows) | every patch |
   | `LibASSBridge.dylib` | libass 0.17.5 for iOS arm64 | `libass` |
   | `LibFFmpegFullBridge.dylib` | FFmpeg 4.4.8 for iOS arm64, the whole surface | `ffmpeg-full` |
   | `LibFFmpegBridge.dylib` | FFmpeg 9.0.2 for iOS arm64, the scaler and resampler | `ffmpeg` |
@@ -99,13 +104,16 @@ grouped this way, what each dylib links and how a fallback behaves are in
   | `LibFFmpegOut448Bridge.dylib` | FFmpeg 4.4.8 for iOS arm64, the output side | `ffmpeg-out448` |
   | `LibRendererHighBitBridge.dylib` | standalone P010 and planar 10-bit / 12-bit / 16-bit renderer for iOS arm64 | `renderer-highbit` |
 
-- No Xcode, no iOS SDK, no jailbreak. `npa-patch` runs from the repository
-  checkout, next to `manifests/`.
+- No Xcode, iOS SDK or jailbreak is needed for patching. `npa-patch` runs from
+  the repository checkout, next to `manifests/`. Windows does not require WSL,
+  MSYS2, `zip` or `unzip`.
 
 ## Quick start
 
+### macOS / Linux
+
 ```sh
-git clone <this repository> && cd nplayer-libass-bridge
+git clone <this repository> && cd nPlayerModernBridge
 # put LibASSBridge.dylib, LibFFmpegFullBridge.dylib,
 # LibFFmpegBridge.dylib, LibFFmpegCoreBridge.dylib, LibFFmpegCore902Bridge.dylib,
 # LibFFmpegOut448Bridge.dylib and libkeystone.dylib from the release assets here;
@@ -113,7 +121,41 @@ git clone <this repository> && cd nplayer-libass-bridge
 # (on Linux, run `make bootstrap` to build libkeystone.so instead)
 uv run npa-patch "/path/to/nPlayer_3.13.0.ipa"
 ```
-The output is written next to the input as
+
+### Windows
+
+Download and extract the official
+[Keystone 0.9.2 Windows release](https://github.com/keystone-engine/keystone/releases/tag/0.9.2),
+then copy its DLL directly to the repository root. The patcher deliberately
+does not search the extracted directory or `PATH` for this file.
+
+```powershell
+# If you prefered CMD, replace 
+# `Set-Location` -> `cd`, 
+# `Copy-Item` -> `copy`
+git clone <this repository>
+Set-Location nPlayerModernBridge
+
+uv sync --frozen
+# Of cource you can simply use Windows Explorer to do this
+Copy-Item .\keystone-0.9.2-win64\keystone.dll .\keystone.dll
+# After downloading the Procursus Windows x86_64 release:
+Copy-Item D:\Downloads\ldid_w64_x86_64.exe .\ldid.exe
+.\ldid.exe
+
+# Put the selected Lib*Bridge.dylib release assets in this checkout, then run:
+uv run npa-patch --dylibs-dir . D:\IPAs\nPlayer_3.13.0.ipa
+```
+
+The repository-root `ldid.exe` takes precedence on Windows. Alternatively,
+place it elsewhere and add that directory to `PATH`. 
+
+No MSYS2, WSL, external
+`zip`, or external `unzip` installation is used by this flow.
+
+### Output
+
+Default output filename will be
 `nPlayer_3.13.0-libass0.17.5-ffmpeg-full4.4.8.ipa`, one
 `<id><version>` segment per installed dylib in manifest order. 
 
@@ -121,6 +163,8 @@ Install it with your usual sideload tool (
 [TrollStore](https://github.com/opa334/TrollStore),
 [SideStore](https://github.com/SideStore/SideStore),
 [iloader](https://github.com/nab138/iloader) and more ) or [LiveContainer](https://github.com/LiveContainer/LiveContainer).
+
+### Advance
 
 Options exist: 
 - `-o/--output`
@@ -131,8 +175,9 @@ directory; each dylib is looked up as `<dir>/<basename>`).
 -  `--manifests`
 (default `manifests/`) selects the manifest directory. 
 
-`./npa-patch` at the
-repository root and `uv run python tools/patch.py` are equivalent entry points.
+On macOS/Linux, `./npa-patch` at the repository root is equivalent to
+`uv run npa-patch`. On every supported host, `uv run python tools/patch.py` is
+also an equivalent entry point.
 
 The command prints a JSON summary with the input hash, output hashes, one hash
 per shipped dylib, and the number of verification checks that passed.
@@ -183,8 +228,10 @@ See [Verification.md](docs/Verification.md)
 | `bridge dylib for <id> is missing` | the selected dylib is not in `--dylibs-dir` | copy it there or point `--dylibs-dir` at it |
 | `unknown dylib ids: <id>` | typo in `--dylib` | the ids are the manifest's `dylibs[].id` values |
 | `conflicting dylib selection: ...` | `ffmpeg-full` was combined with `ffmpeg`/`ffmpeg-core`, or `ffmpeg-out448` with `ffmpeg-core`/`ffmpeg-full` | pick one core selection for the call sites; `ffmpeg-out448` pairs with `ffmpeg-core902` |
-| `ldid is required to assemble the IPA` | ldid is not installed | `brew install ldid`, or a prebuilt Linux ldid |
-| `host assembler library is missing` | the host assembler is not in the checkout | run `make bootstrap`, or drop the `libkeystone.dylib` release asset on macOS |
+| `ldid is required to assemble the IPA` | ldid is unavailable | use Homebrew on macOS, a prebuilt Linux binary, or copy the Procursus Windows x86_64 release to the repository root as `ldid.exe` (with `PATH` as a fallback) |
+| `host assembler library is missing: ...keystone.dll` | the Windows assembler is not at the repository root | copy `keystone.dll` from the official Keystone 0.9.2 Windows release directly to the checkout root |
+| `WinError 193` or a DLL load failure mentioning `keystone.dll` | the DLL has the wrong architecture or a runtime dependency is unavailable | use the official 64-bit Windows Keystone 0.9.2 DLL and install its required Microsoft runtime |
+| `host assembler library is missing` | the macOS/Linux assembler is not in the checkout | run `make bootstrap`, or use the matching release asset |
 
 ## Rebuilding from source
 
@@ -195,7 +242,9 @@ SHA-256) and `make bootstrap deps bridge` rebuilds every closure and dylib.
 `make deps` verifies each closure and refuses a
 surprise fourth archive. 
 
-That path needs `Xcode`, `cmake`, `ninja` and `meson`;
+Building the iOS bridge dylibs locally is supported on macOS and needs `Xcode`,
+`cmake`, `ninja` and `meson`. Linux can build its host Keystone library with
+`make bootstrap`; Windows patch users use the official prebuilt DLL instead.
 `dev/README.md` describes it, plus how to re-check the frozen ABI and re-run the
 device acceptance.
 

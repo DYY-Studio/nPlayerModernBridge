@@ -10,11 +10,13 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import stat
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Mapping
-from zipfile import ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,9 +25,11 @@ MAIN_MEMBER = (APP_DIR / "nPlayer").as_posix()
 FRAMEWORKS = APP_DIR / "Frameworks"
 LINKEDIT = "ldid"
 TOOL_HINTS = {
-    "ldid": "brew install ldid on macOS; on Linux use a prebuilt ldid binary",
-    "zip": "macOS ships /usr/bin/zip; on Linux install zip",
-    "unzip": "macOS ships /usr/bin/unzip; on Linux install unzip",
+    "ldid": (
+        "brew install ldid on macOS; on Linux use a prebuilt binary; on Windows "
+        "copy the Procursus ldid_w64_x86_64 release to the repository root as "
+        "ldid.exe, or put it on PATH"
+    ),
 }
 
 
@@ -39,6 +43,10 @@ def _require(condition: bool, message: str) -> None:
 
 
 def _tool(name: str) -> str:
+    if sys.platform == "win32" and name == LINKEDIT:
+        root_tool = ROOT / "ldid.exe"
+        if root_tool.is_file():
+            return str(root_tool.resolve())
     path = shutil.which(name)
     if path is None:
         raise RuntimeError(f"{name} is required to assemble the IPA ({TOOL_HINTS[name]})")
@@ -65,14 +73,56 @@ def sign(path: Path) -> None:
     _run([_tool(LINKEDIT), "-S", path])
 
 
-def extract_bundle(source_ipa: Path, destination: Path) -> Path:
-    if destination.exists():
-        shutil.rmtree(destination)
-    destination.mkdir(parents=True)
-    _run([_tool("unzip"), "-q", source_ipa, "-d", destination])
-    app = destination / APP_DIR
-    _require((app / "nPlayer").is_file(), f"source IPA has no {MAIN_MEMBER}")
-    return app
+def _write_ipa(
+    source_ipa: Path,
+    output: Path,
+    main: Path,
+    bridges: Mapping[str, Path],
+) -> dict[str, Any]:
+    """Rewrite an IPA with signed files while preserving source ZIP metadata."""
+
+    with ZipFile(source_ipa) as source:
+        infos = source.infolist()
+        mains = [info for info in infos if info.filename == MAIN_MEMBER]
+        _require(
+            len(mains) == 1,
+            f"{source_ipa.name} carries {len(mains)} main executables",
+        )
+        frameworks_member = FRAMEWORKS.as_posix()
+        if any(info.filename == frameworks_member for info in infos):
+            raise ValueError(
+                f"source IPA carries {FRAMEWORKS.name} as a file, not a directory"
+            )
+        source_names = {info.filename for info in infos}
+        for basename in bridges:
+            member = bridge_member(basename)
+            _require(
+                member not in source_names,
+                f"source IPA already carries selected bridge {basename}",
+            )
+
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.unlink(missing_ok=True)
+        try:
+            with ZipFile(output, "w") as destination:
+                destination.comment = source.comment
+                for info in infos:
+                    content = (
+                        main.read_bytes()
+                        if info.filename == MAIN_MEMBER
+                        else source.read(info)
+                    )
+                    destination.writestr(info, content)
+                for basename, bridge in bridges.items():
+                    info = ZipInfo(bridge_member(basename))
+                    info.compress_type = ZIP_DEFLATED
+                    info.create_system = 3
+                    info.external_attr = (stat.S_IFREG | 0o755) << 16
+                    destination.writestr(info, bridge.read_bytes())
+            return inspect_ipa(output, tuple(bridges))
+        except Exception:
+            output.unlink(missing_ok=True)
+            raise
 
 
 def package_ipa(
@@ -88,38 +138,40 @@ def package_ipa(
         raise ValueError("no bridge dylib was selected")
     created_scratch = work is None
     scratch_root = Path(work) if work is not None else Path(tempfile.mkdtemp(prefix="npa-patch-"))
+    scratch = scratch_root / f"files-{output.name}"
+    temporary = output.with_name(f".tmp-{output.name}")
     try:
         scratch_root.mkdir(parents=True, exist_ok=True)
-        scratch = scratch_root / f"tree-{output.name}"
-        app = extract_bundle(source_ipa, scratch)
-        executable = app / "nPlayer"
-        shutil.copy2(main, executable)
-        executable.chmod(0o755)
-        sign(executable)
-        frameworks = app / "Frameworks"
-        if frameworks.exists() and not frameworks.is_dir():
-            raise ValueError(
-                f"source IPA carries {frameworks.name} as a file, not a directory"
-            )
-        frameworks.mkdir(exist_ok=True)
+        if scratch.exists():
+            shutil.rmtree(scratch)
+        scratch.mkdir()
+        signed_main = scratch / "nPlayer"
+        shutil.copy2(main, signed_main)
+        signed_main.chmod(0o755)
+        sign(signed_main)
+        signed_bridges: dict[str, Path] = {}
         for basename, bridge in bridges.items():
-            target = frameworks / basename
+            target = scratch / basename
             shutil.copy2(bridge, target)
             target.chmod(0o755)
             sign(target)
+            signed_bridges[basename] = target
         output.parent.mkdir(parents=True, exist_ok=True)
-        temporary = output.with_name(f".tmp-{output.name}")
         temporary.unlink(missing_ok=True)
-        entries = sorted(path.name for path in scratch.iterdir())
         try:
-            _run([_tool("zip"), "-q", "-r", "-y", temporary, *entries], cwd=scratch)
-            report = inspect_ipa(temporary, tuple(bridges))
+            report = _write_ipa(
+                source_ipa,
+                temporary,
+                signed_main,
+                signed_bridges,
+            )
         except Exception:
             temporary.unlink(missing_ok=True)
             raise
         os.replace(temporary, output)
-        shutil.rmtree(scratch)
     finally:
+        temporary.unlink(missing_ok=True)
+        shutil.rmtree(scratch, ignore_errors=True)
         if created_scratch:
             shutil.rmtree(scratch_root, ignore_errors=True)
     report.update(

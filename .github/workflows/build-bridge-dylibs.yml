@@ -239,7 +239,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          keystone_sources=(build/sources/keystone-*)
+          keystone_sources=(build/sources/keystone-*/)
           if [ "${#keystone_sources[@]}" -ne 1 ]; then
             echo "::error::expected exactly one extracted Keystone source tree"
             exit 1
@@ -247,9 +247,9 @@ jobs:
           for file in \
             LICENSE \
             THIRD-PARTY.md \
-            "${keystone_sources[0]}/COPYING" \
-            "${keystone_sources[0]}/EXCEPTIONS-CLIENT" \
-            "${keystone_sources[0]}/llvm/LICENSE.TXT"
+            "${keystone_sources[0]}COPYING" \
+            "${keystone_sources[0]}EXCEPTIONS-CLIENT" \
+            "${keystone_sources[0]}llvm/LICENSE.TXT"
           do
             [ -f "$file" ] || { echo "::error::release notice is missing: $file"; exit 1; }
           done

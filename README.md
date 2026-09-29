@@ -24,13 +24,13 @@ Update to modern
 - High-Bit output when software decoding (S/W, nightly, opt-in)
 
 No jailbreak, no inline hooks, specially designed for sideloading and
-non-JIT [LiveContainer](https://github.com/LiveContainer/LiveContainer).
+[LiveContainer](https://github.com/LiveContainer/LiveContainer) JIT-less.
 
 Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framerate limits.
 
 > [!Caution]
 >
-> This patch can only be applied to **Standard / Basic nPlayer 3.13.0**.
+> This patch currently can only be applied to **Standard / Basic nPlayer 3.13.0**.
 >
 > **nPlayer Lite**, **nPlayer Plus** and **other Basic nPlayer version** is unsupported.
 
@@ -113,7 +113,7 @@ grouped this way, what each dylib links and how a fallback behaves are in
 ### macOS / Linux
 
 ```sh
-git clone <this repository> && cd nplayer-libass-bridge
+git clone <this repository> && cd nPlayerModernBridge
 # put LibASSBridge.dylib, LibFFmpegFullBridge.dylib,
 # LibFFmpegBridge.dylib, LibFFmpegCoreBridge.dylib, LibFFmpegCore902Bridge.dylib,
 # LibFFmpegOut448Bridge.dylib and libkeystone.dylib from the release assets here;
@@ -122,7 +122,7 @@ git clone <this repository> && cd nplayer-libass-bridge
 uv run npa-patch "/path/to/nPlayer_3.13.0.ipa"
 ```
 
-### Windows PowerShell
+### Windows
 
 Download and extract the official
 [Keystone 0.9.2 Windows release](https://github.com/keystone-engine/keystone/releases/tag/0.9.2),
@@ -130,25 +130,32 @@ then copy its DLL directly to the repository root. The patcher deliberately
 does not search the extracted directory or `PATH` for this file.
 
 ```powershell
+# If you prefered CMD, replace 
+# `Set-Location` -> `cd`, 
+# `Copy-Item` -> `copy`
 git clone <this repository>
-Set-Location nplayer-libass-bridge
+Set-Location nPlayerModernBridge
 
 uv sync --frozen
+# Of cource you can simply use Windows Explorer to do this
 Copy-Item .\keystone-0.9.2-win64\keystone.dll .\keystone.dll
-
 # After downloading the Procursus Windows x86_64 release:
-Copy-Item C:\Downloads\ldid_w64_x86_64.exe .\ldid.exe
+Copy-Item D:\Downloads\ldid_w64_x86_64.exe .\ldid.exe
 .\ldid.exe
 
 # Put the selected Lib*Bridge.dylib release assets in this checkout, then run:
-uv run npa-patch --dylibs-dir . C:\IPAs\nPlayer_3.13.0.ipa
+uv run npa-patch --dylibs-dir . D:\IPAs\nPlayer_3.13.0.ipa
 ```
 
 The repository-root `ldid.exe` takes precedence on Windows. Alternatively,
-place it elsewhere and add that directory to `PATH`. No MSYS2, WSL, external
+place it elsewhere and add that directory to `PATH`. 
+
+No MSYS2, WSL, external
 `zip`, or external `unzip` installation is used by this flow.
 
-The output is written next to the input as
+### Output
+
+Default output filename will be
 `nPlayer_3.13.0-libass0.17.5-ffmpeg-full4.4.8.ipa`, one
 `<id><version>` segment per installed dylib in manifest order. 
 
@@ -156,6 +163,8 @@ Install it with your usual sideload tool (
 [TrollStore](https://github.com/opa334/TrollStore),
 [SideStore](https://github.com/SideStore/SideStore),
 [iloader](https://github.com/nab138/iloader) and more ) or [LiveContainer](https://github.com/LiveContainer/LiveContainer).
+
+### Advance
 
 Options exist: 
 - `-o/--output`

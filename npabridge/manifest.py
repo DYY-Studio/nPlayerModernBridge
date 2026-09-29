@@ -1,10 +1,10 @@
-import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
 from . import target_abi
+from .main_pin import main_pin_sha256
 
 
 @dataclass(frozen=True)
@@ -111,7 +111,7 @@ class Dylib:
 @dataclass(frozen=True)
 class Manifest:
     imagebase: int
-    main_sha256: str
+    main_pin_sha256: str
     app_version: str
     target_abi: target_abi.TargetABI
     dlsym_stub: int
@@ -330,7 +330,7 @@ def load_manifest(path: Path) -> Manifest:
     )
     return Manifest(
         imagebase=int(data["imagebase"], 0),
-        main_sha256=data["main_sha256"],
+        main_pin_sha256=data["main_pin_sha256"],
         app_version=data["app_version"],
         target_abi=target_abi.from_manifest(data["target_abi"]),
         dlsym_stub=int(data["dlsym_stub"], 0),
@@ -342,18 +342,18 @@ def load_manifest(path: Path) -> Manifest:
 
 
 def select_manifest(directory: Path, main: Path) -> Manifest:
-    """Pick the manifest whose frozen main hash matches this executable."""
+    """Pick the manifest whose normalized main pin matches this executable."""
 
-    digest = hashlib.sha256(Path(main).read_bytes()).hexdigest()
+    digest = main_pin_sha256(main)
     supported = []
     for path in sorted(Path(directory).glob("*.json")):
         manifest = load_manifest(path)
         supported.append(manifest.app_version)
-        if manifest.main_sha256 == digest:
+        if manifest.main_pin_sha256 == digest:
             return manifest
     raise ValueError(
         "no manifest matches this main executable\n"
-        f"  input sha256: {digest}\n"
+        f"  input pin sha256: {digest}\n"
         f"  supported nPlayer versions: {', '.join(sorted(supported)) or 'none'}\n"
         "  (an already-patched IPA and an App Store-encrypted dump both fail this check)"
     )

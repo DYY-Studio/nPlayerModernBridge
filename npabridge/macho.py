@@ -9,7 +9,6 @@ two NOP patches at their final addresses.
 
 from __future__ import annotations
 
-import hashlib
 import struct
 import subprocess
 from dataclasses import dataclass
@@ -20,6 +19,7 @@ from zipfile import ZipFile
 import lief
 
 from .manifest import Manifest, Unit, branch_opcode, encode_branch
+from .main_pin import main_pin_sha256
 from .payload import PayloadLayout, assemble_payload, data_size, measure_payload
 from .target_abi import TargetABI
 
@@ -222,14 +222,12 @@ def preflight(
     input_path: Path,
     manifest: Manifest,
     units: Sequence[Unit],
-    digest: str | None = None,
 ) -> None:
     """Reject anything that is not the frozen clean main."""
 
-    data = input_path.read_bytes()
-    actual = hashlib.sha256(data).hexdigest()
-    if actual != (digest or manifest.main_sha256):
-        raise ValueError(f"input SHA-256 does not match the frozen baseline: {actual}")
+    actual = main_pin_sha256(input_path)
+    if actual != manifest.main_pin_sha256:
+        raise ValueError(f"input pin does not match the frozen baseline: {actual}")
     binary = parse(input_path)
     if not binary.has_encryption_info or int(binary.encryption_info.crypt_id) != 0:
         raise ValueError("input is encrypted")

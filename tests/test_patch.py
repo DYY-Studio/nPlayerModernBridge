@@ -9,6 +9,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from npabridge import package, patch
+from npabridge.main_pin import main_pin_sha256
 from npabridge.manifest import Domain, Dylib, select_manifest
 from npabridge.verify import VerificationError
 
@@ -203,12 +204,16 @@ class PatchFlowTests(unittest.TestCase):
 
     def test_unsupported_version_lists_the_supported_one(self):
         unknown = self.work / "unknown-main"
-        unknown.write_bytes(b"\x00" * 16)
+        with ZipFile(SOURCE_IPA) as archive:
+            raw = bytearray(archive.read(patch.MAIN_MEMBER))
+        raw[0xA03F50] ^= 1
+        unknown.write_bytes(raw)
+        digest = main_pin_sha256(unknown)
         with self.assertRaises(ValueError) as caught:
             select_manifest(MANIFESTS, unknown)
         message = str(caught.exception)
         self.assertIn("3.13.0", message)
-        self.assertIn(hashlib.sha256(b"\x00" * 16).hexdigest(), message)
+        self.assertIn(digest, message)
 
     def test_encrypted_input_is_reported_as_encrypted(self):
         encrypted = self.work / "encrypted.ipa"

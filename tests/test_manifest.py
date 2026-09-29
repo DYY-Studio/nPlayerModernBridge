@@ -1,4 +1,3 @@
-import hashlib
 import json
 import tempfile
 import unittest
@@ -6,12 +5,15 @@ from dataclasses import replace
 from pathlib import Path
 from zipfile import ZipFile
 
+from npabridge import macho
 from npabridge.manifest import (
     ExtraSite,
     branch_opcode,
     encode_branch,
     load_manifest,
+    select_manifest,
 )
+from npabridge.main_pin import main_pin_sha256
 
 from support import SOURCE_IPA
 
@@ -238,8 +240,8 @@ class ManifestTests(unittest.TestCase):
     def test_binary_baseline_metadata(self):
         self.assertEqual(self.manifest.imagebase, 0x100000000)
         self.assertEqual(
-            self.manifest.main_sha256,
-            "28e4a62ca87642338deeedbaf144bb8e4b3a801963abcdb59434aae88369b2b8",
+            self.manifest.main_pin_sha256,
+            "4a06e0f1478d685bc3d7f9d43748a6f0f97ec784917aededa65e4477c825f8e2",
         )
         self.assertEqual(self.manifest.dlsym_stub, 0x1011362CC)
         self.assertEqual(self.manifest.dladdr_stub, 0x10113629C)
@@ -333,9 +335,45 @@ class ManifestTests(unittest.TestCase):
         )
         self.assertEqual(self.manifest.target_abi.rtld_default_masked, (1 << 64) - 2)
 
-    def test_ipa_member_matches_manifest_hash(self):
-        digest = hashlib.sha256(self.main_bytes).hexdigest()
-        self.assertEqual(digest, self.manifest.main_sha256)
+    def test_ipa_member_matches_manifest_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            main = Path(directory) / "main"
+            main.write_bytes(self.main_bytes)
+            digest = main_pin_sha256(main)
+        self.assertEqual(digest, self.manifest.main_pin_sha256)
+
+    def test_manifest_selection_ignores_decryption_and_signature_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            variant = Path(directory) / "variant-main"
+            variant.write_bytes(self.main_bytes)
+            binary = macho.parse(variant)
+            encryption = binary.encryption_info
+            signature = binary.code_signature
+            raw = bytearray(self.main_bytes)
+            raw[
+                int(encryption.command_offset) + 12 : int(encryption.command_offset) + 16
+            ] = (4096).to_bytes(4, "little")
+            signature_size = 64
+            raw[
+                int(signature.command_offset) + 12 : int(signature.command_offset) + 16
+            ] = signature_size.to_bytes(4, "little")
+            raw[int(signature.data_offset) :] = b"\xA5" * signature_size
+            variant.write_bytes(raw)
+
+            selected = select_manifest(REPOSITORY_ROOT / "manifests", variant)
+
+        self.assertEqual(selected.app_version, "3.13.0")
+
+    def test_manifest_selection_rejects_a_non_signature_change(self):
+        raw = bytearray(self.main_bytes)
+        call_site = self.unit.apis[0].call_sites[0]
+        file_offset = call_site - self.manifest.imagebase
+        raw[file_offset] ^= 1
+        with tempfile.TemporaryDirectory() as directory:
+            variant = Path(directory) / "changed-main"
+            variant.write_bytes(raw)
+            with self.assertRaises(ValueError):
+                select_manifest(REPOSITORY_ROOT / "manifests", variant)
 
     def test_every_original_bl_word_matches_ipa(self):
         for unit in self.units:

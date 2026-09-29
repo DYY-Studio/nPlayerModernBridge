@@ -17,6 +17,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from . import macho
 from .manifest import BRANCH_OPCODES, Dylib, Manifest, Unit, encode_branch
+from .main_pin import main_pin_sha256
 from .payload import (
     Payload,
     PayloadLayout,
@@ -387,8 +388,8 @@ def verify_main(
 
 
 def _baseline_hash(baseline: Path, manifest: Manifest) -> str:
-    actual = _sha256(baseline)
-    _require(actual == manifest.main_sha256, f"baseline hash is {actual}")
+    actual = main_pin_sha256(baseline)
+    _require(actual == manifest.main_pin_sha256, f"baseline pin is {actual}")
     return actual
 
 

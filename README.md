@@ -26,6 +26,24 @@ The default includes the subtitle improvements and FFmpeg 4.4.8.
 Experimental FFmpeg 9.0.2 and high-bit-depth software decoding options are available in the
 [advanced options](#advanced-options).
 
+<details>
+<summary><strong>Demos</strong></summary>
+<table width="100%">
+  <tr>
+    <th width="10%"></th>
+    <th width="45%">Origin 3.13.0</th>
+    <th width="45%">w/ LibASSBridge</th>
+  </tr>
+  <tr>
+    <td>Init Caching</td>
+    <td><img src="https://github.com/user-attachments/assets/185805ba-b566-4197-97aa-c6e876124cf3" width="100%" alt="Slow init caching in origin nPlayer"/></td>
+    <td><img width="100%" src="https://github.com/user-attachments/assets/7cbf0043-a477-44e8-8b16-44fe76bae594" alt="Much faster then origin"/></td>
+  </tr>
+</table>
+
+> <small>Tested on iPhone SE (2nd Gen), iOS 16.1.2</small>
+</details>
+
 ## Supported app
 
 **nPlayer 3.13.0: the Standard/Basic build and the Plus build.** Other versions

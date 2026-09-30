@@ -641,6 +641,8 @@ static AVCodecContext *npa_ctx_of(void *ptr, AVCodecContext **temp)
          * the last crossing has to reach the modern one before it is used, or
          * the app's codec id, extradata and time base are silently ignored. */
         npa_ctx_in(entry->modern, entry->shadow);
+        /* The refresh replaces extradata, which the shadow borrows. */
+        npa_ctx_out(entry->shadow, entry->modern);
         return entry->modern;
     }
     if (!ptr)
@@ -663,6 +665,7 @@ static AVCodecParameters *npa_params_of(void *ptr, AVCodecParameters **temp)
          * the 4.4.5 avcodec_parameters_copy that fills a shim-allocated shadow
          * in the source-context helper - has to reach the modern object. */
         npa_params_in(entry->modern, entry->shadow);
+        npa_params_out(entry->shadow, entry->modern);
         return entry->modern;
     }
     if (!ptr)
@@ -1003,8 +1006,8 @@ static int npa_shadow_avcodec_parameters_from_context(AVCodecParameters *par,
         abort();
     modern_ctx = npa_ctx_of((void *)ctx, &temp);
     ret = avcodec_parameters_from_context(entry->modern, modern_ctx);
-    if (ret >= 0)
-        npa_params_out(entry->shadow, entry->modern);
+    /* FFmpeg may release/replace buffers even when conversion fails. */
+    npa_params_out(entry->shadow, entry->modern);
     if (temp)
         avcodec_free_context(&temp);
     return ret;
@@ -1023,8 +1026,7 @@ static int npa_shadow_avcodec_parameters_to_context(AVCodecContext *ctx,
     npa_ctx_in(entry->modern, entry->shadow);
     modern_par = npa_params_of((void *)par, &temp);
     ret = avcodec_parameters_to_context(entry->modern, modern_par);
-    if (ret >= 0)
-        npa_ctx_out(entry->shadow, entry->modern);
+    npa_ctx_out(entry->shadow, entry->modern);
     if (temp)
         avcodec_parameters_free(&temp);
     return ret;
@@ -1041,9 +1043,11 @@ NPA_EXPORT int npa_subdec_avcodec_decode_subtitle2(AVCodecContext *avctx, AVSubt
 
     if (!entry || !sub || !got_sub_ptr)
         abort();
-    /* The app writes more context fields after opening it (pkt_timebase and the
-     * text format, sub_100A03DF4), so the modern twin is refreshed here too. */
-    npa_ctx_in(entry->modern, avctx);
+    /* The app sets pkt_timebase after open2 (sub_100A03DF4). Only refresh that:
+     * a full refresh frees the extradata borrowed by the shadow and overwrites
+     * the canvas dimensions learned by the PGS decoder. sub_text_format stays
+     * in the shadow and is read directly by the ASS conversion below. */
+    entry->modern->pkt_timebase = NPA_LD(avctx, NPA_LEGACY_CTX_PKT_TIMEBASE, AVRational);
     /* The app frees each decoded subtitle before reusing the structure
      * (sub_100A04BCC ends with avsubtitle_free on every path). */
     if (npa_sub_find(sub))
@@ -1431,7 +1435,12 @@ NPA_EXPORT void npa_codec_avcodec_flush_buffers(AVCodecContext *avctx)
     /* The app clears skip_loop_filter/skip_idct/skip_frame just before it
      * flushes (sub_100A81590), and those have to reach the modern decoder for
      * the discard behaviour to survive a seek. */
-    npa_ctx_in(entry->modern, avctx);
+    entry->modern->skip_loop_filter =
+        (enum AVDiscard)NPA_LD(avctx, NPA_LEGACY_CTX_SKIP_LOOP_FILTER, int);
+    entry->modern->skip_idct =
+        (enum AVDiscard)NPA_LD(avctx, NPA_LEGACY_CTX_SKIP_IDCT, int);
+    entry->modern->skip_frame =
+        (enum AVDiscard)NPA_LD(avctx, NPA_LEGACY_CTX_SKIP_FRAME, int);
     avcodec_flush_buffers(entry->modern);
 }
 
@@ -1450,7 +1459,6 @@ NPA_EXPORT int npa_codec_avcodec_close(AVCodecContext *avctx)
         abort();
     if (entry->closed)
         abort();
-    npa_ctx_in(entry->modern, avctx);
     avcodec_flush_buffers(entry->modern);
     entry->closed = 1;
     NPA_ST(avctx, NPA_LEGACY_CTX_CODEC, void *, NULL);

@@ -95,3 +95,29 @@
 未添加防御框架、兼容层、依赖或测试。删去与当前 PGS 链路无直接证据联系的通用 side-data、OOM 和并发猜测，仅保留三个具体边界及其触发条件。实现是否需要改动留待本次崩溃证据确定。
 
 报告追加后，优先收敛到 extradata 所有权和逐包刷新。此前三项保留为独立静态缺口，不再作为本次直接崩溃位置。未为取证扩展通用框架，也未改代码或打包；精确闭环只需核对故障调用的 shadow/modern extradata 指针、大小和上一轮释放地址。
+
+## 修正与同类检查（设备复测待完成）
+
+用户授权修复后，修改 `bridge/npa_ffmpeg_subdec_bridge.c`：
+
+- 字幕逐包入口只同步 `pkt_timebase`，不重新复制 extradata，不覆盖 PGS 画布。
+- `npa_ctx_of` / `npa_params_of` 在同步后重新发布 shadow，保证上下文转参数、参数转上下文的源对象借用指针有效。
+- 两个参数转换入口在 FFmpeg 返回错误时也发布实际对象状态；FFmpeg 转换函数可能先释放旧 extradata 再返回错误。
+- flush 只同步调用点实际修改的三个 discard 字段；close 不进行配置刷新。
+
+真实运行验证：`dev/subdec_extradata_probe.c` 包含生产 bridge 实现，链接同一份 FFmpeg 9.0.2 静态依赖；`tests/test_subdec_lifetime.py` 在临时 Catalyst 库中运行。测试使用与报告相同大小的 279988-byte extradata，检查借用指针所有权及内容，并调用实际 PGS decoder。没有模拟分配器或用源码文本匹配替代行为验证。
+
+修改前五项全部失败：字幕解码、上下文转参数、参数转上下文、flush、close 都失去 extradata 的有效所有权对应。修改后全部通过；额外验证连续 PGS 清屏、1920×1080 画布状态保留、open 后设置时间基生效、flush 的 discard 设置生效。
+
+同类静态检查覆盖 context/params 全部同步调用点，以及 demux packet/extradata、decoded frame 和 subtitle plane 的所有权交接。demux extradata 独立复制，packet 保留 modern buffer 引用，frame 的最后一个 legacy 引用释放 modern frame，subtitle 像素面保留至 subtitle 释放；未在这些路径发现相同的“刷新释放所有者、shadow 留旧指针”缺口。这不等于对全部并发或内存问题的完整证明。
+
+验证记录：
+
+- `.venv/bin/python -m pytest -q --tb=short`：140 passed，1889 subtests passed（45.24 秒），仅运行一次全量。
+- `.venv/bin/python -m npabridge.build_bridge --dylib ffmpeg-core902`：iOS arm64 / 48 exports 等全部构建检查通过。
+- `.venv/bin/python -m npabridge.patch ../nPlayer_3.13.0.ipa --dylibs-dir build --dylib libass --dylib ffmpeg-core902 --dylib ffmpeg-out448 -o build/nPlayer_3.13.0-core902-pgs-extradata-fix.ipa`：35 项检查通过。
+- 新 bridge UUID：`0EFE92E9-22E9-3793-A5BD-96F0F26B8F56`；main SHA256 仍为 `c0990ab70cf7c79cada52923fe889b7e4b3a801963abcdb59434aae88369b2b8`。
+
+复测建议：原崩溃 MKV 打开、PGS 显示、拖动进度、切换字幕；随后确认内挂 ASS 仍正常显示。若仍崩溃，用新报告区分是否为前文记录的无输出释放或空位图问题。
+
+本次范围消融：删除无必要的逐包/flush/close 全量刷新，复用既有 shadow 发布函数；未增加依赖、生产辅助框架或兼容层。保留五项实测失败的生命周期回归验证。最初记录的无输出释放/异常空位图属于其他缺口，本次未混入修正。

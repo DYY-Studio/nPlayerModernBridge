@@ -111,8 +111,52 @@ static int probe_padding(int mode)
     return result;
 }
 
+static int probe_empty_subtitle(int mode)
+{
+    const AVCodec *codec = npa_shadow_avcodec_find_decoder(0x17006);
+    AVCodecContext *ctx = npa_shadow_avcodec_alloc_context3(codec);
+    unsigned char presentation[] = {
+        0x16, 0, 11, 0x07, 0x80, 0x04, 0x38, 0, 0, 0, 0, 0, 0, 0,
+        0x80, 0, 0
+    };
+    unsigned char invalid[] = {0xff, 0, 0};
+    unsigned char packet[NPA_LEGACY_PACKET_SIZE] = {0};
+    struct npa_legacy_subtitle sub;
+    int result = 0;
+
+    if (!ctx || npa_shadow_avcodec_open2(ctx, codec, NULL) < 0)
+        abort();
+    npa_ctx_find(ctx)->modern->err_recognition = AV_EF_EXPLODE;
+    NPA_ST(packet, NPA_LEGACY_PKT_DATA, void *,
+           mode == 12 ? (void *)invalid : (void *)presentation);
+    NPA_ST(packet, NPA_LEGACY_PKT_SIZE, int,
+           mode == 12 ? (int)sizeof(invalid) : (mode == 11 ? 14 : 17));
+    for (int i = 0; i < 3; i++) {
+        int got = -1;
+        memset(&sub, 0xa5, sizeof(sub));
+        int ret = npa_subdec_avcodec_decode_subtitle2(ctx, (AVSubtitle *)&sub,
+                                                     &got, (AVPacket *)packet);
+        if ((mode == 12 ? ret != AVERROR_INVALIDDATA : ret != (mode == 11 ? 14 : 17)) ||
+            got != (mode == 13 ? 1 : 0)) {
+            fprintf(stderr, "empty subtitle: return code or got changed\n");
+            result = 1;
+        }
+        int empty = sub.num_rects == 0 && sub.rects == NULL;
+        /* Exercise the app's unconditional release even when got == 0. */
+        npa_subdec_avsubtitle_free((AVSubtitle *)&sub);
+        if (!empty || npa_sub_find((AVSubtitle *)&sub) || sub.num_rects || sub.rects) {
+            fprintf(stderr, "empty subtitle: output or registry was not cleared\n");
+            result = 1;
+        }
+    }
+    npa_shadow_avcodec_free_context(&ctx);
+    return result;
+}
+
 NPA_EXPORT int npa_probe_extradata(int mode)
 {
+    if (mode >= 11)
+        return probe_empty_subtitle(mode);
     if (mode >= 5)
         return probe_padding(mode);
     AVCodecContext *ctx = npa_shadow_avcodec_alloc_context3(NULL);

@@ -130,3 +130,19 @@
 已修正六条复制路径，逻辑长度及 AV1 shadow 内部偏移保持原语义；新增 AV1 header 前检查 int 长度溢出。context/params/AV1 共用局部 padding 复制函数，demux 维持局部实现。extradata 分配失败明确 abort；无 buffer packet 分配失败沿用错误返回。
 
 真实 Catalyst probe 使用实际 FFmpeg 分配，先以 `malloc_size` 检查容量，再读取 64-byte 零尾部，同时验证载荷和逻辑长度。六项回归修复前均以“buffer lacks capacity for FFmpeg padding”失败；修复后连同原有五项生命周期回归共 11 项通过。该失败/通过对照作为本步骤消融：去掉新增分配空间将恢复已观察到的容量失败。没有添加通用内存框架、依赖或导出接口。
+
+
+## 后续指针检查：空字幕释放（2026-09-30）
+
+**Confirmed（真实 decoder + bridge 回归）**：合法的仅 presentation PGS 包产生 `ret=14,got=0`；未知 segment 配合 `AV_EF_EXPLODE` 产生 `AVERROR_INVALIDDATA,got=0`。按 app 各出口释放的既有契约调用桥接 free，修复前两条路径均 SIGABRT（进程返回 -6）。正常清屏 `got=1,num_rects=0` 对照路径原本通过。该证据确认空对象登记缺口，不依赖损坏媒体样本或平台内存布局。
+
+已让无输出/失败路径先释放 partial modern subtitle 内部资源，再将空对象登记并物化；free 仍统一通过原有登记路径回收。返回码和 got 保持实际 decoder 结果。来源不明的字幕对象仍 abort。测试预填 legacy 输出为非零数据，每个场景重复 decode/free 三次，验证输出为空、释放后登记消失及结构归零。修复后与 padding/原生命周期回归合计 14 项通过。失败/通过对照完成本步骤消融；复用了已有登记/物化/释放函数，没有宽容未知对象的回落路径。
+
+### 暂缓：缺少实机触发证据的指针风险
+
+- **Hypothesis（并发触发）**：registry find 返回指针前已解锁，若另一线程同时销毁同一对象则可能 UAF；尚无 app 同对象并发释放证据，不加锁体系或引用计数。
+- **Confirmed（输出形态），Hypothesis（app 非法消费）**：异常 PGS 可返回空 bitmap rect；当前桥接原样镜像。是否引发 app 指针消费异常未证实，不过滤矩形。
+- **Confirmed（残留字段），未确认调用路径**：frame wipe 释放 legacy buffer 后未清除 data/linesize；如果 app 不先 unref、直接再次 receive 且返回 EAGAIN，会留下无 buffer 的旧 data。现有流程说明 app 通常先 unref，未确认实机存在该复用路径，暂不改动。
+- **Confirmed（回收缺口），所有权待细分**：legacy helper 可向 shim context shadow 写入自有 extradata；bridge 导入复制/销毁只回收 modern 缓冲，无法回收此类外部自有分配。descriptor 路径又可能是借用数据，不能据此统一 free；本轮不推测释放，也不新增所有权标记。
+
+本轮只修复 padding 与空字幕释放两项，不重做上轮所有权审计，也不将暂缓问题混入修改。

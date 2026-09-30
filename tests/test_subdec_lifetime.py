@@ -89,3 +89,13 @@ def test_copied_buffers_have_zero_padding(lifetime_probe, mode):
     result = subprocess.run([str(executable), str(dylib), str(mode)],
                             text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("mode", range(11, 14), ids=[
+    "pgs-no-output", "pgs-error", "pgs-clear",
+])
+def test_empty_subtitles_can_be_released_and_reused(lifetime_probe, mode):
+    executable, dylib = lifetime_probe
+    result = subprocess.run([str(executable), str(dylib), str(mode)],
+                            text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr

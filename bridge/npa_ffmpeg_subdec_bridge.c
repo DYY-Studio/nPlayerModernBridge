@@ -1097,15 +1097,13 @@ NPA_EXPORT int npa_subdec_avcodec_decode_subtitle2(AVCodecContext *avctx, AVSubt
             NPA_SUB_TEXT_FMT_ASS_WITH_TIMINGS)
         npa_sub_convert_ass(avctx, modern, packet);
     av_packet_free(&packet);
-    if (ret < 0 || !got) {
+    /* The app releases the output on every return path. Keep an empty owned
+     * subtitle registered too, after discarding any partial decode resources. */
+    if (ret < 0 || !got)
         avsubtitle_free(modern);
-        av_free(modern);
-        *got_sub_ptr = got;
-        return ret;
-    }
     npa_sub_add(sub, modern);
     npa_sub_materialise(sub, modern);
-    *got_sub_ptr = 1;
+    *got_sub_ptr = got;
     return ret;
 }
 

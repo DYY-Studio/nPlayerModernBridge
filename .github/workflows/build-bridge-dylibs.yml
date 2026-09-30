@@ -263,6 +263,7 @@ jobs:
           path: |
             ${{ env.ARTIFACTS }}
             build/bridge/*-verification.json
+            build/bridge/libass-font-mode.json
             LICENSE
             THIRD-PARTY.md
             build/sources/keystone-*/COPYING

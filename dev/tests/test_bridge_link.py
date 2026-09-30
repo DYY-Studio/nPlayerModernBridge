@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -23,26 +24,34 @@ class BridgeLinkTests(unittest.TestCase):
             raise unittest.SkipTest("dependency closure is not built")
 
     def test_extra_export_is_rejected(self):
-        exports = (ROOT / "bridge" / "bridge.exports").read_text(encoding="utf-8")
-        mutated_exports = ROOT / "build" / "macho" / "mutated.exports"
-        mutated_exports.parent.mkdir(parents=True, exist_ok=True)
-        mutated_exports.write_text(exports + "_ass_library_init\n", encoding="utf-8")
-        archives, link_args = build_bridge.load_closure("libass")
-        mutated = ROOT / "build" / "macho" / "mutated-bridge.dylib"
-        build_bridge.link_dylib(
-            MANIFEST,
-            "libass",
-            macho.sdk_path(),
-            archives,
-            link_args,
-            output=mutated,
-            export_list=mutated_exports,
-        )
-        self.assertEqual(len(macho.exported_symbols(macho.parse(mutated))), 16)
-        report = verify_bridge(mutated, MANIFEST.dylib("libass"))
-        with self.assertRaises(VerificationError) as caught:
-            report.require()
-        self.assertIn("bridge.exports", caught.exception.codes)
+        # Compile our own object so this link check is independent of the
+        # selected font mode and artifacts left by earlier local builds.
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            exports = (ROOT / "bridge" / "bridge.exports").read_text(encoding="utf-8")
+            mutated_exports = directory / "mutated.exports"
+            mutated_exports.write_text(exports + "_ass_library_init\n", encoding="utf-8")
+            archives, link_args = build_bridge.load_closure("libass")
+            mutated = directory / "mutated-bridge.dylib"
+            sdk = macho.sdk_path()
+            obj = build_bridge.compile_dylib(
+                MANIFEST, "libass", sdk, object_file=directory / "libass.o"
+            )
+            build_bridge.link_dylib(
+                MANIFEST,
+                "libass",
+                sdk,
+                archives,
+                link_args,
+                output=mutated,
+                export_list=mutated_exports,
+                object_file=obj,
+            )
+            self.assertEqual(len(macho.exported_symbols(macho.parse(mutated))), 16)
+            report = verify_bridge(mutated, MANIFEST.dylib("libass"))
+            with self.assertRaises(VerificationError) as caught:
+                report.require()
+            self.assertIn("bridge.exports", caught.exception.codes)
 
 
 if __name__ == "__main__":

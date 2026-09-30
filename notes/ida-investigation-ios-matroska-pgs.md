@@ -1,8 +1,32 @@
 # iOS Matroska/PGS 静态排查（2026-09-30）
 
-范围：当前 `nPlayerLibassBridge` 源码、本地 FFmpeg 4.4.5 / 9.0.2 源码、已有逆向记录。用户观察：iOS 打开视频即崩溃，macOS 能显示字幕。本轮没有打开 IDA、修改实现、运行播放或测试；不将源码缺口等同于本次已确认根因。
+范围：当前 `nPlayerLibassBridge` 源码、本地 FFmpeg 4.4.5 / 9.0.2 源码、已有逆向记录，以及后续用户提供的 iOS 崩溃报告。用户观察：iOS 打开视频即崩溃，macOS 能显示字幕。本轮没有打开 IDA、修改实现、运行播放或测试。
 
 环境：项目有 `.venv/`；根目录不是 Git 仓库，`nPlayerLibassBridge/` 是仓库，排查开始时工作区干净。
+
+## 崩溃报告追加：extradata 悬空指针成为首要根因候选
+
+**Confirmed（报告事实）**：iOS 17.7.2，Thread 17 的 `EXC_BAD_ACCESS / SIGSEGV`，ESR 为 byte read Translation fault。调用栈：
+
+`_platform_memmove +52` ← `av_memdup +144` ← `npa_subdec_avcodec_decode_subtitle2 +164` ← app `0x100A04D18`（还原 ASLR 后）。这次实际崩溃在内存复制阶段，不是第 1 项的显式 `abort()`，也没有到达第 3 项位图交接。
+
+报告中的 bridge UUID 为 `1BB830EE-9708-38F1-B15F-09CC957A9F99`，与 `xcrun dwarfdump --uuid build/LibFFmpegCore902Bridge.dylib` 完全一致。`nm` 的字幕解码入口偏移 `0x527C` 与报告 `0x5320 - 164` 一致；`av_memdup` 偏移 `0xB9A48C` 与报告返回地址偏移 `0xB9A51C`（+144）一致。未反汇编桥或打开 IDA。
+
+寄存器 `x1=x20=0x144948000` 为不可读源地址，恰好位于前一 MALLOC_LARGE 区域末端后的空洞起点。`x2=x19=0x445B4`（279988 字节，约 273.4 KiB），目标地址 `x0=x21=0x141144000`。源地址非法读取有直接证据；报告本身不能证明源地址之前属于哪个已释放分配。
+
+**Confirmed（源码生命周期缺口）**：
+
+1. `npa_ctx_out` (`bridge/npa_ffmpeg_subdec_bridge.c:431`) 将 modern extradata 的地址 A 借给 shadow。
+2. 每次字幕解码 (`:1046`) 调用完整 `npa_ctx_in`，其中 `npa_ctx_set_extradata` (`:352`) 把 shadow 的 A 复制到 B。
+3. `npa_ctx_set_extradata_owned` (`:340`) 释放 A，modern 改指向 B。
+4. 字幕解码路径不再发布 extradata，shadow 仍指向已释放的 A。
+5. 下一次刷新用 A 调用 `av_memdup`，构成 use-after-free；若 A 已不可读，就能形成本次报告这种调用栈。
+
+该链路要求非空 extradata 且 shadow 仍持有此前发布的别名。不能仅凭报告确认故障样本的 extradata 来源、是否 PGS、是否第一/第二次解码或有无其他写入。当前源码字幕入口的非 AV1 `av_memdup` 来源是上下文 extradata 刷新；packet 数据复制使用 `memcpy`。因此 **Probable（本次根因）** 是 extradata 的悬空别名，而不是先前列出的释放中止或位图矩形问题。
+
+该 UAF 可随分配器是否保留/复用/解除映射已释放内存而改变表现，能够解释 macOS 可运行、iOS 非法读的可能差异；两平台的具体分配器行为尚未测量。
+
+**最小修正方向（未实施）**：字幕数据路径只同步 app 在 open 后修改、且解码真正需要的 `pkt_timebase`；ASS 的 `sub_text_format` 已直接从 shadow 读取。避免逐包重复制/释放 extradata，同时保留 PGS 自行更新的画布宽高。配置入口仍承担完整同步。仅补一次 `npa_ctx_out` 虽可更新别名，但仍留下无必要的逐包配置覆盖和复制，不作为优先方向。
 
 ## 调用链与依据
 
@@ -58,7 +82,7 @@
 - 像素面被借用，modern subtitle 保留到 app 释放时；当前释放入口先保存 `entry->modern` 再删除登记，历史上该位置的 use-after-free 已在源码中修正。
 - `dev/acceptance.json` 明确记录 PGS/DVD/DVB 位图分支未被实际验收；ASS 验收不能证明此分支。
 
-## 下一步最小取证
+## 初轮建议取证（报告提供前）
 
 优先取得 iOS 崩溃线程、异常类型和 bridge 偏移：若为 `SIGABRT` 且落在 `npa_subdec_avsubtitle_free`，先核对第 1 项；若落在 `sub_100A05EEC`、frame 分配/拷贝或 palette 转换，核对第 3 项及第 2 项是否制造空位图。
 
@@ -69,3 +93,5 @@
 ## 范围消融审查
 
 未添加防御框架、兼容层、依赖或测试。删去与当前 PGS 链路无直接证据联系的通用 side-data、OOM 和并发猜测，仅保留三个具体边界及其触发条件。实现是否需要改动留待本次崩溃证据确定。
+
+报告追加后，优先收敛到 extradata 所有权和逐包刷新。此前三项保留为独立静态缺口，不再作为本次直接崩溃位置。未为取证扩展通用框架，也未改代码或打包；精确闭环只需核对故障调用的 shadow/modern extradata 指针、大小和上一轮释放地址。

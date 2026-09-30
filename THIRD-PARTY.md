@@ -94,6 +94,11 @@ enabled.
 This bridge compiles against the pinned FFmpeg headers for ABI definitions but
 links no FFmpeg archive. Its runtime dependencies are Apple system frameworks.
 
+The default libass build applies
+`deps/patches/libass-directory-fonts.patch` to `libass/ass_fontselect.c` for
+provider-owned directory font snapshots. `bridge-isolation` builds the same
+locked upstream source without this patch. Libass retains its ISC license.
+
 ## Host patching tools
 
 | Tool | License | Version | Source |

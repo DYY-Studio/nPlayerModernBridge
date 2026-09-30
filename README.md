@@ -243,7 +243,16 @@ See [Verification.md](docs/Verification.md)
 SHA-256) and `make bootstrap deps bridge` rebuilds every closure and dylib. 
 
 `make deps` verifies each closure and refuses a
-surprise fourth archive. 
+surprise fourth archive.
+
+Libass defaults to `libass-patch`, which rebuilds directory attachments as a
+provider-owned snapshot. To use unchanged libass with per-track Bridge
+isolation, run `make bridge ASS_FONT_MODE=bridge-isolation` and
+`make verify ASS_FONT_MODE=bridge-isolation`. Both produce the same
+`build/LibASSBridge.dylib`. `make bridge` switches back to the default.
+See [font lifecycle and build modes](docs/Libass-fonts.md) for maintenance,
+validation and isolation costs.
+
 
 Building the iOS bridge dylibs locally is supported on macOS and needs `Xcode`,
 `cmake`, `ninja` and `meson`. Linux can build its host Keystone library with

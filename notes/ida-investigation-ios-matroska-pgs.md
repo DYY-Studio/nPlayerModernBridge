@@ -146,3 +146,16 @@
 - **Confirmed（回收缺口），所有权待细分**：legacy helper 可向 shim context shadow 写入自有 extradata；bridge 导入复制/销毁只回收 modern 缓冲，无法回收此类外部自有分配。descriptor 路径又可能是借用数据，不能据此统一 free；本轮不推测释放，也不新增所有权标记。
 
 本轮只修复 padding 与空字幕释放两项，不重做上轮所有权审计，也不将暂缓问题混入修改。
+
+
+### 本轮交付验证（设备复测待完成）
+
+- 修复提交：`84769c3`（padding）、`49fb0b1`（空字幕释放）。
+- `.venv/bin/python -m npabridge.build_bridge --dylib ffmpeg-core902` 成功；arm64 iOS 13.0，48 exports，7 项 bridge 检查通过。新 dylib UUID：`D1A1F049-EE24-3B00-82FB-A39EC3AD816C`。
+- 完整测试仅运行一次：`149 passed, 1889 subtests passed in 44.93s`。其中新增六项 padding 和三项空字幕回归已分别观察到修复前失败、修复后通过；清屏场景是既有正常路径对照。
+- 复测 IPA：`build/nPlayer_3.13.0-core902-pointer-fixes.ipa`；使用 libass + ffmpeg-core902 + ffmpeg-out448，35 项打包检查通过。
+- 包内 core902 SHA-256：`f5de02fabf8242742057b1820ea468478bf2a21a047db7fa2d764a747cb56ed8`；主程序 SHA-256：`c0990ab70cf7c79cada52923fe889b7e4ffea47cc0481d37b00bfd22285d3fa5`。
+
+本轮本地验证完成；设备验收待用户反馈：原 MKV 打开、PGS 显示、拖动进度、字幕切换、ASS 显示，以及已有 AAC/AV1 样本打开与播放。上轮设备通过结果仅覆盖上轮产物，不代替本轮验收。
+
+最终范围消融复核：生产修改仅两处 bridge 文件，无新依赖、导出、并发机制或未知对象回落；测试复用现有临时 Catalyst dylib/loader，未加入源码匹配测试。新复制仍先取得副本再释放旧 extradata，空字幕仍由 app 原释放站点驱动回收；未触碰四类暂缓风险。

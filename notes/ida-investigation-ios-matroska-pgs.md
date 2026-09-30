@@ -96,7 +96,7 @@
 
 报告追加后，优先收敛到 extradata 所有权和逐包刷新。此前三项保留为独立静态缺口，不再作为本次直接崩溃位置。未为取证扩展通用框架，也未改代码或打包；精确闭环只需核对故障调用的 shadow/modern extradata 指针、大小和上一轮释放地址。
 
-## 修正与同类检查（设备复测待完成）
+## 修正与同类检查（设备复测通过）
 
 用户授权修复后，修改 `bridge/npa_ffmpeg_subdec_bridge.c`：
 
@@ -118,6 +118,6 @@
 - `.venv/bin/python -m npabridge.patch ../nPlayer_3.13.0.ipa --dylibs-dir build --dylib libass --dylib ffmpeg-core902 --dylib ffmpeg-out448 -o build/nPlayer_3.13.0-core902-pgs-extradata-fix.ipa`：35 项检查通过。
 - 新 bridge UUID：`0EFE92E9-22E9-3793-A5BD-96F0F26B8F56`；main SHA256 仍为 `c0990ab70cf7c79cada52923fe889b7e4b3a801963abcdb59434aae88369b2b8`。
 
-复测建议：原崩溃 MKV 打开、PGS 显示、拖动进度、切换字幕；随后确认内挂 ASS 仍正常显示。若仍崩溃，用新报告区分是否为前文记录的无输出释放或空位图问题。
+设备复测（用户反馈，2026-09-30）：使用本轮复测包，原崩溃 MKV 打开、PGS 显示、拖动进度、字幕切换，以及 ASS 显示均正常。本次原样本的 iOS 崩溃修复已验收；extradata 生命周期修正获得设备行为验证。
 
 本次范围消融：删除无必要的逐包/flush/close 全量刷新，复用既有 shadow 发布函数；未增加依赖、生产辅助框架或兼容层。保留五项实测失败的生命周期回归验证。最初记录的无输出释放/异常空位图属于其他缺口，本次未混入修正。

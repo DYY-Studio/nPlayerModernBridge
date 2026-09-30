@@ -61,6 +61,11 @@ accepted on therefore carry the previous hashes. Both selections rewrite the
 same 485 call sites plus the two font NOP guards, so they differ only in which
 dylibs carry the units.
 
+As of the font lifecycle fix, the two font NOPs are scoped to
+`libass.extra_sites`. The earlier FFmpeg-only acceptance used global guards;
+current FFmpeg-only artifacts retain the original instructions. The manifest
+selection and Mach-O rewrite tests cover this scope change.
+
 The whole-4.4.8 dylib carries the `ffmpeg-core` code and the scaler/resampler of
 the same closure, so it inherits every core result below; the new part is that
 `sws_*`/`swr_*` now run on 4.4.8 instead of 9.0.2, which is what removes the

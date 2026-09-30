@@ -38,11 +38,10 @@ Recommend to use with **nPlayerEnhance**, which unlock ASS/SSA animation framera
 
 `npa-patch` takes a decrypted nPlayer IPA you own and writes a patched copy:
 
-- three sites are declared at app level, so every selection carries them
-  - the two guards that are turned into NOPs, which is what lets ASS/SSA font attachments work for every video in a
-  playback sequence rather than only the first
-  - a UPnP/SSDP retry wait retimed from 1000 ms to 50 ms, which removes the stall the app used to take as
-  playback starts;
+- when `libass` is selected, two font guards become NOPs so ASS/SSA attachments
+  can load for each video in a playback sequence;
+- every selection carries the UPnP/SSDP retry wait retimed from 1000 ms to 50 ms,
+  which removes the stall as playback starts;
 - libass 0.17.5 (with FreeType, **HarfBuzz**, FriBidi, fontconfig and expat) takes
   over the 15 libass entry points the app calls;
 - FFmpeg is replaced per unit, and each unit is one generation of the library (table below);

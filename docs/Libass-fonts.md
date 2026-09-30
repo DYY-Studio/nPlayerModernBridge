@@ -1,7 +1,8 @@
 # Directory font lifecycle and build modes
 
-The nPlayer 3.13.0 Font Cache guards remain NOPs so each media can load its
-ASS/SSA font attachments. Repeated `ass_set_fonts` with unchanged upstream
+When LibASSBridge is selected, the nPlayer 3.13.0 Font Cache guards become
+NOPs through `libass.extra_sites` so each media can load its ASS/SSA font
+attachments. Other selections retain the original guards. Repeated `ass_set_fonts` with unchanged upstream
 libass appends directory fonts to the library's embedded font history. A later
 media with the same font family can therefore select the earlier font.
 

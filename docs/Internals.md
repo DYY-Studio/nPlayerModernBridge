@@ -48,20 +48,16 @@ drive the faces that the app does not reach on its own.
 
 ## App-level sites
 
-Three sites belong to no bridge library, so they are declared in the manifest as
-`main_sites` and every selection carries them - including `--dylib ffmpeg`, which
-installs no libass at all:
+The UPnP/SSDP retiming is declared in `main_sites`, so every selection carries
+it: at `0x100AE3C7C`, the discovery loop's empty `select()` retry wait changes
+from 1000 ms to 50 ms (`MOVZ W0, #1000` -> `MOVZ W0, #50`).
 
-- the two guards turned into NOPs. The app records "fonts already set" on a
-  subtitle wrapper (`wrapper+0x1C`, read again by `-[Subtitle updateFontCache]`)
-  and then skips re-registering fonts, which is why only the first video in a
-  playback sequence could use font attachments. The skip happens before the call,
-  so the defect is there whichever libass is loaded.
-- the UPnP/SSDP retiming: `net::`'s discovery loop retries a `select()` that came
-  back empty after a 1000 ms wait; at `0x100AE3C7C` that constant becomes 50 ms
-  (`MOVZ W0, #1000` -> `MOVZ W0, #50`). The scan still runs, only the wait
-  between retries is shorter. Left as it is, the app stalls about a second at the
-  start of playback while that wait elapses.
+The font guards at `0x100A0392C` and `0x100ACBC14` belong to
+`libass.extra_sites`. They become NOPs only when LibASSBridge is installed.
+The app's subtitle wrapper records "fonts already set" at `wrapper+0x1C`;
+removing the guards permits later media to re-register attachments. Both
+Bridge build modes handle that repeated font loading. Selections without
+libass retain the original guards.
 
 Each site is rejected unless the instruction there still matches `expected`, like
 every call site.

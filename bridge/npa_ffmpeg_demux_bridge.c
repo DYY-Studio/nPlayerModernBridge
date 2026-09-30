@@ -163,7 +163,7 @@ static int legacy_packet_from(void *dst, const AVPacket *src)
             return -1;
         }
     } else if (src->data && src->size > 0) {
-        data = av_malloc((size_t)src->size);
+        data = av_mallocz((size_t)src->size + AV_INPUT_BUFFER_PADDING_SIZE);
         if (!data) {
             free(buf);
             free(ref);
@@ -333,12 +333,12 @@ static void shadow_rebuild_streams(npa_shadow *s)
                 size -= 4;
             }
             if (size > 0) {
-                void *copy = av_malloc((size_t)size);
-                if (copy) {
-                    memcpy(copy, src, (size_t)size);
-                    npa_st_ptr(lp, NPA_LEGACY_CODECPAR_EXTRADATA, copy);
-                    npa_st_u32(lp, NPA_LEGACY_CODECPAR_EXTRADATA_SIZE, (uint32_t)size);
-                }
+                void *copy = av_mallocz((size_t)size + AV_INPUT_BUFFER_PADDING_SIZE);
+                if (!copy)
+                    abort();
+                memcpy(copy, src, (size_t)size);
+                npa_st_ptr(lp, NPA_LEGACY_CODECPAR_EXTRADATA, copy);
+                npa_st_u32(lp, NPA_LEGACY_CODECPAR_EXTRADATA_SIZE, (uint32_t)size);
             }
         }
         npa_st_u32(lp, NPA_LEGACY_CODECPAR_FORMAT, (uint32_t)npa_pix_fmt_to_legacy(mp->format));

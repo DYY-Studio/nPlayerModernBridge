@@ -121,3 +121,12 @@
 设备复测（用户反馈，2026-09-30）：使用本轮复测包，原崩溃 MKV 打开、PGS 显示、拖动进度、字幕切换，以及 ASS 显示均正常。本次原样本的 iOS 崩溃修复已验收；extradata 生命周期修正获得设备行为验证。
 
 本次范围消融：删除无必要的逐包/flush/close 全量刷新，复用既有 shadow 发布函数；未增加依赖、生产辅助框架或兼容层。保留五项实测失败的生命周期回归验证。最初记录的无输出释放/异常空位图属于其他缺口，本次未混入修正。
+
+
+## 后续指针检查：padding（2026-09-30）
+
+**Confirmed（源码契约缺口）**：普通 context/params extradata、AV1 已有 record/新增 record、demux extradata 和无 buffer packet 共六条复制路径，原先只分配有效数据长度。4.4.5 `libavcodec/codec_par.h:70` 与 9.0.2 `libavcodec/codec_par.h:68` 均要求 extradata 额外具有 `AV_INPUT_BUFFER_PADDING_SIZE`（64）字节的零尾部；packet 的解码输入有相同要求。`av_memdup` 不添加 padding。9.0.2 AAC 初始化直接将 extradata 交给 bitstream reader；缺口确定，具体越界/崩溃仍取决于消费者及内存布局。
+
+已修正六条复制路径，逻辑长度及 AV1 shadow 内部偏移保持原语义；新增 AV1 header 前检查 int 长度溢出。context/params/AV1 共用局部 padding 复制函数，demux 维持局部实现。extradata 分配失败明确 abort；无 buffer packet 分配失败沿用错误返回。
+
+真实 Catalyst probe 使用实际 FFmpeg 分配，先以 `malloc_size` 检查容量，再读取 64-byte 零尾部，同时验证载荷和逻辑长度。六项回归修复前均以“buffer lacks capacity for FFmpeg padding”失败；修复后连同原有五项生命周期回归共 11 项通过。该失败/通过对照作为本步骤消融：去掉新增分配空间将恢复已观察到的容量失败。没有添加通用内存框架、依赖或导出接口。

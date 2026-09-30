@@ -53,6 +53,7 @@
 #include "ffmpeg-subdec-abi.h"
 #include "ffmpeg-demux-enum-map.h"
 
+#include <limits.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -297,6 +298,17 @@ static void npa_av1_record_bytes(uint8_t *out, int profile, int level, int forma
     out[3] = 0;
 }
 
+/* Bitstream readers require zero padding beyond the logical extradata size. */
+static void *npa_extradata_copy_padded(const void *data, int size)
+{
+    void *copy = av_mallocz((size_t)size + AV_INPUT_BUFFER_PADDING_SIZE);
+
+    if (!copy)
+        abort();
+    memcpy(copy, data, (size_t)size);
+    return copy;
+}
+
 /* AV1 bytes on their way into the modern world: a record, if they are not one
  * already. The result is owned by the caller (av_free). */
 static void *npa_av1_extradata_modern(const void *data, int size, int profile, int level,
@@ -310,9 +322,11 @@ static void *npa_av1_extradata_modern(const void *data, int size, int profile, i
     }
     if (npa_av1_record_size(data, size)) {
         *out_size = size;
-        return av_memdup(data, (size_t)size);
+        return npa_extradata_copy_padded(data, size);
     }
-    out = av_malloc((size_t)size + NPA_AV1_RECORD_HEADER);
+    if (size > INT_MAX - NPA_AV1_RECORD_HEADER)
+        abort();
+    out = av_mallocz((size_t)size + NPA_AV1_RECORD_HEADER + AV_INPUT_BUFFER_PADDING_SIZE);
     if (!out)
         abort();
     npa_av1_record_bytes(out, profile, level, format);
@@ -349,7 +363,7 @@ static void npa_ctx_set_extradata(AVCodecContext *modern, const void *data, int 
     /* npa_ctx_out publishes this buffer into the shadow, so a shadow that was
      * read back may alias it: copy before releasing the old one. */
     if (size > 0 && data)
-        copy = av_memdup(data, (size_t)size);
+        copy = npa_extradata_copy_padded(data, size);
     npa_ctx_set_extradata_owned(modern, copy, copy ? size : 0);
 }
 
@@ -556,7 +570,7 @@ static void npa_params_in(AVCodecParameters *modern, const void *shadow)
             /* npa_params_out aliases this buffer into the shadow, so the copy
              * has to be taken before the previous one is released. */
             if (size > 0 && data)
-                copy = av_memdup(data, (size_t)size);
+                copy = npa_extradata_copy_padded(data, size);
             av_freep(&modern->extradata);
             modern->extradata = copy;
             modern->extradata_size = copy ? size : 0;

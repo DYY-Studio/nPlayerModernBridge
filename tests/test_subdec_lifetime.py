@@ -78,3 +78,14 @@ def test_extradata_stays_owned_after_repeated_crossings(lifetime_probe, mode):
     result = subprocess.run([str(executable), str(dylib), str(mode)],
                             text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("mode", range(5, 11), ids=[
+    "context-extra", "params-extra", "av1-record", "av1-obus",
+    "demux-extra", "demux-bufless-packet",
+])
+def test_copied_buffers_have_zero_padding(lifetime_probe, mode):
+    executable, dylib = lifetime_probe
+    result = subprocess.run([str(executable), str(dylib), str(mode)],
+                            text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr

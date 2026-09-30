@@ -179,6 +179,10 @@ writing an IPA. Missing or mismatched release files stop the patching process.
 
 ## License
 
-The toolchain is [MIT licensed](LICENSE). Bundled library licenses are listed in
-[THIRD-PARTY.md](THIRD-PARTY.md). This project is independent of the nPlayer
+The toolchain is [MIT licensed](LICENSE). 
+
+Bundled library licenses are listed in
+[THIRD-PARTY.md](THIRD-PARTY.md). 
+
+This project is independent of the nPlayer
 authors; patch only your own licensed copy.

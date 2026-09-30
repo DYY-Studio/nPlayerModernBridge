@@ -1,13 +1,13 @@
 """Build the bridge dylibs declared in the manifest.
 
-Each dylib is a thin pass-through layer over its own static dependency
-closure. It must stay a plain dylib: no implicit initializers, no third-party
+Each dylib wraps its own static dependency closure. It must stay a plain dylib: no implicit initializers, no third-party
 dynamic dependency and exactly the exported symbols its units declare.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -22,6 +22,7 @@ MANIFEST_PATH = ROOT / "manifests" / "nplayer-3.13.0.json"
 TARGET = "arm64-apple-ios13.0"
 BUILD_ROOT = ROOT / "build"
 OBJECT_ROOT = BUILD_ROOT / "bridge"
+ASS_FONT_MODES = ("libass-patch", "bridge-isolation")
 
 
 def manifest() -> Manifest:
@@ -98,9 +99,12 @@ def verify_dylib(dylib_id: str, path: Path | None = None) -> dict[str, Any]:
     return report.as_dict()
 
 
-def compile_dylib(manifest: Manifest, dylib_id: str, sdk: Path) -> Path:
+def compile_dylib(
+    manifest: Manifest, dylib_id: str, sdk: Path,
+    source: Path | None = None, object_file: Path | None = None,
+) -> Path:
     dylib = _build(manifest, dylib_id)
-    object_file = object_path(dylib)
+    object_file = object_file or object_path(dylib)
     object_file.parent.mkdir(parents=True, exist_ok=True)
     object_file.unlink(missing_ok=True)
     _run(
@@ -123,7 +127,7 @@ def compile_dylib(manifest: Manifest, dylib_id: str, sdk: Path) -> Path:
             "-Werror=incompatible-pointer-types",
             "-Werror=return-type",
             "-c",
-            str(ROOT / dylib.build.source),
+            str(source or ROOT / dylib.build.source),
             "-o",
             str(object_file),
         ]
@@ -171,20 +175,61 @@ def link_dylib(
     return output
 
 
-def build_dylib(dylib_id: str, output: Path | None = None) -> Path:
+def build_dylib(
+    dylib_id: str, output: Path | None = None, font_mode: str = "libass-patch",
+) -> Path:
+    if font_mode not in ASS_FONT_MODES:
+        raise ValueError(f"unknown font mode: {font_mode}")
     manifest_ = manifest()
-    _build(manifest_, dylib_id)
+    dylib = _build(manifest_, dylib_id)
+    output = output or output_path(dylib)
+    source = None
+    obj = None
+    mode_report = None
+    if dylib_id == "libass":
+        # Remove the published output before any step that might fail.
+        output.unlink(missing_ok=True)
+        (OBJECT_ROOT / "libass-font-mode.json").unlink(missing_ok=True)
+        report_path(dylib).unlink(missing_ok=True)
     archives, system_link_args = load_closure(dylib_id)
+    if dylib_id == "libass":
+        _run([sys.executable, ROOT / "deps/build_ass.py", "--font-mode", font_mode])
+        mode_root = BUILD_ROOT / "deps/ass-font-modes" / font_mode
+        archives = tuple(mode_root / "lib/libass.a" if p.name == "libass.a" else p for p in archives)
+        mode_report = json.loads((mode_root / "build-report.json").read_text())
+        source = ROOT / "bridge" / (
+            "npa_ass_bridge.c" if font_mode == "libass-patch" else "npa_ass_isolated_bridge.c"
+        )
+        obj = OBJECT_ROOT / font_mode / "libass.o"
     sdk = macho.sdk_path()
-    compile_dylib(manifest_, dylib_id, sdk)
-    return link_dylib(
-        manifest_, dylib_id, sdk, archives, system_link_args, output=output
-    )
+    obj = compile_dylib(manifest_, dylib_id, sdk, source=source, object_file=obj)
+    result = link_dylib(manifest_, dylib_id, sdk, archives, system_link_args,
+                        output=output, object_file=obj)
+    if mode_report is not None:
+        verify.verify_bridge(result, dylib).require()
+        mode_report.update({
+            "bridge_source": str(source.relative_to(ROOT)),
+            "bridge_source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "archives": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in archives},
+            "output_sha256": hashlib.sha256(result.read_bytes()).hexdigest(),
+        })
+        (OBJECT_ROOT / "libass-font-mode.json").write_text(json.dumps(mode_report, indent=2) + "\n")
+    return result
+
+
+def verify_font_mode(font_mode: str) -> None:
+    report = json.loads((OBJECT_ROOT / "libass-font-mode.json").read_text())
+    output = output_path(manifest().dylib("libass"))
+    if report["font_mode"] != font_mode:
+        raise ValueError(f"libass was built with {report['font_mode']}, requested {font_mode}")
+    if report["output_sha256"] != hashlib.sha256(output.read_bytes()).hexdigest():
+        raise ValueError("libass output does not match its font mode report")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--font-mode", choices=ASS_FONT_MODES, default="libass-patch")
     parser.add_argument(
         "--dylib",
         action="append",
@@ -201,7 +246,9 @@ def main(argv: list[str] | None = None) -> int:
         for dylib_id in dylib_ids:
             if not arguments.verify_only:
                 print(f"building {dylib_id}", flush=True)
-                build_dylib(dylib_id)
+                build_dylib(dylib_id, font_mode=arguments.font_mode)
+            if dylib_id == "libass":
+                verify_font_mode(arguments.font_mode)
             reports.append(verify_dylib(dylib_id))
         print(json.dumps(reports, indent=2, sort_keys=True))
     except Exception as error:  # noqa: BLE001

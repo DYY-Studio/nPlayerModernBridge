@@ -5,6 +5,26 @@ verification contract and the accepted artifacts live in
 [Verification.md](Verification.md) and `dev/acceptance.json`; the build, verify
 and device-acceptance workflow is in `dev/README.md`.
 
+## Bridge components
+
+LibASSBridge replaces the app's 15 libass entry points with libass 0.17.5,
+using FreeType, HarfBuzz, FriBidi, fontconfig and expat. FFmpeg is replaced
+per unit; each unit uses one library generation.
+
+| selection | dylib | carries | ffmpeg |
+|---|---|---|---|
+| `libass` | `LibASSBridge.dylib` | subtitles | libass 0.17.5 |
+| `ffmpeg-full` *(default)* | `LibFFmpegFullBridge.dylib` | the whole surface: demux, decode, encode, mux, bitstream filters, scaler, resampler | 4.4.8 |
+| `ffmpeg-core` | `LibFFmpegCoreBridge.dylib` | the core: demux, decode, encode, mux, bitstream filters | 4.4.8 |
+| `ffmpeg` | `LibFFmpegBridge.dylib` | the scaler and resampler - usually pairs with `ffmpeg-core` | 9.0.2 |
+| `ffmpeg-core902` *(nightly)* | `LibFFmpegCore902Bridge.dylib` | the input side: demux, subtitle decoding, playback/probe/poster decoding, scaler, resampler | 9.0.2 |
+| `ffmpeg-out448` | `LibFFmpegOut448Bridge.dylib` | the output side: HLS session and muxer, SPDIF, poster encoding - usually pairs with `ffmpeg-core902` | 4.4.8 |
+| `renderer-highbit` *(nightly, opt-in)* | `LibRendererHighBitBridge.dylib` | (S/W) converts P010 and planar 10-bit frames to `x420` / `x422` / `x444`, plus planar 12-bit and 16-bit frames to `sv22` / `sv44`; independent of the selected FFmpeg bridge | app 3.13.0 frame ABI |
+
+The high-bit-depth renderer is independent of the FFmpeg selection. All bridge
+dylibs are built from this repository and link only system libraries and
+frameworks dynamically.
+
 ## Input executable identity
 
 `npa-patch` identifies a supported decrypted executable with the normalized

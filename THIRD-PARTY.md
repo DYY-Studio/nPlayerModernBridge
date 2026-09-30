@@ -25,6 +25,11 @@ No nPlayer code is included or redistributed by this project.
 | fontconfig | MIT-style (Keith Packard) | 2.17.1 | https://gitlab.freedesktop.org/fontconfig/fontconfig |
 | expat | MIT | 2.8.5 | https://github.com/libexpat/libexpat |
 
+The default libass build applies
+`deps/patches/libass-directory-fonts.patch` to `libass/ass_fontselect.c` for
+provider-owned directory font snapshots. `bridge-isolation` builds the same
+locked upstream source without this patch. Libass retains its ISC license.
+
 ## `LibFFmpegBridge.dylib`
 
 | Library | License | Version | Source |
@@ -93,11 +98,6 @@ enabled.
 
 This bridge compiles against the pinned FFmpeg headers for ABI definitions but
 links no FFmpeg archive. Its runtime dependencies are Apple system frameworks.
-
-The default libass build applies
-`deps/patches/libass-directory-fonts.patch` to `libass/ass_fontselect.c` for
-provider-owned directory font snapshots. `bridge-isolation` builds the same
-locked upstream source without this patch. Libass retains its ISC license.
 
 ## Host patching tools
 

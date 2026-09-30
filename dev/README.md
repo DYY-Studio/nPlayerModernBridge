@@ -35,6 +35,17 @@ scaler and resampler) pin every dependency (version, archive URL, SHA-256);
 the closure is built with `deps/ios-arm64.cross` and `deps/macos-arm64.native`.
 `deps/` is optional for users: the release ships the built `LibASSBridge.dylib`.
 
+Libass uses `libass-patch` by default. Build the alternative with
+`make bridge ASS_FONT_MODE=bridge-isolation`, and verify it with
+`make verify ASS_FONT_MODE=bridge-isolation`. `make bridge` returns to the
+default. Both publish the same `build/LibASSBridge.dylib`; see
+[font lifecycle and build modes](../docs/Libass-fonts.md) for ownership,
+maintenance and measured isolation costs.
+
+Building the iOS dylibs requires macOS, Xcode, `cmake`, `ninja` and `meson`.
+Linux can build the host Keystone library with `make bootstrap`; Windows
+patch users use the official prebuilt Keystone DLL.
+
 ## Re-run the device acceptance
 
 1. `make bridge smoke`, then install `dist/smoke.ipa` on a device and read the

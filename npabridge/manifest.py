@@ -67,9 +67,8 @@ class ExtraSite:
     A dylib's ``extra_sites`` are applied only when that dylib is installed:
     they are for what the substitution itself needs. The manifest's own
     ``main_sites`` are app-level patches that belong to no bridge library and
-    are therefore applied to every selection. The two font guards and the UPnP
-    retiming live there: both the defect they fix and the stall they remove are
-    there with the app's own libraries too.
+    are therefore applied to every selection. UPnP retiming lives there; the
+    two font guards belong to libass.extra_sites and require LibASSBridge.
     """
 
     site: int

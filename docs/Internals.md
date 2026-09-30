@@ -5,6 +5,26 @@ verification contract and the accepted artifacts live in
 [Verification.md](Verification.md) and `dev/acceptance.json`; the build, verify
 and device-acceptance workflow is in `dev/README.md`.
 
+## Bridge components
+
+LibASSBridge replaces the app's 15 libass entry points with libass 0.17.5,
+using FreeType, HarfBuzz, FriBidi, fontconfig and expat. FFmpeg is replaced
+per unit; each unit uses one library generation.
+
+| selection | dylib | carries | ffmpeg |
+|---|---|---|---|
+| `libass` | `LibASSBridge.dylib` | subtitles | libass 0.17.5 |
+| `ffmpeg-full` *(default)* | `LibFFmpegFullBridge.dylib` | the whole surface: demux, decode, encode, mux, bitstream filters, scaler, resampler | 4.4.8 |
+| `ffmpeg-core` | `LibFFmpegCoreBridge.dylib` | the core: demux, decode, encode, mux, bitstream filters | 4.4.8 |
+| `ffmpeg` | `LibFFmpegBridge.dylib` | the scaler and resampler - usually pairs with `ffmpeg-core` | 9.0.2 |
+| `ffmpeg-core902` *(nightly)* | `LibFFmpegCore902Bridge.dylib` | the input side: demux, subtitle decoding, playback/probe/poster decoding, scaler, resampler | 9.0.2 |
+| `ffmpeg-out448` | `LibFFmpegOut448Bridge.dylib` | the output side: HLS session and muxer, SPDIF, poster encoding - usually pairs with `ffmpeg-core902` | 4.4.8 |
+| `renderer-highbit` *(nightly, opt-in)* | `LibRendererHighBitBridge.dylib` | (S/W) converts P010 and planar 10-bit frames to `x420` / `x422` / `x444`, plus planar 12-bit and 16-bit frames to `sv22` / `sv44`; independent of the selected FFmpeg bridge | app 3.13.0 frame ABI |
+
+The high-bit-depth renderer is independent of the FFmpeg selection. All bridge
+dylibs are built from this repository and link only system libraries and
+frameworks dynamically.
+
 ## Input executable identity
 
 `npa-patch` identifies a supported decrypted executable with the normalized
@@ -48,20 +68,16 @@ drive the faces that the app does not reach on its own.
 
 ## App-level sites
 
-Three sites belong to no bridge library, so they are declared in the manifest as
-`main_sites` and every selection carries them - including `--dylib ffmpeg`, which
-installs no libass at all:
+The UPnP/SSDP retiming is declared in `main_sites`, so every selection carries
+it: at `0x100AE3C7C`, the discovery loop's empty `select()` retry wait changes
+from 1000 ms to 50 ms (`MOVZ W0, #1000` -> `MOVZ W0, #50`).
 
-- the two guards turned into NOPs. The app records "fonts already set" on a
-  subtitle wrapper (`wrapper+0x1C`, read again by `-[Subtitle updateFontCache]`)
-  and then skips re-registering fonts, which is why only the first video in a
-  playback sequence could use font attachments. The skip happens before the call,
-  so the defect is there whichever libass is loaded.
-- the UPnP/SSDP retiming: `net::`'s discovery loop retries a `select()` that came
-  back empty after a 1000 ms wait; at `0x100AE3C7C` that constant becomes 50 ms
-  (`MOVZ W0, #1000` -> `MOVZ W0, #50`). The scan still runs, only the wait
-  between retries is shorter. Left as it is, the app stalls about a second at the
-  start of playback while that wait elapses.
+The font guards at `0x100A0392C` and `0x100ACBC14` belong to
+`libass.extra_sites`. They become NOPs only when LibASSBridge is installed.
+The app's subtitle wrapper records "fonts already set" at `wrapper+0x1C`;
+removing the guards permits later media to re-register attachments. Both
+Bridge build modes handle that repeated font loading. Selections without
+libass retain the original guards.
 
 Each site is rejected unless the instruction there still matches `expected`, like
 every call site.

@@ -1,13 +1,11 @@
 import json
 import tempfile
 import unittest
-from dataclasses import replace
 from pathlib import Path
 from zipfile import ZipFile
 
 from npabridge import macho
 from npabridge.manifest import (
-    ExtraSite,
     branch_opcode,
     encode_branch,
     load_manifest,
@@ -276,20 +274,18 @@ class ManifestTests(unittest.TestCase):
             [(0x100A0392C, 0x35000148, 0xD503201F)],
         )
 
-    def test_extra_sites_are_selected_by_dylib(self):
-        site = ExtraSite(0x100A0392C, 0x35000148, 0xD503201F)
-        manifest = replace(
-            self.manifest,
-            dylibs=tuple(
-                replace(dylib, extra_sites=(site,))
-                if dylib.id == "libass"
-                else dylib
-                for dylib in self.manifest.dylibs
-            ),
-        )
-        self.assertEqual(manifest.extra_sites(("libass",)), (site,))
-        self.assertEqual(manifest.extra_sites(("ffmpeg",)), ())
-        self.assertEqual(manifest.extra_sites(()), ())
+    def test_font_guards_require_libass(self):
+        guards = {0x100A0392C, 0x100ACBC14}
+        self.assertEqual({site.site for site in self.libass.extra_sites}, guards)
+        for selection in (("libass",), ("ffmpeg",), ("ffmpeg-full",), ("renderer-highbit",)):
+            with self.subTest(selection=selection):
+                selected = {
+                    site.site for site in macho.selected_extra_sites(
+                        self.manifest, self.manifest.units(selection)
+                    )
+                }
+                self.assertEqual(selected & guards, guards if "libass" in selection else set())
+                self.assertIn(0x100AE3C7C, selected)
 
     def test_callback_metadata(self):
         callback = self.libass.callback

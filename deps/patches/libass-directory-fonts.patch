@@ -1,0 +1,166 @@
+--- a/libass/ass_fontselect.c
++++ b/libass/ass_fontselect.c
+@@ -109,11 +109,19 @@
+     void *priv;
+ };
+ 
++/* Directory attachments belong to the provider, not library history. */
++typedef struct directory_font {
++    char *data;
++    int size;
++    struct directory_font *next;
++} DirectoryFont;
++
+ typedef struct font_data_ft FontDataFT;
+ struct font_data_ft {
+     ASS_Library *lib;
+     FT_Face face;
+     int idx;
++    DirectoryFont *directory_font;
+ };
+ 
+ static bool check_glyph_ft(void *data, uint32_t codepoint)
+@@ -134,23 +142,39 @@
+     free(fd);
+ }
+ 
++static void destroy_directory_fonts(void *data)
++{
++    DirectoryFont *font = data;
++    while (font) {
++        DirectoryFont *next = font->next;
++        free(font->data);
++        free(font);
++        font = next;
++    }
++}
++
+ static size_t
+ get_data_embedded(void *data, unsigned char *buf, size_t offset, size_t len)
+ {
+     FontDataFT *ft = (FontDataFT *)data;
+-    ASS_Fontdata *fd = ft->lib->fontdata;
+-    int i = ft->idx;
++    const char *fontdata;
++    size_t size;
++    if (ft->directory_font) {
++        fontdata = ft->directory_font->data;
++        size = ft->directory_font->size;
++    } else {
++        fontdata = ft->lib->fontdata[ft->idx].data;
++        size = ft->lib->fontdata[ft->idx].size;
++    }
+ 
+     if (buf == NULL)
+-        return fd[i].size;
+-
+-    if (offset >= fd[i].size)
++        return size;
++    if (offset >= size)
+         return 0;
++    if (len > size - offset)
++        len = size - offset;
+ 
+-    if (len > fd[i].size - offset)
+-        len = fd[i].size - offset;
+-
+-    memcpy(buf, fd[i].data + offset, len);
++    memcpy(buf, fontdata + offset, len);
+     return len;
+ }
+ 
+@@ -158,10 +182,15 @@
+     .get_data          = get_data_embedded,
+     .check_glyph       = check_glyph_ft,
+     .destroy_font      = destroy_font_ft,
++    .destroy_provider  = destroy_directory_fonts,
+ };
+ 
+-static void load_fonts_from_dir(ASS_Library *library, const char *dir)
++static void process_fontdata(ASS_FontProvider *priv, int idx,
++                             DirectoryFont *directory_font, const char *name);
++
++static void load_fonts_from_dir(ASS_FontProvider *priv, const char *dir)
+ {
++    ASS_Library *library = priv->parent->library;
+     ASS_Dir d;
+     if (!ass_open_dir(&d, dir))
+         return;
+@@ -178,8 +207,20 @@
+         size_t size = 0;
+         void *data = ass_load_file(library, path, FN_DIR_LIST, &size);
+         if (data) {
+-            ass_add_font(library, name, data, size);
+-            free(data);
++            if (size > INT_MAX) {
++                ass_msg(library, MSGL_ERR, "Directory font too large: '%s'", path);
++                free(data);
++                continue;
++            }
++            DirectoryFont *font = malloc(sizeof(*font));
++            if (!font) {
++                ass_msg(library, MSGL_ERR, "Cannot allocate directory font: '%s'", path);
++                free(data);
++                continue;
++            }
++            *font = (DirectoryFont) {data, size, priv->priv};
++            priv->priv = font;
++            process_fontdata(priv, -1, font, name);
+         }
+     }
+     ass_close_dir(&d);
+@@ -948,15 +989,17 @@
+  *
+  * Builds a FontInfo with FreeType and some table reading.
+ */
+-static void process_fontdata(ASS_FontProvider *priv, int idx)
++static void process_fontdata(ASS_FontProvider *priv, int idx,
++                             DirectoryFont *directory_font, const char *name)
+ {
+     ASS_FontSelector *selector = priv->parent;
+     ASS_Library *library = selector->library;
+ 
+     int rc;
+-    const char *name = library->fontdata[idx].name;
+-    const char *data = library->fontdata[idx].data;
+-    int data_size = library->fontdata[idx].size;
++    if (!directory_font)
++        name = library->fontdata[idx].name;
++    const char *data = directory_font ? directory_font->data : library->fontdata[idx].data;
++    int data_size = directory_font ? directory_font->size : library->fontdata[idx].size;
+ 
+     FT_Face face;
+     int face_index, num_faces = 1;
+@@ -996,6 +1039,7 @@
+         ft->lib  = library;
+         ft->face = face;
+         ft->idx  = idx;
++        ft->directory_font = directory_font;
+ 
+         if (!ass_font_provider_add_font(priv, &info, NULL, face_index, ft)) {
+             ass_msg(library, MSGL_WARN, "Failed to add embedded font '%s'",
+@@ -1022,12 +1066,12 @@
+ 
+     ASS_Library *lib = selector->library;
+ 
++    for (size_t i = 0; i < lib->num_fontdata; i++)
++        process_fontdata(priv, i, NULL, NULL);
++
+     if (lib->fonts_dir && lib->fonts_dir[0]) {
+-        load_fonts_from_dir(lib, lib->fonts_dir);
++        load_fonts_from_dir(priv, lib->fonts_dir);
+     }
+-
+-    for (size_t i = 0; i < lib->num_fontdata; i++)
+-        process_fontdata(priv, i);
+     *num_emfonts = lib->num_fontdata;
+ 
+     return priv;
+@@ -1195,6 +1239,6 @@
+ 
+     size_t num_fontdata = selector->library->num_fontdata;
+     for (size_t i = num_loaded; i < num_fontdata; i++)
+-        process_fontdata(selector->embedded_provider, i);
++        process_fontdata(selector->embedded_provider, i, NULL, NULL);
+     return num_fontdata;
+ }

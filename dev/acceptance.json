@@ -292,6 +292,18 @@
         "defect found and fixed on this branch (not this unit's sites): playing an AC3 file aborted the app (SIGABRT, three reports). lldb named our own entry - npa_shadow_avcodec_parameters_from_context aborts when handed a parameters object that is not one of its shadows - and IDA (notes/ida-investigation-sub_100B63FA4.md) showed why: in sub_100B63FA4 (media::ios::AudioToolboxDecoder) the parameters built at 0x100B63FFC is fed to the claimed avcodec_parameters_from_context site 0x100B6400C while staying a 4.4.5 object. That split belongs to the accepted ffmpeg-codec unit on a path its rows never covered; the fix claims 0x100B63FFC and 0x100B64020 so the object's lifetime is the unit's, while 0x100B63FF4 alloc_context3, 0x100B64018 to_context and 0x100B63E5C free stay 4.4.5 and never cross. Verified on device: no crash, the six known faces still read 2. The same fix is cherry-picked onto the exploration branch (feat/ffmpeg-demux-class-a 5e18b33). Because that selection's site table changed, its packaged main anchor moved from 5a33aa13b5c5c2455c9be9f5fb2857c1e36bbc95b8a3de61a206ed6d819b6ca1 to b7a8f0172ddc9732e155db7836e82789e59cc7cf85ee5c660bc81a6d9f638313",
         "blind spots: the HLS face is not drivable in this environment - the app's own cast path traps before MediaServer::CreateHLSSession, so ffmpeg-hls448 stayed 0 and that face keeps site/build-level evidence only; the SPDIF row's precondition is artificial (forced flag, above); the cover row is a UI action; and the SPDIF muxer's byte-level (IEC 61937) assertion was not obtained"
       ]
+    },
+    {
+      "variant": "nplayer-plus",
+      "result": "pass",
+      "notes": [
+        "artifact: nPlayer Plus 3.13.0 (`com.newin.nplayer`), default selection `libass + ffmpeg-full`; packaged_main_sha256 fbfd784dccbdaf618f5b7c7c7d9346392bdf81cb3ec2feeedcfb02d1cd0eba75 (source main 203c480a...), 28 patch checks passed. Packaged dylibs: LibASSBridge.dylib 097ee8de..., LibFFmpegFullBridge.dylib 884def13... - recorded as built, not anchors (dylib hashes are not byte-reproducible)",
+        "site table: manifests/nplayer-plus-3.13.0.json, pin 9f3f873ffc95e43b5b79fa54d1adf00ec2ffbd032a35ec88f5d21fa38d66395f, re-derived from the standard build with dev/tools/map_plus.py. The Plus build is the same app lineage but a different compilation (about 23% of functions byte-identical, function order differs), so the addresses are mapped and branch-verified rather than copied",
+        "device/install: iPhone SE (3rd Gen), iOS 17.7.2, LiveContainer 3.7.2 - the same environment as the standard-build rows",
+        "row - libass (0.17.5 + Guard Patch): confirmed by the `\\kt` probe (`\\kt` exists only from 0.17.0; the bundled 0.13.7 ignores it) and by the faster first subtitle font load; the Guard Patch is confirmed because attached fonts re-register when playing several videos in sequence",
+        "row - playback: SRT, embedded ASS and Matroska embedded fonts render; continuous playback and seek pass; no crash",
+        "evidence level: behavioural only. No unit state word was read for this Plus run (the standard-build rows above used nPlayerFridaHook/state-words.py); the `\\kt` probe and the font re-registration rule out the bundled 0.13.7 path, but this records that the artifact works, not which unit served it"
+      ]
     }
   ]
 }

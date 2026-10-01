@@ -177,5 +177,13 @@ executables into `manifests/nplayer-plus-3.13.0.json` (pin
 Static: `preflight` passes on the Plus executable for the default selection and
 for every single-dylib selection. End-to-end on a Plus IPA, `npa-patch`
 publishes and re-verifies an artifact - libass-only passes 21 checks and the
-default (libass + ffmpeg-full) passes 28. Device playback on Plus has not been
-run yet, so the runtime rows above remain standard-build evidence.
+default (libass + ffmpeg-full) passes 28.
+
+The default Plus artifact was then device-tested (iPhone SE 3rd Gen, iOS 17.7.2,
+LiveContainer 3.7.2): the `\kt` probe and the faster first font load confirm
+libass 0.17.5, the Guard Patch is confirmed (attached fonts re-register across
+sequential playback), and SRT, embedded ASS, Matroska embedded fonts, continuous
+playback and seek pass with no crash. This is behavioural evidence - no unit
+state word was read for the Plus run - so it records that the artifact works,
+not which unit served it. `dev/acceptance.json` holds the entry
+(`nplayer-plus`).

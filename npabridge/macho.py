@@ -32,10 +32,6 @@ PAGE = 0x4000
 PROTECTION_RX = 5
 PROTECTION_RW = 3
 IPA_MEMBER = "Payload/nPlayer.app/nPlayer"
-STUB_THUNKS = {
-    0x1011362CC: bytes.fromhex("302f00f0107640f900021fd6"),
-    0x10113629C: bytes.fromhex("302f00f0106640f900021fd6"),
-}
 
 
 @dataclass(frozen=True)
@@ -246,7 +242,10 @@ def preflight(
     for extra in selected_extra_sites(manifest, units):
         if _word(binary, extra.site) != extra.expected:
             raise ValueError(f"unexpected instruction at extra site {extra.site:#x}")
-    for stub, thunk in STUB_THUNKS.items():
+    for stub, thunk in (
+        (manifest.dlsym_stub, manifest.dlsym_stub_thunk),
+        (manifest.dladdr_stub, manifest.dladdr_stub_thunk),
+    ):
         content = bytes(binary.get_content_from_virtual_address(stub, len(thunk)))
         if content != thunk:
             raise ValueError(f"dynamic stub at {stub:#x} is not the frozen thunk")

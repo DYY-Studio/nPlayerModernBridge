@@ -243,6 +243,14 @@ class ManifestTests(unittest.TestCase):
         )
         self.assertEqual(self.manifest.dlsym_stub, 0x1011362CC)
         self.assertEqual(self.manifest.dladdr_stub, 0x10113629C)
+        self.assertEqual(
+            self.manifest.dlsym_stub_thunk,
+            bytes.fromhex("302f00f0107640f900021fd6"),
+        )
+        self.assertEqual(
+            self.manifest.dladdr_stub_thunk,
+            bytes.fromhex("302f00f0106640f900021fd6"),
+        )
 
     def test_libass_dylib_metadata(self):
         self.assertEqual(self.libass.library_version, "0.17.5")

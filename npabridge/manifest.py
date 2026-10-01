@@ -115,6 +115,8 @@ class Manifest:
     target_abi: target_abi.TargetABI
     dlsym_stub: int
     dladdr_stub: int
+    dlsym_stub_thunk: bytes
+    dladdr_stub_thunk: bytes
     default_dylibs: tuple[str, ...]
     dylibs: tuple[Dylib, ...]
     main_sites: tuple[ExtraSite, ...] = ()
@@ -334,6 +336,8 @@ def load_manifest(path: Path) -> Manifest:
         target_abi=target_abi.from_manifest(data["target_abi"]),
         dlsym_stub=int(data["dlsym_stub"], 0),
         dladdr_stub=int(data["dladdr_stub"], 0),
+        dlsym_stub_thunk=bytes.fromhex(data["dlsym_stub_thunk"]),
+        dladdr_stub_thunk=bytes.fromhex(data["dladdr_stub_thunk"]),
         default_dylibs=default_dylibs,
         dylibs=dylibs,
         main_sites=tuple(_extra_site(site) for site in data.get("main_sites", ())),
@@ -344,10 +348,10 @@ def select_manifest(directory: Path, main: Path) -> Manifest:
     """Pick the manifest whose normalized main pin matches this executable."""
 
     digest = main_pin_sha256(main)
-    supported = []
+    supported: set[str] = set()
     for path in sorted(Path(directory).glob("*.json")):
         manifest = load_manifest(path)
-        supported.append(manifest.app_version)
+        supported.add(manifest.app_version)
         if manifest.main_pin_sha256 == digest:
             return manifest
     raise ValueError(

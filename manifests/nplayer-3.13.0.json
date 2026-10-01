@@ -15,6 +15,8 @@
   },
   "dlsym_stub": "0x1011362CC",
   "dladdr_stub": "0x10113629C",
+  "dlsym_stub_thunk": "302f00f0107640f900021fd6",
+  "dladdr_stub_thunk": "302f00f0106640f900021fd6",
   "main_sites": [
     {
       "site": "0x100AE3C7C",

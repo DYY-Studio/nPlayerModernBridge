@@ -155,9 +155,13 @@ alongside this project.
 - `--dylibs-dir <dir>` (default: the working
   directory; each dylib is looked up as `<dir>/<basename>`).
 - `--manifests <dir>` selects the manifest directory (default: `manifests/`).
+- `--quiet` suppresses the progress lines written to stderr (the JSON summary
+  on stdout is unaffected).
 
 The command prints a JSON summary with the input hash, output hashes, one hash
-per shipped dylib, and the number of verification checks that passed.
+per shipped dylib, and the number of verification checks that passed. While it
+runs, numbered stage progress goes to stderr, so stdout stays clean for the
+JSON; pass `--quiet` to silence it.
 
 Select exactly what you want:
 

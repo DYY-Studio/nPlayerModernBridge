@@ -17,7 +17,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 from zipfile import ZipFile
 
 from . import macho, package, verify
@@ -27,6 +27,35 @@ from .manifest import Manifest, Unit, select_manifest
 ROOT = Path(__file__).resolve().parents[1]
 MANIFESTS = ROOT / "manifests"
 MAIN_MEMBER = package.MAIN_MEMBER
+
+# The linear stages of patch_ipa, in the order they run. This is the single
+# source of truth for the numbered progress lines: the index must match the
+# position of the corresponding step below.
+STAGES = (
+    "extracting the main executable",
+    "checking the executable is a decrypted iOS binary",
+    "identifying the nPlayer version",
+    "verifying the selected bridge dylibs",
+    "preflighting the patch sites",
+    "applying patch sites (phase A)",
+    "relocating patch sites (phase B)",
+    "assembling and pseudo-signing the IPA",
+    "verifying the shipped artifact",
+    "publishing the patched IPA",
+)
+
+
+def _stage(
+    progress: Callable[[str], None] | None, step: int, detail: str | None = None
+) -> None:
+    """Report one stage on the caller's progress sink, if one was given."""
+
+    if progress is None:
+        return
+    label = STAGES[step - 1]
+    if detail is not None:
+        label = f"{label} ({detail})"
+    progress(f"[{step}/{len(STAGES)}] {label}")
 
 
 @dataclass(frozen=True)
@@ -108,6 +137,7 @@ def patch_ipa(
     manifests: Path | str = MANIFESTS,
     dylibs: Sequence[str] | None = None,
     work: Path | str | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> PatchResult:
     source = Path(source).resolve()
     dylibs_dir = Path(dylibs_dir).resolve()
@@ -123,9 +153,12 @@ def patch_ipa(
     work = Path(work) if work is not None else Path(tempfile.mkdtemp(prefix="npa-patch-"))
     work.mkdir(parents=True, exist_ok=True)
     try:
+        _stage(progress, 1)
         source_main = _extract_main(source, work / "source-main")
         source_digest = _sha256(source_main)
+        _stage(progress, 2)
         _reject_encrypted(source_main)
+        _stage(progress, 3)
         manifest = select_manifest(manifests, source_main)
         units = manifest.units(dylibs)
         dylib_ids = selected_dylib_ids(units)
@@ -151,16 +184,21 @@ def patch_ipa(
         if output_path in set(bridges.values()):
             raise ValueError("refusing to overwrite a bridge dylib; pass another -o")
 
+        _stage(progress, 4, f"{len(dylib_ids)} dylib(s)")
         for dylib_id, path in bridges.items():
             verify.verify_bridge(path, manifest.dylib(dylib_id)).require()
+        _stage(progress, 5)
         macho.preflight(source_main, manifest, units)
 
+        _stage(progress, 6)
         macho.phase_a(source_main, work / "main-phase-a", manifest, units)
+        _stage(progress, 7)
         macho.phase_b(work / "main-phase-a", work / "main-phase-b", manifest, units)
 
         temporary = output_path.with_name(f".tmp-{output_path.name}")
         temporary.unlink(missing_ok=True)
         try:
+            _stage(progress, 8)
             package.package_ipa(
                 source,
                 temporary,
@@ -168,6 +206,7 @@ def patch_ipa(
                 {manifest.dylib(dylib_id).basename: path for dylib_id, path in bridges.items()},
                 work=work / "package",
             )
+            _stage(progress, 9)
             extracted = package.extract_for_verification(
                 temporary, work / "shipped", basenames
             )
@@ -182,6 +221,7 @@ def patch_ipa(
             packaged_main_sha256 = _sha256(extracted["main"])
             bridge_sha256s = dict(report.bridge_sha256s)
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            _stage(progress, 10)
             temporary.replace(output_path)
         except Exception:
             temporary.unlink(missing_ok=True)
@@ -232,7 +272,15 @@ def main(argv: list[str] | None = None) -> int:
         "default: the manifest's default_dylibs)",
     )
     parser.add_argument("--manifests", type=Path, default=MANIFESTS)
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress the progress lines written to stderr",
+    )
     arguments = parser.parse_args(argv)
+    progress = (
+        None if arguments.quiet else lambda line: print(line, file=sys.stderr, flush=True)
+    )
     try:
         result = patch_ipa(
             arguments.source,
@@ -240,6 +288,7 @@ def main(argv: list[str] | None = None) -> int:
             arguments.dylibs_dir,
             arguments.manifests,
             arguments.dylibs,
+            progress=progress,
         )
         print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     except Exception as error:  # noqa: BLE001

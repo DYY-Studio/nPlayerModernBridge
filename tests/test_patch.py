@@ -66,6 +66,27 @@ class PatchFlowTests(unittest.TestCase):
         finally:
             expected.unlink(missing_ok=True)
 
+    def test_progress_reports_every_stage_in_order(self):
+        lines: list[str] = []
+        output = self.work / "progress.ipa"
+        output.unlink(missing_ok=True)
+        try:
+            patch.patch_ipa(
+                SOURCE_IPA,
+                output,
+                BUILD,
+                MANIFESTS,
+                dylibs=["libass"],
+                work=self.work / "progress",
+                progress=lines.append,
+            )
+        finally:
+            output.unlink(missing_ok=True)
+        total = len(patch.STAGES)
+        self.assertEqual(len(lines), total)
+        self.assertEqual(lines[0], f"[1/{total}] {patch.STAGES[0]}")
+        self.assertEqual(lines[-1], f"[{total}/{total}] {patch.STAGES[-1]}")
+
     def test_default_work_directory_is_reported_and_cleaned_up(self):
         output = self.work / "temp-work.ipa"
         output.unlink(missing_ok=True)

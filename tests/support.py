@@ -18,3 +18,10 @@ SOURCE_IPA = Path(
     _override
     or (_root_ipa if _root_ipa.is_file() else ROOT.parent / "nPlayer_3.13.0.ipa")
 ).resolve()
+
+# The nPlayer Plus executable, extracted from a Plus IPA. Tests that need it
+# skip when it is absent, like the standard IPA above.
+PLUS_MAIN = Path(
+    os.environ.get("NPA_PLUS_MAIN")
+    or (ROOT.parent / "IPAs" / "nPlayer-plus_3.13.0")
+)

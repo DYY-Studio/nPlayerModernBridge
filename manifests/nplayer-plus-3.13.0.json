@@ -1,0 +1,2512 @@
+{
+  "imagebase": "0x100000000",
+  "main_pin_sha256": "9f3f873ffc95e43b5b79fa54d1adf00ec2ffbd032a35ec88f5d21fa38d66395f",
+  "app_version": "3.13.0",
+  "target_abi": {
+    "platform": "IOS",
+    "minos": [
+      13,
+      0,
+      0
+    ],
+    "sdk": [
+      26,
+      2,
+      0
+    ],
+    "dl_info_size": 32,
+    "dl_info_fname_offset": 0,
+    "dl_info_fbase_offset": 8,
+    "dl_info_sname_offset": 16,
+    "dl_info_saddr_offset": 24,
+    "rtld_default_masked": "0xfffffffffffffffe"
+  },
+  "dlsym_stub": "0x1011A0A60",
+  "dladdr_stub": "0x1011A0A30",
+  "dlsym_stub_thunk": "d03000b0107640f900021fd6",
+  "dladdr_stub_thunk": "d03000b0106640f900021fd6",
+  "main_sites": [
+    {
+      "site": "0x100283A8C",
+      "expected": "0x52807D00",
+      "replacement": "0x52800640"
+    }
+  ],
+  "default_dylibs": [
+    "libass",
+    "ffmpeg-full"
+  ],
+  "domains": [
+    {
+      "id": "renderer-highbit",
+      "apis": [
+        {
+          "symbol": "npa_renderer_create_pixel_buffer",
+          "call_sites": [
+            "0x1001C2D34"
+          ],
+          "old_target": "0x1001C294C"
+        }
+      ]
+    },
+    {
+      "id": "libass",
+      "apis": [
+        {
+          "symbol": "npa_ass_library_init",
+          "call_sites": [
+            "0x1001A232C"
+          ],
+          "old_target": "0x1006424F8"
+        },
+        {
+          "symbol": "npa_ass_set_extract_fonts",
+          "call_sites": [
+            "0x1001A237C"
+          ],
+          "old_target": "0x1006428E8"
+        },
+        {
+          "symbol": "npa_ass_set_message_cb",
+          "call_sites": [
+            "0x1001A2390"
+          ],
+          "old_target": "0x100642B94"
+        },
+        {
+          "symbol": "npa_ass_renderer_init",
+          "call_sites": [
+            "0x1001A2398"
+          ],
+          "old_target": "0x10062EB70"
+        },
+        {
+          "symbol": "npa_ass_set_frame_size",
+          "call_sites": [
+            "0x1001A23A4"
+          ],
+          "old_target": "0x100648D44"
+        },
+        {
+          "symbol": "npa_ass_set_fonts_dir",
+          "call_sites": [
+            "0x1001A2A5C"
+          ],
+          "old_target": "0x100642638"
+        },
+        {
+          "symbol": "npa_ass_new_track",
+          "call_sites": [
+            "0x1001A2BC4"
+          ],
+          "old_target": "0x100624BB4"
+        },
+        {
+          "symbol": "npa_ass_process_codec_private",
+          "call_sites": [
+            "0x1001A2BDC"
+          ],
+          "old_target": "0x100624160"
+        },
+        {
+          "symbol": "npa_ass_process_data",
+          "call_sites": [
+            "0x1001A2C08",
+            "0x1001A3678"
+          ],
+          "old_target": "0x100623EAC"
+        },
+        {
+          "symbol": "npa_ass_free_track",
+          "call_sites": [
+            "0x1001A1F1C"
+          ],
+          "old_target": "0x100623140"
+        },
+        {
+          "symbol": "npa_ass_flush_events",
+          "call_sites": [
+            "0x1001A46D4"
+          ],
+          "old_target": "0x10062483C"
+        },
+        {
+          "symbol": "npa_ass_render_frame",
+          "call_sites": [
+            "0x1001A47E4"
+          ],
+          "old_target": "0x10062F83C"
+        },
+        {
+          "symbol": "npa_ass_renderer_done",
+          "call_sites": [
+            "0x1001A19C8"
+          ],
+          "old_target": "0x10062EDD4"
+        },
+        {
+          "symbol": "npa_ass_library_done",
+          "call_sites": [
+            "0x1001A19D0"
+          ],
+          "old_target": "0x1006425D8"
+        },
+        {
+          "symbol": "npa_ass_set_fonts",
+          "call_sites": [
+            "0x1001A1D28"
+          ],
+          "old_target": "0x100648FC0"
+        }
+      ]
+    },
+    {
+      "id": "libswscale",
+      "apis": [
+        {
+          "symbol": "npa_sws_alloc_context",
+          "call_sites": [
+            "0x1001D1540"
+          ],
+          "old_target": "0x100F1B360"
+        },
+        {
+          "symbol": "npa_sws_getContext",
+          "call_sites": [
+            "0x1001C2E48",
+            "0x1001E64B8",
+            "0x10022A890"
+          ],
+          "old_target": "0x100F1B28C"
+        },
+        {
+          "symbol": "npa_sws_getCachedContext",
+          "call_sites": [
+            "0x10022A83C"
+          ],
+          "old_target": "0x100F1B790"
+        },
+        {
+          "symbol": "npa_sws_scale",
+          "call_sites": [
+            "0x1001C2ECC",
+            "0x1001E64E0",
+            "0x10022A85C",
+            "0x10022A8B0"
+          ],
+          "old_target": "0x100F03A40"
+        },
+        {
+          "symbol": "npa_sws_freeContext",
+          "call_sites": [
+            "0x1001C2F6C",
+            "0x1001D181C",
+            "0x1001E65A0",
+            "0x10022A8BC"
+          ],
+          "old_target": "0x100F1B5CC"
+        }
+      ]
+    },
+    {
+      "id": "libswresample",
+      "apis": [
+        {
+          "symbol": "npa_swr_alloc",
+          "call_sites": [
+            "0x10025F7EC"
+          ],
+          "old_target": "0x101197824"
+        },
+        {
+          "symbol": "npa_swr_alloc_set_opts",
+          "call_sites": [
+            "0x10025F968"
+          ],
+          "old_target": "0x100EB19BC"
+        },
+        {
+          "symbol": "npa_swr_set_matrix",
+          "call_sites": [
+            "0x10025FA44"
+          ],
+          "old_target": "0x100EAB848"
+        },
+        {
+          "symbol": "npa_swr_init",
+          "call_sites": [
+            "0x10025FA58"
+          ],
+          "old_target": "0x101198ACC"
+        },
+        {
+          "symbol": "npa_swr_convert",
+          "call_sites": [
+            "0x10025FA88"
+          ],
+          "old_target": "0x100EB1FA4"
+        },
+        {
+          "symbol": "npa_swr_free",
+          "call_sites": [
+            "0x10025F848",
+            "0x10025F944"
+          ],
+          "old_target": "0x101198A84"
+        }
+      ]
+    },
+    {
+      "id": "ffmpeg-core",
+      "apis": [
+        {
+          "symbol": "npa_avformat_alloc_context",
+          "call_sites": [
+            "0x1001DDDB8",
+            "0x100254C04",
+            "0x10028D590",
+            "0x10028F494",
+            "0x1003339D0"
+          ],
+          "old_target": "0x100E1A1F8"
+        },
+        {
+          "symbol": "npa_avformat_open_input",
+          "call_sites": [
+            "0x1001DE328",
+            "0x10025432C",
+            "0x100254C2C",
+            "0x10028D688",
+            "0x10028F588",
+            "0x100333AB8"
+          ],
+          "old_target": "0x100E5CFDC"
+        },
+        {
+          "symbol": "npa_avformat_find_stream_info",
+          "call_sites": [
+            "0x1001DE338",
+            "0x100254C3C",
+            "0x10028D6F8",
+            "0x10028F5B8",
+            "0x100333AF0"
+          ],
+          "old_target": "0x100E6218C"
+        },
+        {
+          "symbol": "npa_av_read_frame",
+          "call_sites": [
+            "0x1001E638C",
+            "0x100254744",
+            "0x100254DF0",
+            "0x10028E320",
+            "0x10028EA70",
+            "0x10028FC38",
+            "0x100333EBC",
+            "0x100337C5C"
+          ],
+          "old_target": "0x100E5E798"
+        },
+        {
+          "symbol": "npa_av_seek_frame",
+          "call_sites": [
+            "0x1001E636C",
+            "0x10028FA5C",
+            "0x10028FAC4",
+            "0x10028FADC",
+            "0x100337614",
+            "0x100337664",
+            "0x10033767C"
+          ],
+          "old_target": "0x100E60A7C"
+        },
+        {
+          "symbol": "npa_av_find_input_format",
+          "call_sites": [
+            "0x100254B84"
+          ],
+          "old_target": "0x100D92804"
+        },
+        {
+          "symbol": "npa_avformat_alloc_output_context2",
+          "call_sites": [
+            "0x1002CE9BC",
+            "0x1003378A4"
+          ],
+          "old_target": "0x100DFC794"
+        },
+        {
+          "symbol": "npa_avformat_init_output",
+          "call_sites": [
+            "0x100337AE8"
+          ],
+          "old_target": "0x100DFC8D8"
+        },
+        {
+          "symbol": "npa_avformat_write_header",
+          "call_sites": [
+            "0x1002CEA90",
+            "0x100337B10"
+          ],
+          "old_target": "0x100DFD154"
+        },
+        {
+          "symbol": "npa_av_write_frame",
+          "call_sites": [
+            "0x1002CECF8",
+            "0x1003385B8",
+            "0x10033886C",
+            "0x10033901C",
+            "0x1003390C0",
+            "0x100339198"
+          ],
+          "old_target": "0x100DFDBF8"
+        },
+        {
+          "symbol": "npa_av_write_trailer",
+          "call_sites": [
+            "0x1002CEC24",
+            "0x100337844"
+          ],
+          "old_target": "0x100DFDF74"
+        },
+        {
+          "symbol": "npa_avformat_new_stream",
+          "call_sites": [
+            "0x1002CE9C8",
+            "0x10033792C"
+          ],
+          "old_target": "0x100E650E4"
+        },
+        {
+          "symbol": "npa_avformat_free_context",
+          "call_sites": [
+            "0x1001E0FFC",
+            "0x1002CEC4C",
+            "0x1003356A4",
+            "0x10033784C"
+          ],
+          "old_target": "0x100E5D70C"
+        },
+        {
+          "symbol": "npa_av_guess_format",
+          "call_sites": [
+            "0x100337888"
+          ],
+          "old_target": "0x100D924CC"
+        },
+        {
+          "symbol": "npa_av_probe_input_buffer",
+          "call_sites": [
+            "0x100254BFC"
+          ],
+          "old_target": "0x100D92DB0"
+        },
+        {
+          "symbol": "npa_av_codec_get_tag",
+          "call_sites": [
+            "0x10028E0CC",
+            "0x100337A38",
+            "0x10033CFA4"
+          ],
+          "old_target": "0x100E61410"
+        },
+        {
+          "symbol": "npa_avio_alloc_context",
+          "call_sites": [
+            "0x1001DDDB0",
+            "0x100254BDC",
+            "0x10028D588",
+            "0x1002CEA7C",
+            "0x1003339C8"
+          ],
+          "old_target": "0x100D78230"
+        },
+        {
+          "symbol": "npa_avio_open2",
+          "call_sites": [
+            "0x100337C0C",
+            "0x100339008",
+            "0x100339128"
+          ],
+          "old_target": "0x100D7B284"
+        },
+        {
+          "symbol": "npa_avio_read",
+          "call_sites": [
+            "0x100254910"
+          ],
+          "old_target": "0x100D797F0"
+        },
+        {
+          "symbol": "npa_avio_write",
+          "call_sites": [
+            "0x10033904C",
+            "0x1003391C8"
+          ],
+          "old_target": "0x100D7853C"
+        },
+        {
+          "symbol": "npa_avio_flush",
+          "call_sites": [
+            "0x1002CED40",
+            "0x100337AF8",
+            "0x100339028",
+            "0x1003391A4"
+          ],
+          "old_target": "0x100D786C4"
+        },
+        {
+          "symbol": "npa_avio_seek",
+          "call_sites": [
+            "0x100254924"
+          ],
+          "old_target": "0x100D78728"
+        },
+        {
+          "symbol": "npa_avio_size",
+          "call_sites": [
+            "0x1001E629C",
+            "0x10028FA28",
+            "0x1003375E8"
+          ],
+          "old_target": "0x100D78D34"
+        },
+        {
+          "symbol": "npa_avio_close",
+          "call_sites": [
+            "0x10033905C",
+            "0x1003391D8"
+          ],
+          "old_target": "0x100D7B384"
+        },
+        {
+          "symbol": "npa_avio_closep",
+          "call_sites": [
+            "0x10033569C",
+            "0x1003390CC"
+          ],
+          "old_target": "0x100D7ADCC"
+        },
+        {
+          "symbol": "npa_avio_open_dyn_buf",
+          "call_sites": [
+            "0x100287EF0",
+            "0x100337A9C",
+            "0x100337B74",
+            "0x100339068",
+            "0x1003391E4"
+          ],
+          "old_target": "0x100D7B67C"
+        },
+        {
+          "symbol": "npa_avio_close_dyn_buf",
+          "call_sites": [
+            "0x100287F14",
+            "0x10033903C",
+            "0x1003391B8"
+          ],
+          "old_target": "0x100D7B8B0"
+        },
+        {
+          "symbol": "npa_avio_wl32",
+          "call_sites": [
+            "0x100339150",
+            "0x100339160",
+            "0x10033917C",
+            "0x10033918C"
+          ],
+          "old_target": "0x100D78E20"
+        },
+        {
+          "symbol": "npa_avio_wb32",
+          "call_sites": [
+            "0x100339140",
+            "0x10033916C"
+          ],
+          "old_target": "0x100D78EE0"
+        },
+        {
+          "symbol": "npa_av_find_default_stream_index",
+          "call_sites": [
+            "0x1001E68C0",
+            "0x10028CC78",
+            "0x10028F6C8",
+            "0x10028F960"
+          ],
+          "old_target": "0x100E5F594"
+        },
+        {
+          "symbol": "npa_av_index_search_timestamp",
+          "call_sites": [
+            "0x10028CCF0"
+          ],
+          "old_target": "0x100E5FE5C"
+        },
+        {
+          "symbol": "npa_avformat_close_input",
+          "call_sites": [
+            "0x1001E0FDC",
+            "0x100254280",
+            "0x10028F814",
+            "0x100335630"
+          ],
+          "old_target": "0x100E65008"
+        },
+        {
+          "symbol": "npa_avformat_network_init",
+          "call_sites": [
+            "0x10022A618"
+          ],
+          "old_target": "0x100E660E8"
+        },
+        {
+          "symbol": "npa_avcodec_find_decoder",
+          "call_sites": [
+            "0x1001A2168",
+            "0x1001E61D8",
+            "0x100221378",
+            "0x100229CB0",
+            "0x100334A38"
+          ],
+          "old_target": "0x100780F28"
+        },
+        {
+          "symbol": "npa_avcodec_find_encoder",
+          "call_sites": [
+            "0x1001E64E8",
+            "0x100338C70"
+          ],
+          "old_target": "0x100780E88"
+        },
+        {
+          "symbol": "npa_avcodec_alloc_context3",
+          "call_sites": [
+            "0x1001A1FC4",
+            "0x1001A20D4",
+            "0x1001A2144",
+            "0x1001E61E0",
+            "0x1001E64F4",
+            "0x100221388",
+            "0x100229CC0",
+            "0x10022A900",
+            "0x100254550",
+            "0x1003027E4",
+            "0x10033470C",
+            "0x100334A48",
+            "0x100338C7C"
+          ],
+          "old_target": "0x100B3C0AC"
+        },
+        {
+          "symbol": "npa_avcodec_free_context",
+          "call_sites": [
+            "0x1001A1F04",
+            "0x1001A2214",
+            "0x1001E6314",
+            "0x1001E6598",
+            "0x1002212C4",
+            "0x100221338",
+            "0x100221464",
+            "0x1002214F0",
+            "0x100229B5C",
+            "0x100229C6C",
+            "0x100229DBC",
+            "0x10022AA70",
+            "0x100254694",
+            "0x1002CE938",
+            "0x10030264C",
+            "0x100302778",
+            "0x100334784",
+            "0x1003356D8",
+            "0x1003356F0",
+            "0x1003376A0",
+            "0x100338D2C"
+          ],
+          "old_target": "0x100B3C104"
+        },
+        {
+          "symbol": "npa_avcodec_open2",
+          "call_sites": [
+            "0x1001A21A4",
+            "0x1001E6204",
+            "0x1001E652C",
+            "0x10022140C",
+            "0x100229D00",
+            "0x100334A64",
+            "0x100338D18"
+          ],
+          "old_target": "0x1007A95F8"
+        },
+        {
+          "symbol": "npa_avcodec_close",
+          "call_sites": [
+            "0x1001E6308",
+            "0x100334F60",
+            "0x1003356D0",
+            "0x1003356E8",
+            "0x100337698"
+          ],
+          "old_target": "0x10115EE2C"
+        },
+        {
+          "symbol": "npa_avcodec_send_packet",
+          "call_sites": [
+            "0x1001E62D0",
+            "0x1001E63C0",
+            "0x10022166C",
+            "0x100221698",
+            "0x100229FC4",
+            "0x100229FF0",
+            "0x100337CF4"
+          ],
+          "old_target": "0x10083CA44"
+        },
+        {
+          "symbol": "npa_avcodec_receive_frame",
+          "call_sites": [
+            "0x1001E62DC",
+            "0x1001E63D4",
+            "0x1002216E4",
+            "0x10022A078",
+            "0x100337D0C",
+            "0x100337FB4"
+          ],
+          "old_target": "0x10083D560"
+        },
+        {
+          "symbol": "npa_avcodec_flush_buffers",
+          "call_sites": [
+            "0x100221998",
+            "0x10022A3E0",
+            "0x100337688"
+          ],
+          "old_target": "0x1007AA040"
+        },
+        {
+          "symbol": "npa_avcodec_send_frame",
+          "call_sites": [
+            "0x1001E654C",
+            "0x100337F38"
+          ],
+          "old_target": "0x10087E184"
+        },
+        {
+          "symbol": "npa_avcodec_receive_packet",
+          "call_sites": [
+            "0x1001E6558",
+            "0x100337F68"
+          ],
+          "old_target": "0x10087E75C"
+        },
+        {
+          "symbol": "npa_avcodec_fill_audio_frame",
+          "call_sites": [
+            "0x100337F28"
+          ],
+          "old_target": "0x100C267C0"
+        },
+        {
+          "symbol": "npa_avcodec_decode_subtitle2",
+          "call_sites": [
+            "0x1001A30F0"
+          ],
+          "old_target": "0x10083D868"
+        },
+        {
+          "symbol": "npa_avcodec_get_name",
+          "call_sites": [
+            "0x1001DE3F8",
+            "0x10028E0A0",
+            "0x10033CF84"
+          ],
+          "old_target": "0x100C26AC4"
+        },
+        {
+          "symbol": "npa_avcodec_descriptor_get",
+          "call_sites": [
+            "0x1001DE3E4",
+            "0x1002544C8",
+            "0x10028E06C",
+            "0x10033CF6C"
+          ],
+          "old_target": "0x100816068"
+        },
+        {
+          "symbol": "npa_avcodec_parameters_alloc",
+          "call_sites": [
+            "0x1001A2174",
+            "0x100221394",
+            "0x100229CCC",
+            "0x10022A914",
+            "0x1003027EC"
+          ],
+          "old_target": "0x100816100"
+        },
+        {
+          "symbol": "npa_avcodec_parameters_free",
+          "call_sites": [
+            "0x1001A2194",
+            "0x1002213B8",
+            "0x100229CF0",
+            "0x10022A938",
+            "0x100302810"
+          ],
+          "old_target": "0x100816170"
+        },
+        {
+          "symbol": "npa_avcodec_parameters_copy",
+          "call_sites": [
+            "0x10022A924",
+            "0x10028EF6C",
+            "0x10033430C",
+            "0x10033798C"
+          ],
+          "old_target": "0x1008161E8"
+        },
+        {
+          "symbol": "npa_avcodec_parameters_from_context",
+          "call_sites": [
+            "0x1001A2180",
+            "0x1002213A4",
+            "0x100229CDC",
+            "0x1003027FC",
+            "0x100337970"
+          ],
+          "old_target": "0x1008162E8"
+        },
+        {
+          "symbol": "npa_avcodec_parameters_to_context",
+          "call_sites": [
+            "0x1001A218C",
+            "0x1001E61F0",
+            "0x1002213B0",
+            "0x100229CE8",
+            "0x10022A930",
+            "0x10025455C",
+            "0x100302808",
+            "0x100334718",
+            "0x100334A54"
+          ],
+          "old_target": "0x100816478"
+        },
+        {
+          "symbol": "npa_av_bsf_init",
+          "call_sites": [
+            "0x10028EF74",
+            "0x100334314"
+          ],
+          "old_target": "0x1007B9748"
+        },
+        {
+          "symbol": "npa_av_bsf_flush",
+          "call_sites": [
+            "0x10028FB00"
+          ],
+          "old_target": "0x1007B98B8"
+        },
+        {
+          "symbol": "npa_av_bsf_free",
+          "call_sites": [
+            "0x10028F7F4",
+            "0x100335678"
+          ],
+          "old_target": "0x1007B95D0"
+        },
+        {
+          "symbol": "npa_av_bsf_send_packet",
+          "call_sites": [
+            "0x10028FD10",
+            "0x10033838C"
+          ],
+          "old_target": "0x1007B98FC"
+        },
+        {
+          "symbol": "npa_av_bsf_receive_packet",
+          "call_sites": [
+            "0x10028FD24",
+            "0x1003383A0"
+          ],
+          "old_target": "0x1007B99BC"
+        },
+        {
+          "symbol": "npa_av_bsf_alloc",
+          "call_sites": [
+            "0x10028EF54",
+            "0x1003342FC"
+          ],
+          "old_target": "0x1007B9670"
+        },
+        {
+          "symbol": "npa_av_bsf_get_by_name",
+          "call_sites": [
+            "0x10028EF48",
+            "0x1003342F0"
+          ],
+          "old_target": "0x1007B6AC8"
+        },
+        {
+          "symbol": "npa_av_init_packet",
+          "call_sites": [
+            "0x1001A2EC8",
+            "0x1001E05DC",
+            "0x1001E09D4",
+            "0x1001E6380",
+            "0x1001E6538",
+            "0x1002215B8",
+            "0x100229F3C",
+            "0x100254738",
+            "0x100254DE4",
+            "0x10028E304",
+            "0x10028EA58",
+            "0x10028FD18",
+            "0x10029026C",
+            "0x1002CECA0",
+            "0x100333EAC",
+            "0x100337C50",
+            "0x100337F50",
+            "0x100338328",
+            "0x100338508",
+            "0x100338728"
+          ],
+          "old_target": "0x1007AABD8"
+        },
+        {
+          "symbol": "npa_av_packet_alloc",
+          "call_sites": [
+            "0x100254718",
+            "0x100254DDC",
+            "0x10029024C"
+          ],
+          "old_target": "0x1007AAC08"
+        },
+        {
+          "symbol": "npa_av_packet_unref",
+          "call_sites": [
+            "0x1001E0684",
+            "0x1001E0A7C",
+            "0x1001E0B34",
+            "0x1001E63E8",
+            "0x1001E6578",
+            "0x1002548B8",
+            "0x100254F58",
+            "0x10028E6E8",
+            "0x10028ED8C",
+            "0x10028FD30",
+            "0x1002902C8",
+            "0x100290334",
+            "0x100334280",
+            "0x100337D18",
+            "0x100338394",
+            "0x100338540",
+            "0x1003385C0",
+            "0x1003385C8",
+            "0x100338760",
+            "0x100338874",
+            "0x100338DA8"
+          ],
+          "old_target": "0x1007AACF0"
+        },
+        {
+          "symbol": "npa_av_packet_free",
+          "call_sites": [
+            "0x1002548D0",
+            "0x100254F60",
+            "0x10029033C"
+          ],
+          "old_target": "0x1007AAC44"
+        },
+        {
+          "symbol": "npa_av_new_packet",
+          "call_sites": [
+            "0x10033851C",
+            "0x10033873C"
+          ],
+          "old_target": "0x1007AAD7C"
+        },
+        {
+          "symbol": "npa_av_packet_copy_props",
+          "call_sites": [
+            "0x100338528",
+            "0x100338748"
+          ],
+          "old_target": "0x1007AB510"
+        },
+        {
+          "symbol": "npa_av_packet_ref",
+          "call_sites": [
+            "0x1001E6570",
+            "0x100338334"
+          ],
+          "old_target": "0x1007AB624"
+        },
+        {
+          "symbol": "npa_av_packet_move_ref",
+          "call_sites": [
+            "0x10028FD3C",
+            "0x10033854C",
+            "0x10033876C"
+          ],
+          "old_target": "0x1007AB778"
+        },
+        {
+          "symbol": "npa_av_packet_rescale_ts",
+          "call_sites": [
+            "0x100338580",
+            "0x100338860"
+          ],
+          "old_target": "0x1007AB930"
+        },
+        {
+          "symbol": "npa_avsubtitle_free",
+          "call_sites": [
+            "0x1001A3B64"
+          ],
+          "old_target": "0x1007AA17C"
+        },
+        {
+          "symbol": "npa_av_malloc",
+          "call_sites": [
+            "0x1001C2E78",
+            "0x10022A9A4",
+            "0x10022AA3C",
+            "0x10024C378",
+            "0x100254BB8",
+            "0x10028EE48",
+            "0x10028EEB0",
+            "0x10028EEEC",
+            "0x1002A4024",
+            "0x1002CEA0C",
+            "0x10030291C",
+            "0x1003032FC",
+            "0x100303374",
+            "0x10031F4D8",
+            "0x100334294"
+          ],
+          "old_target": "0x100E8B60C"
+        },
+        {
+          "symbol": "npa_av_mallocz",
+          "call_sites": [
+            "0x10024C068"
+          ],
+          "old_target": "0x100E8B948"
+        },
+        {
+          "symbol": "npa_av_realloc",
+          "call_sites": [
+            "0x10031F60C"
+          ],
+          "old_target": "0x100E8B688"
+        },
+        {
+          "symbol": "npa_av_freep",
+          "call_sites": [
+            "0x1001E0FF4",
+            "0x1001E65A8",
+            "0x10024C160",
+            "0x1002542A0",
+            "0x10028E168",
+            "0x10028E17C",
+            "0x10028EE08",
+            "0x10028F830",
+            "0x1002CEC44",
+            "0x100335650",
+            "0x1003356C8"
+          ],
+          "old_target": "0x100E8B7A4"
+        },
+        {
+          "symbol": "npa_av_dict_get",
+          "call_sites": [
+            "0x1001DE424",
+            "0x100254480",
+            "0x1002544AC",
+            "0x10028CFEC",
+            "0x10028DBE0",
+            "0x10028DC00",
+            "0x10028DF40",
+            "0x10028DF74",
+            "0x10028E00C",
+            "0x10028E044",
+            "0x10028E1F4",
+            "0x10028F9CC",
+            "0x10029013C",
+            "0x100334954",
+            "0x1003349A0",
+            "0x10033CFC0",
+            "0x10033CFF4"
+          ],
+          "old_target": "0x100E800E0"
+        },
+        {
+          "symbol": "npa_av_dict_set",
+          "call_sites": [
+            "0x1001DE198",
+            "0x1001DE1B4",
+            "0x10028D64C",
+            "0x10028D668",
+            "0x10028F538",
+            "0x10028F554",
+            "0x100333A64",
+            "0x100333A80",
+            "0x100337AC0",
+            "0x100337ADC"
+          ],
+          "old_target": "0x100E802A4"
+        },
+        {
+          "symbol": "npa_av_dict_free",
+          "call_sites": [
+            "0x1001DF344",
+            "0x10028D694",
+            "0x10028D720",
+            "0x10028F5A0",
+            "0x10028F5E4",
+            "0x100333AD4",
+            "0x100337B00"
+          ],
+          "old_target": "0x100E806CC"
+        },
+        {
+          "symbol": "npa_av_dict_copy",
+          "call_sites": [
+            "0x1003378EC",
+            "0x100337A54"
+          ],
+          "old_target": "0x100E80738"
+        },
+        {
+          "symbol": "npa_av_frame_alloc",
+          "call_sites": [
+            "0x1001E0560",
+            "0x1001E08B8",
+            "0x1001E6220",
+            "0x1001E6464",
+            "0x1002216D4",
+            "0x100221BE4",
+            "0x100229DAC",
+            "0x100334A78",
+            "0x100334AA4"
+          ],
+          "old_target": "0x100E84ED8"
+        },
+        {
+          "symbol": "npa_av_frame_free",
+          "call_sites": [
+            "0x1001E06B4",
+            "0x1001E0D04",
+            "0x1001E6300",
+            "0x1001E65B0",
+            "0x100221714",
+            "0x100221794",
+            "0x100221CE4",
+            "0x100229B54",
+            "0x1003356F8",
+            "0x100335700"
+          ],
+          "old_target": "0x100E84F7C"
+        },
+        {
+          "symbol": "npa_av_frame_unref",
+          "call_sites": [
+            "0x1001E069C",
+            "0x1001E0B4C",
+            "0x1001E6410",
+            "0x100221CDC"
+          ],
+          "old_target": "0x100E84FB4"
+        },
+        {
+          "symbol": "npa_av_frame_ref",
+          "call_sites": [
+            "0x1001E62F4",
+            "0x1001E6408",
+            "0x100221BF0"
+          ],
+          "old_target": "0x100E8557C"
+        },
+        {
+          "symbol": "npa_av_image_alloc",
+          "call_sites": [
+            "0x1001E6494"
+          ],
+          "old_target": "0x100E87F60"
+        },
+        {
+          "symbol": "npa_av_image_fill_arrays",
+          "call_sites": [
+            "0x1001A43AC",
+            "0x1001A48A8",
+            "0x1001C2E9C",
+            "0x1001C3214",
+            "0x100265ADC"
+          ],
+          "old_target": "0x100E88908"
+        },
+        {
+          "symbol": "npa_av_image_get_buffer_size",
+          "call_sites": [
+            "0x1001A4314",
+            "0x1001A4864",
+            "0x1001C2E70"
+          ],
+          "old_target": "0x100E88AF0"
+        },
+        {
+          "symbol": "npa_av_image_copy",
+          "call_sites": [
+            "0x1001A43C8",
+            "0x10022A808"
+          ],
+          "old_target": "0x100E88544"
+        },
+        {
+          "symbol": "npa_av_reduce",
+          "call_sites": [
+            "0x100221450",
+            "0x100221760",
+            "0x10028E1C4"
+          ],
+          "old_target": "0x100E90C18"
+        },
+        {
+          "symbol": "npa_av_rescale_q",
+          "call_sites": [
+            "0x100337DC8",
+            "0x1003399BC"
+          ],
+          "old_target": "0x100E8A644"
+        },
+        {
+          "symbol": "npa_av_log2",
+          "call_sites": [
+            "0x1001F50D4"
+          ],
+          "old_target": "0x100E8914C"
+        },
+        {
+          "symbol": "npa_av_get_bytes_per_sample",
+          "call_sites": [
+            "0x1001D4E44",
+            "0x1001D4F74",
+            "0x1001D5040",
+            "0x1001D5CE8",
+            "0x1001D5E14",
+            "0x1001D5F34",
+            "0x1001D5F60",
+            "0x1001D5FE0",
+            "0x1001D64DC",
+            "0x100203408",
+            "0x100203840",
+            "0x100203990",
+            "0x100203C64",
+            "0x10022A1E4",
+            "0x10028DEAC",
+            "0x10028DED0",
+            "0x100302C7C",
+            "0x100302CE4",
+            "0x10030356C",
+            "0x100303914",
+            "0x100303974",
+            "0x100303C3C"
+          ],
+          "old_target": "0x100E91310"
+        },
+        {
+          "symbol": "npa_av_sample_fmt_is_planar",
+          "call_sites": [
+            "0x1001D5D28",
+            "0x1001D5D3C",
+            "0x1001D5DC8",
+            "0x1001D647C",
+            "0x100203828",
+            "0x10022A100",
+            "0x1002A405C",
+            "0x1002A4160"
+          ],
+          "old_target": "0x100E9133C"
+        },
+        {
+          "symbol": "npa_av_samples_get_buffer_size",
+          "call_sites": [
+            "0x100203800",
+            "0x10022A0DC",
+            "0x100337DE8",
+            "0x100337F08"
+          ],
+          "old_target": "0x100E91364"
+        },
+        {
+          "symbol": "npa_av_get_default_channel_layout",
+          "call_sites": [
+            "0x1001D4DE8",
+            "0x1001D5568",
+            "0x100203214",
+            "0x10022A09C",
+            "0x100303218",
+            "0x100338CF0"
+          ],
+          "old_target": "0x100E7EBD0"
+        },
+        {
+          "symbol": "npa_av_get_channel_layout_channel_index",
+          "call_sites": [
+            "0x1002038F0",
+            "0x100203AB0",
+            "0x10025F9A8",
+            "0x10025F9B8",
+            "0x10025F9E0",
+            "0x10025FA20",
+            "0x100303530"
+          ],
+          "old_target": "0x100E7EC18"
+        },
+        {
+          "symbol": "npa_av_opt_set",
+          "call_sites": [
+            "0x100338954",
+            "0x10033898C",
+            "0x1003389A8"
+          ],
+          "old_target": "0x100E8C730"
+        },
+        {
+          "symbol": "npa_av_gettime",
+          "call_sites": [
+            "0x10024512C",
+            "0x1002451B8",
+            "0x100245208",
+            "0x100245298"
+          ],
+          "old_target": "0x100E97C18"
+        },
+        {
+          "symbol": "npa_av_log_set_level",
+          "call_sites": [
+            "0x10022A620"
+          ],
+          "old_target": "0x100E89C90"
+        },
+        {
+          "symbol": "npa_ff_isom_write_hvcc",
+          "call_sites": [
+            "0x100287F08"
+          ],
+          "old_target": "0x100D996F0"
+        },
+        {
+          "symbol": "npa_avpriv_mpegaudio_decode_header",
+          "call_sites": [
+            "0x100302E20"
+          ],
+          "old_target": "0x100AF64F8"
+        }
+      ]
+    },
+    {
+      "id": "ffmpeg-demux",
+      "apis": [
+        {
+          "symbol": "npa_demux_avformat_alloc_context",
+          "call_sites": [
+            "0x1001DDDB8",
+            "0x10028D590",
+            "0x10028F494",
+            "0x100254C04"
+          ],
+          "old_target": "0x100E1A1F8"
+        },
+        {
+          "symbol": "npa_demux_avformat_open_input",
+          "call_sites": [
+            "0x1001DE328",
+            "0x10028D688",
+            "0x10028F588",
+            "0x10025432C",
+            "0x100254C2C"
+          ],
+          "old_target": "0x100E5CFDC"
+        },
+        {
+          "symbol": "npa_demux_avformat_find_stream_info",
+          "call_sites": [
+            "0x1001DE338",
+            "0x10028D6F8",
+            "0x10028F5B8",
+            "0x100254C3C"
+          ],
+          "old_target": "0x100E6218C"
+        },
+        {
+          "symbol": "npa_demux_av_read_frame",
+          "call_sites": [
+            "0x1001E638C",
+            "0x10028E320",
+            "0x10028EA70",
+            "0x10028FC38",
+            "0x100254744",
+            "0x100254DF0"
+          ],
+          "old_target": "0x100E5E798"
+        },
+        {
+          "symbol": "npa_demux_av_seek_frame",
+          "call_sites": [
+            "0x1001E636C",
+            "0x10028FA5C",
+            "0x10028FAC4",
+            "0x10028FADC"
+          ],
+          "old_target": "0x100E60A7C"
+        },
+        {
+          "symbol": "npa_demux_avformat_close_input",
+          "call_sites": [
+            "0x1001E0FDC",
+            "0x10028F814",
+            "0x100254280"
+          ],
+          "old_target": "0x100E65008"
+        },
+        {
+          "symbol": "npa_demux_avformat_free_context",
+          "call_sites": [
+            "0x1001E0FFC"
+          ],
+          "old_target": "0x100E5D70C"
+        },
+        {
+          "symbol": "npa_demux_avio_alloc_context",
+          "call_sites": [
+            "0x1001DDDB0",
+            "0x10028D588",
+            "0x100254BDC"
+          ],
+          "old_target": "0x100D78230"
+        },
+        {
+          "symbol": "npa_demux_avio_size",
+          "call_sites": [
+            "0x1001E629C",
+            "0x10028FA28"
+          ],
+          "old_target": "0x100D78D34"
+        },
+        {
+          "symbol": "npa_demux_av_index_search_timestamp",
+          "call_sites": [
+            "0x10028CCF0"
+          ],
+          "old_target": "0x100E5FE5C"
+        },
+        {
+          "symbol": "npa_demux_avformat_seek_file",
+          "call_sites": [
+            "0x100254D8C"
+          ],
+          "old_target": "0x100E60FA8"
+        },
+        {
+          "symbol": "npa_demux_av_find_input_format",
+          "call_sites": [
+            "0x100254B84"
+          ],
+          "old_target": "0x100D92804"
+        },
+        {
+          "symbol": "npa_demux_av_probe_input_buffer",
+          "call_sites": [
+            "0x100254BFC"
+          ],
+          "old_target": "0x100D92DB0"
+        },
+        {
+          "symbol": "npa_demux_avio_read",
+          "call_sites": [
+            "0x100254910"
+          ],
+          "old_target": "0x100D797F0"
+        },
+        {
+          "symbol": "npa_demux_avio_seek",
+          "call_sites": [
+            "0x100254924"
+          ],
+          "old_target": "0x100D78728"
+        }
+      ]
+    },
+    {
+      "id": "ffmpeg-subdecode",
+      "apis": [
+        {
+          "symbol": "npa_subdec_avcodec_alloc_context3",
+          "call_sites": [
+            "0x1001A1FC4",
+            "0x1001A20D4",
+            "0x1001A2144",
+            "0x100254550"
+          ],
+          "old_target": "0x100B3C0AC"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_free_context",
+          "call_sites": [
+            "0x1001A1F04",
+            "0x1001A2214",
+            "0x100254694"
+          ],
+          "old_target": "0x100B3C104"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_find_decoder",
+          "call_sites": [
+            "0x1001A2168"
+          ],
+          "old_target": "0x100780F28"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_open2",
+          "call_sites": [
+            "0x1001A21A4"
+          ],
+          "old_target": "0x1007A95F8"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_parameters_alloc",
+          "call_sites": [
+            "0x1001A2174"
+          ],
+          "old_target": "0x100816100"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_parameters_free",
+          "call_sites": [
+            "0x1001A2194"
+          ],
+          "old_target": "0x100816170"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_parameters_from_context",
+          "call_sites": [
+            "0x1001A2180"
+          ],
+          "old_target": "0x1008162E8"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_parameters_to_context",
+          "call_sites": [
+            "0x1001A218C",
+            "0x10025455C"
+          ],
+          "old_target": "0x100816478"
+        },
+        {
+          "symbol": "npa_subdec_avcodec_decode_subtitle2",
+          "call_sites": [
+            "0x1001A30F0"
+          ],
+          "old_target": "0x10083D868"
+        },
+        {
+          "symbol": "npa_subdec_avsubtitle_free",
+          "call_sites": [
+            "0x1001A3B64"
+          ],
+          "old_target": "0x1007AA17C"
+        }
+      ]
+    },
+    {
+      "id": "ffmpeg-codec",
+      "apis": [
+        {
+          "symbol": "npa_codec_avcodec_alloc_context3",
+          "call_sites": [
+            "0x100221388",
+            "0x100229CC0",
+            "0x1001E61E0",
+            "0x10022A900"
+          ],
+          "old_target": "0x100B3C0AC"
+        },
+        {
+          "symbol": "npa_codec_avcodec_free_context",
+          "call_sites": [
+            "0x1002212C4",
+            "0x100221338",
+            "0x100221464",
+            "0x1002214F0",
+            "0x100229B5C",
+            "0x100229C6C",
+            "0x100229DBC",
+            "0x1001E6314",
+            "0x10022AA70",
+            "0x1002CE938",
+            "0x100302778"
+          ],
+          "old_target": "0x100B3C104"
+        },
+        {
+          "symbol": "npa_codec_avcodec_find_decoder",
+          "call_sites": [
+            "0x100221378",
+            "0x100229CB0",
+            "0x1001E61D8"
+          ],
+          "old_target": "0x100780F28"
+        },
+        {
+          "symbol": "npa_codec_avcodec_open2",
+          "call_sites": [
+            "0x10022140C",
+            "0x100229D00",
+            "0x1001E6204"
+          ],
+          "old_target": "0x1007A95F8"
+        },
+        {
+          "symbol": "npa_codec_avcodec_close",
+          "call_sites": [
+            "0x1001E6308"
+          ],
+          "old_target": "0x10115EE2C"
+        },
+        {
+          "symbol": "npa_codec_avcodec_flush_buffers",
+          "call_sites": [
+            "0x100221998",
+            "0x10022A3E0"
+          ],
+          "old_target": "0x1007AA040"
+        },
+        {
+          "symbol": "npa_codec_avcodec_parameters_alloc",
+          "call_sites": [
+            "0x100221394",
+            "0x100229CCC",
+            "0x1003027EC"
+          ],
+          "old_target": "0x100816100"
+        },
+        {
+          "symbol": "npa_codec_avcodec_parameters_free",
+          "call_sites": [
+            "0x1002213B8",
+            "0x100229CF0",
+            "0x100302810"
+          ],
+          "old_target": "0x100816170"
+        },
+        {
+          "symbol": "npa_codec_avcodec_parameters_from_context",
+          "call_sites": [
+            "0x1002213A4",
+            "0x100229CDC",
+            "0x1003027FC"
+          ],
+          "old_target": "0x1008162E8"
+        },
+        {
+          "symbol": "npa_codec_avcodec_parameters_to_context",
+          "call_sites": [
+            "0x1002213B0",
+            "0x100229CE8",
+            "0x1001E61F0"
+          ],
+          "old_target": "0x100816478"
+        },
+        {
+          "symbol": "npa_codec_avcodec_send_packet",
+          "call_sites": [
+            "0x10022166C",
+            "0x100221698",
+            "0x100229FC4",
+            "0x100229FF0",
+            "0x1001E62D0",
+            "0x1001E63C0"
+          ],
+          "old_target": "0x10083CA44"
+        },
+        {
+          "symbol": "npa_codec_avcodec_receive_frame",
+          "call_sites": [
+            "0x1002216E4",
+            "0x10022A078",
+            "0x1001E62DC",
+            "0x1001E63D4"
+          ],
+          "old_target": "0x10083D560"
+        }
+      ]
+    },
+    {
+      "id": "ffmpeg-hls448",
+      "apis": [
+        {
+          "symbol": "npa_hls_av_bsf_alloc",
+          "call_sites": [
+            "0x1003342FC"
+          ],
+          "old_target": "0x1007B9670"
+        },
+        {
+          "symbol": "npa_hls_av_bsf_free",
+          "call_sites": [
+            "0x100335678"
+          ],
+          "old_target": "0x1007B95D0"
+        },
+        {
+          "symbol": "npa_hls_av_bsf_get_by_name",
+          "call_sites": [
+            "0x1003342F0"
+          ],
+          "old_target": "0x1007B6AC8"
+        },
+        {
+          "symbol": "npa_hls_av_bsf_init",
+          "call_sites": [
+            "0x100334314"
+          ],
+          "old_target": "0x1007B9748"
+        },
+        {
+          "symbol": "npa_hls_av_bsf_receive_packet",
+          "call_sites": [
+            "0x1003383A0"
+          ],
+          "old_target": "0x1007B99BC"
+        },
+        {
+          "symbol": "npa_hls_av_bsf_send_packet",
+          "call_sites": [
+            "0x10033838C"
+          ],
+          "old_target": "0x1007B98FC"
+        },
+        {
+          "symbol": "npa_hls_av_codec_get_tag",
+          "call_sites": [
+            "0x100337A38"
+          ],
+          "old_target": "0x100E61410"
+        },
+        {
+          "symbol": "npa_hls_av_dict_copy",
+          "call_sites": [
+            "0x1003378EC",
+            "0x100337A54"
+          ],
+          "old_target": "0x100E80738"
+        },
+        {
+          "symbol": "npa_hls_av_dict_free",
+          "call_sites": [
+            "0x100333AD4",
+            "0x100337B00"
+          ],
+          "old_target": "0x100E806CC"
+        },
+        {
+          "symbol": "npa_hls_av_dict_get",
+          "call_sites": [
+            "0x100334954",
+            "0x1003349A0"
+          ],
+          "old_target": "0x100E800E0"
+        },
+        {
+          "symbol": "npa_hls_av_dict_set",
+          "call_sites": [
+            "0x100333A64",
+            "0x100333A80",
+            "0x100337AC0",
+            "0x100337ADC"
+          ],
+          "old_target": "0x100E802A4"
+        },
+        {
+          "symbol": "npa_hls_av_frame_alloc",
+          "call_sites": [
+            "0x100334A78",
+            "0x100334AA4"
+          ],
+          "old_target": "0x100E84ED8"
+        },
+        {
+          "symbol": "npa_hls_av_frame_free",
+          "call_sites": [
+            "0x1003356F8",
+            "0x100335700"
+          ],
+          "old_target": "0x100E84F7C"
+        },
+        {
+          "symbol": "npa_hls_av_freep",
+          "call_sites": [
+            "0x100335650",
+            "0x1003356C8"
+          ],
+          "old_target": "0x100E8B7A4"
+        },
+        {
+          "symbol": "npa_hls_av_get_default_channel_layout",
+          "call_sites": [
+            "0x100338CF0"
+          ],
+          "old_target": "0x100E7EBD0"
+        },
+        {
+          "symbol": "npa_hls_av_guess_format",
+          "call_sites": [
+            "0x100337888"
+          ],
+          "old_target": "0x100D924CC"
+        },
+        {
+          "symbol": "npa_hls_av_init_packet",
+          "call_sites": [
+            "0x100333EAC",
+            "0x100337C50",
+            "0x100337F50",
+            "0x100338328",
+            "0x100338508",
+            "0x100338728"
+          ],
+          "old_target": "0x1007AABD8"
+        },
+        {
+          "symbol": "npa_hls_av_malloc",
+          "call_sites": [
+            "0x100334294"
+          ],
+          "old_target": "0x100E8B60C"
+        },
+        {
+          "symbol": "npa_hls_av_new_packet",
+          "call_sites": [
+            "0x10033851C",
+            "0x10033873C"
+          ],
+          "old_target": "0x1007AAD7C"
+        },
+        {
+          "symbol": "npa_hls_av_opt_set",
+          "call_sites": [
+            "0x100338954",
+            "0x10033898C",
+            "0x1003389A8"
+          ],
+          "old_target": "0x100E8C730"
+        },
+        {
+          "symbol": "npa_hls_av_packet_copy_props",
+          "call_sites": [
+            "0x100338528",
+            "0x100338748"
+          ],
+          "old_target": "0x1007AB510"
+        },
+        {
+          "symbol": "npa_hls_av_packet_move_ref",
+          "call_sites": [
+            "0x10033854C",
+            "0x10033876C"
+          ],
+          "old_target": "0x1007AB778"
+        },
+        {
+          "symbol": "npa_hls_av_packet_ref",
+          "call_sites": [
+            "0x100338334"
+          ],
+          "old_target": "0x1007AB624"
+        },
+        {
+          "symbol": "npa_hls_av_packet_rescale_ts",
+          "call_sites": [
+            "0x100338580",
+            "0x100338860"
+          ],
+          "old_target": "0x1007AB930"
+        },
+        {
+          "symbol": "npa_hls_av_packet_unref",
+          "call_sites": [
+            "0x100334280",
+            "0x100337D18",
+            "0x100338394",
+            "0x100338540",
+            "0x1003385C0",
+            "0x1003385C8",
+            "0x100338760",
+            "0x100338874"
+          ],
+          "old_target": "0x1007AACF0"
+        },
+        {
+          "symbol": "npa_hls_av_read_frame",
+          "call_sites": [
+            "0x100333EBC",
+            "0x100337C5C"
+          ],
+          "old_target": "0x100E5E798"
+        },
+        {
+          "symbol": "npa_hls_av_rescale_q",
+          "call_sites": [
+            "0x100337DC8"
+          ],
+          "old_target": "0x100E8A644"
+        },
+        {
+          "symbol": "npa_hls_av_samples_get_buffer_size",
+          "call_sites": [
+            "0x100337DE8",
+            "0x100337F08"
+          ],
+          "old_target": "0x100E91364"
+        },
+        {
+          "symbol": "npa_hls_av_seek_frame",
+          "call_sites": [
+            "0x100337614",
+            "0x100337664",
+            "0x10033767C"
+          ],
+          "old_target": "0x100E60A7C"
+        },
+        {
+          "symbol": "npa_hls_av_write_frame",
+          "call_sites": [
+            "0x1003385B8",
+            "0x10033886C",
+            "0x10033901C",
+            "0x1003390C0",
+            "0x100339198"
+          ],
+          "old_target": "0x100DFDBF8"
+        },
+        {
+          "symbol": "npa_hls_av_write_trailer",
+          "call_sites": [
+            "0x100337844"
+          ],
+          "old_target": "0x100DFDF74"
+        },
+        {
+          "symbol": "npa_hls_avcodec_alloc_context3",
+          "call_sites": [
+            "0x10033470C",
+            "0x100334A48",
+            "0x100338C7C"
+          ],
+          "old_target": "0x100B3C0AC"
+        },
+        {
+          "symbol": "npa_hls_avcodec_close",
+          "call_sites": [
+            "0x100334F60",
+            "0x1003356D0",
+            "0x1003356E8",
+            "0x100337698"
+          ],
+          "old_target": "0x10115EE2C"
+        },
+        {
+          "symbol": "npa_hls_avcodec_fill_audio_frame",
+          "call_sites": [
+            "0x100337F28"
+          ],
+          "old_target": "0x100C267C0"
+        },
+        {
+          "symbol": "npa_hls_avcodec_find_decoder",
+          "call_sites": [
+            "0x100334A38"
+          ],
+          "old_target": "0x100780F28"
+        },
+        {
+          "symbol": "npa_hls_avcodec_find_encoder",
+          "call_sites": [
+            "0x100338C70"
+          ],
+          "old_target": "0x100780E88"
+        },
+        {
+          "symbol": "npa_hls_avcodec_flush_buffers",
+          "call_sites": [
+            "0x100337688"
+          ],
+          "old_target": "0x1007AA040"
+        },
+        {
+          "symbol": "npa_hls_avcodec_free_context",
+          "call_sites": [
+            "0x100334784",
+            "0x1003356D8",
+            "0x1003356F0",
+            "0x1003376A0",
+            "0x100338D2C"
+          ],
+          "old_target": "0x100B3C104"
+        },
+        {
+          "symbol": "npa_hls_avcodec_open2",
+          "call_sites": [
+            "0x100334A64",
+            "0x100338D18"
+          ],
+          "old_target": "0x1007A95F8"
+        },
+        {
+          "symbol": "npa_hls_avcodec_parameters_copy",
+          "call_sites": [
+            "0x10033430C",
+            "0x10033798C"
+          ],
+          "old_target": "0x1008161E8"
+        },
+        {
+          "symbol": "npa_hls_avcodec_parameters_from_context",
+          "call_sites": [
+            "0x100337970"
+          ],
+          "old_target": "0x1008162E8"
+        },
+        {
+          "symbol": "npa_hls_avcodec_parameters_to_context",
+          "call_sites": [
+            "0x100334718",
+            "0x100334A54"
+          ],
+          "old_target": "0x100816478"
+        },
+        {
+          "symbol": "npa_hls_avcodec_receive_frame",
+          "call_sites": [
+            "0x100337D0C",
+            "0x100337FB4"
+          ],
+          "old_target": "0x10083D560"
+        },
+        {
+          "symbol": "npa_hls_avcodec_receive_packet",
+          "call_sites": [
+            "0x100337F68"
+          ],
+          "old_target": "0x10087E75C"
+        },
+        {
+          "symbol": "npa_hls_avcodec_send_frame",
+          "call_sites": [
+            "0x100337F38"
+          ],
+          "old_target": "0x10087E184"
+        },
+        {
+          "symbol": "npa_hls_avcodec_send_packet",
+          "call_sites": [
+            "0x100337CF4"
+          ],
+          "old_target": "0x10083CA44"
+        },
+        {
+          "symbol": "npa_hls_avformat_alloc_context",
+          "call_sites": [
+            "0x1003339D0"
+          ],
+          "old_target": "0x100E1A1F8"
+        },
+        {
+          "symbol": "npa_hls_avformat_alloc_output_context2",
+          "call_sites": [
+            "0x1003378A4"
+          ],
+          "old_target": "0x100DFC794"
+        },
+        {
+          "symbol": "npa_hls_avformat_close_input",
+          "call_sites": [
+            "0x100335630"
+          ],
+          "old_target": "0x100E65008"
+        },
+        {
+          "symbol": "npa_hls_avformat_find_stream_info",
+          "call_sites": [
+            "0x100333AF0"
+          ],
+          "old_target": "0x100E6218C"
+        },
+        {
+          "symbol": "npa_hls_avformat_free_context",
+          "call_sites": [
+            "0x1003356A4",
+            "0x10033784C"
+          ],
+          "old_target": "0x100E5D70C"
+        },
+        {
+          "symbol": "npa_hls_avformat_init_output",
+          "call_sites": [
+            "0x100337AE8"
+          ],
+          "old_target": "0x100DFC8D8"
+        },
+        {
+          "symbol": "npa_hls_avformat_new_stream",
+          "call_sites": [
+            "0x10033792C"
+          ],
+          "old_target": "0x100E650E4"
+        },
+        {
+          "symbol": "npa_hls_avformat_open_input",
+          "call_sites": [
+            "0x100333AB8"
+          ],
+          "old_target": "0x100E5CFDC"
+        },
+        {
+          "symbol": "npa_hls_avformat_write_header",
+          "call_sites": [
+            "0x100337B10"
+          ],
+          "old_target": "0x100DFD154"
+        },
+        {
+          "symbol": "npa_hls_avio_alloc_context",
+          "call_sites": [
+            "0x1003339C8"
+          ],
+          "old_target": "0x100D78230"
+        },
+        {
+          "symbol": "npa_hls_avio_close",
+          "call_sites": [
+            "0x10033905C",
+            "0x1003391D8"
+          ],
+          "old_target": "0x100D7B384"
+        },
+        {
+          "symbol": "npa_hls_avio_close_dyn_buf",
+          "call_sites": [
+            "0x10033903C",
+            "0x1003391B8"
+          ],
+          "old_target": "0x100D7B8B0"
+        },
+        {
+          "symbol": "npa_hls_avio_closep",
+          "call_sites": [
+            "0x10033569C",
+            "0x1003390CC"
+          ],
+          "old_target": "0x100D7ADCC"
+        },
+        {
+          "symbol": "npa_hls_avio_flush",
+          "call_sites": [
+            "0x100337AF8",
+            "0x100339028",
+            "0x1003391A4"
+          ],
+          "old_target": "0x100D786C4"
+        },
+        {
+          "symbol": "npa_hls_avio_open2",
+          "call_sites": [
+            "0x100337C0C",
+            "0x100339008",
+            "0x100339128"
+          ],
+          "old_target": "0x100D7B284"
+        },
+        {
+          "symbol": "npa_hls_avio_open_dyn_buf",
+          "call_sites": [
+            "0x100337A9C",
+            "0x100337B74",
+            "0x100339068",
+            "0x1003391E4"
+          ],
+          "old_target": "0x100D7B67C"
+        },
+        {
+          "symbol": "npa_hls_avio_size",
+          "call_sites": [
+            "0x1003375E8"
+          ],
+          "old_target": "0x100D78D34"
+        },
+        {
+          "symbol": "npa_hls_avio_wb32",
+          "call_sites": [
+            "0x100339140",
+            "0x10033916C"
+          ],
+          "old_target": "0x100D78EE0"
+        },
+        {
+          "symbol": "npa_hls_avio_wl32",
+          "call_sites": [
+            "0x100339150",
+            "0x100339160",
+            "0x10033917C",
+            "0x10033918C"
+          ],
+          "old_target": "0x100D78E20"
+        },
+        {
+          "symbol": "npa_hls_avio_write",
+          "call_sites": [
+            "0x10033904C",
+            "0x1003391C8"
+          ],
+          "old_target": "0x100D7853C"
+        }
+      ]
+    },
+    {
+      "id": "ffmpeg-spdif448",
+      "apis": [
+        {
+          "symbol": "npa_spdif_av_freep",
+          "call_sites": [
+            "0x1002CEC44"
+          ],
+          "old_target": "0x100E8B7A4"
+        },
+        {
+          "symbol": "npa_spdif_av_init_packet",
+          "call_sites": [
+            "0x1002CECA0"
+          ],
+          "old_target": "0x1007AABD8"
+        },
+        {
+          "symbol": "npa_spdif_av_malloc",
+          "call_sites": [
+            "0x1002CEA0C"
+          ],
+          "old_target": "0x100E8B60C"
+        },
+        {
+          "symbol": "npa_spdif_av_write_frame",
+          "call_sites": [
+            "0x1002CECF8"
+          ],
+          "old_target": "0x100DFDBF8"
+        },
+        {
+          "symbol": "npa_spdif_av_write_trailer",
+          "call_sites": [
+            "0x1002CEC24"
+          ],
+          "old_target": "0x100DFDF74"
+        },
+        {
+          "symbol": "npa_spdif_avformat_alloc_output_context2",
+          "call_sites": [
+            "0x1002CE9BC"
+          ],
+          "old_target": "0x100DFC794"
+        },
+        {
+          "symbol": "npa_spdif_avformat_free_context",
+          "call_sites": [
+            "0x1002CEC4C"
+          ],
+          "old_target": "0x100E5D70C"
+        },
+        {
+          "symbol": "npa_spdif_avformat_new_stream",
+          "call_sites": [
+            "0x1002CE9C8"
+          ],
+          "old_target": "0x100E650E4"
+        },
+        {
+          "symbol": "npa_spdif_avformat_write_header",
+          "call_sites": [
+            "0x1002CEA90"
+          ],
+          "old_target": "0x100DFD154"
+        },
+        {
+          "symbol": "npa_spdif_avio_alloc_context",
+          "call_sites": [
+            "0x1002CEA7C"
+          ],
+          "old_target": "0x100D78230"
+        },
+        {
+          "symbol": "npa_spdif_avio_flush",
+          "call_sites": [
+            "0x1002CED40"
+          ],
+          "old_target": "0x100D786C4"
+        }
+      ]
+    },
+    {
+      "id": "ffmpeg-mjpeg448",
+      "apis": [
+        {
+          "symbol": "npa_mjpeg_av_frame_alloc",
+          "call_sites": [
+            "0x1001E6464"
+          ],
+          "old_target": "0x100E84ED8"
+        },
+        {
+          "symbol": "npa_mjpeg_av_frame_free",
+          "call_sites": [
+            "0x1001E65B0"
+          ],
+          "old_target": "0x100E84F7C"
+        },
+        {
+          "symbol": "npa_mjpeg_av_freep",
+          "call_sites": [
+            "0x1001E65A8"
+          ],
+          "old_target": "0x100E8B7A4"
+        },
+        {
+          "symbol": "npa_mjpeg_av_image_alloc",
+          "call_sites": [
+            "0x1001E6494"
+          ],
+          "old_target": "0x100E87F60"
+        },
+        {
+          "symbol": "npa_mjpeg_av_init_packet",
+          "call_sites": [
+            "0x1001E6538"
+          ],
+          "old_target": "0x1007AABD8"
+        },
+        {
+          "symbol": "npa_mjpeg_av_packet_ref",
+          "call_sites": [
+            "0x1001E6570"
+          ],
+          "old_target": "0x1007AB624"
+        },
+        {
+          "symbol": "npa_mjpeg_av_packet_unref",
+          "call_sites": [
+            "0x1001E6578"
+          ],
+          "old_target": "0x1007AACF0"
+        },
+        {
+          "symbol": "npa_mjpeg_avcodec_alloc_context3",
+          "call_sites": [
+            "0x1001E64F4"
+          ],
+          "old_target": "0x100B3C0AC"
+        },
+        {
+          "symbol": "npa_mjpeg_avcodec_find_encoder",
+          "call_sites": [
+            "0x1001E64E8"
+          ],
+          "old_target": "0x100780E88"
+        },
+        {
+          "symbol": "npa_mjpeg_avcodec_free_context",
+          "call_sites": [
+            "0x1001E6598"
+          ],
+          "old_target": "0x100B3C104"
+        },
+        {
+          "symbol": "npa_mjpeg_avcodec_open2",
+          "call_sites": [
+            "0x1001E652C"
+          ],
+          "old_target": "0x1007A95F8"
+        },
+        {
+          "symbol": "npa_mjpeg_avcodec_receive_packet",
+          "call_sites": [
+            "0x1001E6558"
+          ],
+          "old_target": "0x10087E75C"
+        },
+        {
+          "symbol": "npa_mjpeg_avcodec_send_frame",
+          "call_sites": [
+            "0x1001E654C"
+          ],
+          "old_target": "0x10087E184"
+        }
+      ]
+    }
+  ],
+  "dylibs": [
+    {
+      "id": "libass",
+      "library_version": "0.17.5",
+      "extra_sites": [
+        {
+          "site": "0x1001A1D08",
+          "expected": "0x35000148",
+          "replacement": "0xD503201F"
+        },
+        {
+          "site": "0x10026BF7C",
+          "expected": "0x37000080",
+          "replacement": "0xD503201F"
+        }
+      ],
+      "basename": "LibASSBridge.dylib",
+      "callback": {
+        "app_callback": "0x1001A17A0",
+        "prototype": "void(int, const char *, va_list, void *)",
+        "va_list_size": 8,
+        "ignored_argument_register": "x3"
+      },
+      "build": {
+        "source": "bridge/npa_ass_bridge.c",
+        "exports": "bridge/bridge.exports",
+        "closure": "build/deps/libass-closure.txt",
+        "include_root": "build/deps/include",
+        "lib_root": "build/deps/lib"
+      },
+      "domains": [
+        "libass"
+      ]
+    },
+    {
+      "id": "ffmpeg",
+      "library_version": "9.0.2",
+      "basename": "LibFFmpegBridge.dylib",
+      "build": {
+        "source": "bridge/npa_ffmpeg_util_bridge.c",
+        "exports": "bridge/ffmpeg-util.exports",
+        "closure": "build/deps/ffmpeg-closure.txt",
+        "include_root": "build/deps/ffmpeg/include",
+        "lib_root": "build/deps/ffmpeg/lib"
+      },
+      "domains": [
+        "libswscale",
+        "libswresample"
+      ],
+      "conflicts": [
+        "ffmpeg-full",
+        "ffmpeg-core902"
+      ]
+    },
+    {
+      "id": "ffmpeg-core",
+      "library_version": "4.4.8",
+      "basename": "LibFFmpegCoreBridge.dylib",
+      "build": {
+        "source": "bridge/npa_ffmpeg_core_bridge.c",
+        "exports": "bridge/ffmpeg-core.exports",
+        "closure": "build/deps/ffmpeg-core-closure.txt",
+        "include_root": "build/deps/ffmpeg-core/include",
+        "lib_root": "build/deps/ffmpeg-core/lib"
+      },
+      "domains": [
+        "ffmpeg-core"
+      ],
+      "conflicts": [
+        "ffmpeg-full",
+        "ffmpeg-core902",
+        "ffmpeg-out448"
+      ]
+    },
+    {
+      "id": "renderer-highbit",
+      "library_version": "1.0",
+      "basename": "LibRendererHighBitBridge.dylib",
+      "build": {
+        "source": "bridge/npa_renderer_highbit_dylib.c",
+        "exports": "bridge/renderer-highbit.exports",
+        "closure": "deps/renderer-highbit-closure.txt",
+        "include_root": "build/deps/ffmpeg-core/include",
+        "lib_root": "build/deps/ffmpeg-core/lib"
+      },
+      "domains": [
+        "renderer-highbit"
+      ]
+    },
+    {
+      "id": "ffmpeg-full",
+      "library_version": "4.4.8",
+      "basename": "LibFFmpegFullBridge.dylib",
+      "build": {
+        "source": "bridge/npa_ffmpeg_full_bridge.c",
+        "exports": "bridge/ffmpeg-full.exports",
+        "closure": "build/deps/ffmpeg-core-closure.txt",
+        "include_root": "build/deps/ffmpeg-core/include",
+        "lib_root": "build/deps/ffmpeg-core/lib"
+      },
+      "domains": [
+        "ffmpeg-core",
+        "libswscale",
+        "libswresample"
+      ],
+      "conflicts": [
+        "ffmpeg",
+        "ffmpeg-core",
+        "ffmpeg-core902",
+        "ffmpeg-out448"
+      ]
+    },
+    {
+      "id": "ffmpeg-core902",
+      "library_version": "9.0.2",
+      "basename": "LibFFmpegCore902Bridge.dylib",
+      "build": {
+        "source": "bridge/npa_ffmpeg_core902_bridge.c",
+        "exports": "bridge/ffmpeg-core902.exports",
+        "closure": "build/deps/ffmpeg-core902-closure.txt",
+        "include_root": "build/deps/ffmpeg-core902/include",
+        "lib_root": "build/deps/ffmpeg-core902/lib"
+      },
+      "domains": [
+        "ffmpeg-demux",
+        "libswscale",
+        "libswresample",
+        "ffmpeg-subdecode",
+        "ffmpeg-codec"
+      ],
+      "conflicts": [
+        "ffmpeg",
+        "ffmpeg-core",
+        "ffmpeg-full"
+      ]
+    },
+    {
+      "id": "ffmpeg-out448",
+      "library_version": "4.4.8",
+      "basename": "LibFFmpegOut448Bridge.dylib",
+      "build": {
+        "source": "bridge/npa_ffmpeg_out448_bridge.c",
+        "exports": "bridge/ffmpeg-out448.exports",
+        "closure": "build/deps/ffmpeg-core-closure.txt",
+        "include_root": "build/deps/ffmpeg-core/include",
+        "lib_root": "build/deps/ffmpeg-core/lib"
+      },
+      "domains": [
+        "ffmpeg-hls448",
+        "ffmpeg-spdif448",
+        "ffmpeg-mjpeg448"
+      ],
+      "conflicts": [
+        "ffmpeg-core",
+        "ffmpeg-full"
+      ]
+    }
+  ]
+}

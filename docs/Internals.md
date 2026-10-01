@@ -48,6 +48,13 @@ byte remains pinned, including code, data, other load-command fields and the
 signature offset. Parsing errors, encrypted inputs and any other byte change
 fail explicitly; there is no fallback to a less strict match.
 
+Each supported build carries its own manifest and pin. The Plus build ships as
+`manifests/nplayer-plus-3.13.0.json`; because it is a different compilation with
+reordered functions, its site table is re-derived from the two executables with
+`dev/tools/map_plus.py` rather than copied. The `dlsym`/`dladdr` stubs and their
+expected thunk bytes are manifest data (`dlsym_stub`, `dlsym_stub_thunk`, ...),
+so `preflight` checks the right stub for either build.
+
 ## The payload and the units
 
 `npa-patch` rewrites the app's call sites so they jump into a `__NPATCH_TEXT`

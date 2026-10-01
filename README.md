@@ -28,8 +28,10 @@ Experimental FFmpeg 9.0.2 and high-bit-depth software decoding options are avail
 
 ## Supported app
 
-**Standard / Basic nPlayer 3.13.0 only.** nPlayer Lite, nPlayer Plus and other
-versions are unsupported.
+**nPlayer 3.13.0: the Standard/Basic build and the Plus build.** Other versions
+and nPlayer Lite are unsupported. `npa-patch` picks the matching manifest from
+the decrypted executable's identity pin, so a Plus IPA patches without any extra
+flag.
 
 You need a clean, **decrypted IPA of your own licensed copy**. 
 

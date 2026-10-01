@@ -8,6 +8,10 @@ The public flow (`npa-patch`) never touches this directory.
 - `smoke_package.py` — pseudo-signs and packages that app bundle.
 - `tools/phase_a.py`, `tools/phase_b.py` — run the two layout stages separately
   to isolate a failure. `npa-patch` runs the same functions in one pass.
+- `tools/map_plus.py` — re-derive the standard site table for the nPlayer Plus
+  build: pair functions between the two executables by branch-normalized
+  fingerprints, map the address table, verify every result with the preflight
+  rule, and write `manifests/nplayer-plus-<version>.json`.
 - `abi_probe.py` + `target_abi_probe.c` — compile a probe against the iOS SDK
   and print the constants that `manifests/*.json` freezes in `target_abi`.
   Run it after an SDK change and compare with the manifest.

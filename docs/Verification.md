@@ -162,3 +162,20 @@ Every tested sample reached `readyForDisplay=true`, display-layer status
 4:2:2 `sv22` layout. Unit tests cover those sample values and the full-range to
 video-range conversion. These observations establish the software frame to
 display-layer path, not the final panel precision or EDR output.
+
+## 2026-10-01: nPlayer Plus
+
+The Plus build (`com.newin.nplayer`, 3.13.0) is the same app lineage as the
+standard build - identical ObjC class set, the standard string table is a
+subset - but a different compilation: only about 23% of functions are
+byte-identical and function order differs, so the addresses cannot be
+transplanted. `dev/tools/map_plus.py` re-derives the table from the two
+executables into `manifests/nplayer-plus-3.13.0.json` (pin
+`9f3f873f...d66395f`); every mapped site is checked with the same rule
+`preflight` applies.
+
+Static: `preflight` passes on the Plus executable for the default selection and
+for every single-dylib selection. End-to-end on a Plus IPA, `npa-patch`
+publishes and re-verifies an artifact - libass-only passes 21 checks and the
+default (libass + ffmpeg-full) passes 28. Device playback on Plus has not been
+run yet, so the runtime rows above remain standard-build evidence.

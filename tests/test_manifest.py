@@ -239,7 +239,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(self.manifest.imagebase, 0x100000000)
         self.assertEqual(
             self.manifest.main_pin_sha256,
-            "4a06e0f1478d685bc3d7f9d43748a6f0f97ec784917aededa65e4477c825f8e2",
+            "c1f79c6a903a5bd5727a40f40b219b83d76c221c35ea548e6c21858a3a2f5b74",
         )
         self.assertEqual(self.manifest.dlsym_stub, 0x1011362CC)
         self.assertEqual(self.manifest.dladdr_stub, 0x10113629C)
@@ -353,6 +353,15 @@ class ManifestTests(unittest.TestCase):
             raw[
                 int(signature.command_offset) + 12 : int(signature.command_offset) + 16
             ] = signature_size.to_bytes(4, "little")
+            # The signature blob is part of __LINKEDIT: a different blob size
+            # moves the segment's vmsize/filesize.
+            linkedit = binary.get_segment(macho.LINKEDIT)
+            raw[
+                int(linkedit.command_offset) + 0x20 : int(linkedit.command_offset) + 0x28
+            ] = (0x1122334455667788).to_bytes(8, "little")
+            raw[
+                int(linkedit.command_offset) + 0x30 : int(linkedit.command_offset) + 0x38
+            ] = (0x99AABBCCDDEEFF00).to_bytes(8, "little")
             raw[int(signature.data_offset) :] = b"\xA5" * signature_size
             variant.write_bytes(raw)
 

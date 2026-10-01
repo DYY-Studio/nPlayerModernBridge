@@ -40,11 +40,13 @@ zero in both and every manifest call site, old branch target, dynamic stub and
 extra-site guard matched.
 
 The identity pin therefore requires a thin Mach-O with valid encryption and
-code-signature commands, requires `cryptid == 0`, normalizes `cryptsize` and the
-signature `datasize`, and excludes the signature blob from the hash. Every
-other byte remains pinned, including code, data, other load-command fields and
-the signature offset. Parsing errors, encrypted inputs and any other byte
-change fail explicitly; there is no fallback to a less strict match.
+code-signature commands, requires `cryptid == 0`, normalizes `cryptsize`, the
+signature `datasize`, and the `__LINKEDIT` segment's `vmsize`/`filesize` (the
+signature blob is part of `__LINKEDIT`, so a different blob size leaks into
+those two fields), and excludes the signature blob from the hash. Every other
+byte remains pinned, including code, data, other load-command fields and the
+signature offset. Parsing errors, encrypted inputs and any other byte change
+fail explicitly; there is no fallback to a less strict match.
 
 ## The payload and the units
 

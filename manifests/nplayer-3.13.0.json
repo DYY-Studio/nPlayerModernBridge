@@ -1,6 +1,6 @@
 {
   "imagebase": "0x100000000",
-  "main_pin_sha256": "4a06e0f1478d685bc3d7f9d43748a6f0f97ec784917aededa65e4477c825f8e2",
+  "main_pin_sha256": "c1f79c6a903a5bd5727a40f40b219b83d76c221c35ea548e6c21858a3a2f5b74",
   "app_version": "3.13.0",
   "target_abi": {
     "platform": "IOS",

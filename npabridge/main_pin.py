@@ -11,6 +11,12 @@ import lief
 
 _COMMAND_VALUE_OFFSET = 12
 _UINT32_SIZE = 4
+_UINT64_SIZE = 8
+
+LINKEDIT = "__LINKEDIT"
+# LC_SEGMENT_64 fields, relative to the command start.
+_SEGMENT_VMSIZE_OFFSET = 0x20
+_SEGMENT_FILESIZE_OFFSET = 0x30
 
 
 def _parse(path: Path) -> tuple[Any, Any]:
@@ -21,15 +27,28 @@ def _parse(path: Path) -> tuple[Any, Any]:
     return container, binaries[0]
 
 
-def _field_offset(command: Any, raw_size: int, name: str) -> int:
-    offset = int(command.command_offset) + _COMMAND_VALUE_OFFSET
-    if offset < 0 or offset + _UINT32_SIZE > raw_size:
+def _field_offset(
+    command: Any,
+    raw_size: int,
+    name: str,
+    relative: int = _COMMAND_VALUE_OFFSET,
+    size: int = _UINT32_SIZE,
+) -> int:
+    offset = int(command.command_offset) + relative
+    if offset < 0 or offset + size > raw_size:
         raise ValueError(f"{name} field leaves the executable")
     return offset
 
 
 def main_pin_sha256(path: Path) -> str:
-    """Hash stable executable bytes while excluding extraction metadata."""
+    """Hash stable executable bytes while excluding extraction metadata.
+
+    The code-signature blob sits inside `__LINKEDIT`, so its size leaks into the
+    segment command's `vmsize`/`filesize`. Dumps of the same program made by
+    different extraction or re-signing tools therefore carry different values
+    there; those two fields are normalized as well, like `cryptsize` and the
+    signature `datasize`.
+    """
 
     path = Path(path)
     raw = bytearray(path.read_bytes())
@@ -43,8 +62,21 @@ def main_pin_sha256(path: Path) -> str:
 
     encryption = binary.encryption_info
     signature = binary.code_signature
+    linkedit = binary.get_segment(LINKEDIT)
+    if linkedit is None:
+        raise ValueError("input executable carries no __LINKEDIT segment")
     crypt_size_offset = _field_offset(encryption, len(raw), "cryptsize")
     signature_size_offset = _field_offset(signature, len(raw), "signature datasize")
+    linkedit_vmsize_offset = _field_offset(
+        linkedit, len(raw), "__LINKEDIT vmsize", _SEGMENT_VMSIZE_OFFSET, _UINT64_SIZE
+    )
+    linkedit_filesize_offset = _field_offset(
+        linkedit,
+        len(raw),
+        "__LINKEDIT filesize",
+        _SEGMENT_FILESIZE_OFFSET,
+        _UINT64_SIZE,
+    )
     signature_start = int(signature.data_offset)
     signature_size = int(signature.data_size)
     signature_end = signature_start + signature_size
@@ -54,6 +86,12 @@ def main_pin_sha256(path: Path) -> str:
     raw[crypt_size_offset : crypt_size_offset + _UINT32_SIZE] = b"\0" * _UINT32_SIZE
     raw[signature_size_offset : signature_size_offset + _UINT32_SIZE] = (
         b"\0" * _UINT32_SIZE
+    )
+    raw[linkedit_vmsize_offset : linkedit_vmsize_offset + _UINT64_SIZE] = (
+        b"\0" * _UINT64_SIZE
+    )
+    raw[linkedit_filesize_offset : linkedit_filesize_offset + _UINT64_SIZE] = (
+        b"\0" * _UINT64_SIZE
     )
     del raw[signature_start:signature_end]
     del binary

@@ -46,12 +46,15 @@ Experimental FFmpeg 9.0.2 and high-bit-depth software decoding options are avail
 
 ## Supported app
 
-**nPlayer 3.13.0: the Standard/Basic build and the Plus build.** Other versions
-and nPlayer Lite are unsupported. `npa-patch` picks the matching manifest from
-the decrypted executable's identity pin, so a Plus IPA patches without any extra
-flag.
+* **nPlayer 3.13.0** (com.newin.nplayer.basic)
+* **nPlayer Plus 3.13.0** (com.newin.nplayer)
+  
+Other versions and nPlayer Lite are unsupported. 
 
 You need a clean, **decrypted IPA of your own licensed copy**. 
+
+`npa-patch` detects IPA by matching manifest from
+the decrypted executable's identity pin. You don't need to select manually.
 
 An IPA downloaded
 directly from the App Store is encrypted and cannot be patched. This project

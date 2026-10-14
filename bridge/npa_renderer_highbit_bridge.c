@@ -2,8 +2,8 @@
 #include "npa_highbit_copy.h"
 
 #include <CoreVideo/CoreVideo.h>
-#include <mach-o/dyld.h>
-#include <mach-o/loader.h>
+#include <dlfcn.h>
+#include "renderer-bindings.h"
 #include <pthread.h>
 #include <stdio.h>
 
@@ -304,20 +304,26 @@ static int npa_16bit_layout(int pixel_format, NPA16BitLayout *layout)
 
 static CVPixelBufferRef npa_call_original_pixel_buffer(
     NPAFFmpegVideoFrame *frame,
-    CVPixelBufferPoolRef pool
+    CVPixelBufferPoolRef pool,
+    void *caller
 )
 {
-    const struct mach_header_64 *header =
-        (const struct mach_header_64 *)_dyld_get_image_header(0);
-    if (!header || header->magic != MH_MAGIC_64 || header->filetype != MH_EXECUTE) {
-        npa_highbit_log("main executable image is unavailable", -1);
+    Dl_info info;
+    if (!dladdr(caller, &info) || !info.dli_fbase) {
+        npa_highbit_log("renderer caller image is unavailable", -1);
         return NULL;
     }
-
-    /* The manifest SHA pins this image to nPlayer 3.13.0. */
-    uintptr_t address = (uintptr_t)header + (uintptr_t)(0x100A22F2C - 0x100000000);
-    NPAOriginalPixelBufferFn original = (NPAOriginalPixelBufferFn)address;
-    return original(frame, pool);
+    uintptr_t base = (uintptr_t)info.dli_fbase;
+    uintptr_t address = (uintptr_t)caller;
+    for (size_t index = 0; index < sizeof(renderer_bindings) / sizeof(renderer_bindings[0]); index++) {
+        const struct renderer_binding *binding = &renderer_bindings[index];
+        if (address >= base && address - base == binding->caller) {
+            NPAOriginalPixelBufferFn original = (NPAOriginalPixelBufferFn)(base + binding->original);
+            return original(frame, pool);
+        }
+    }
+    npa_highbit_log("renderer caller does not match a supported host", -1);
+    return NULL;
 }
 
 static CVPixelBufferRef npa_create_16bit_pixel_buffer(
@@ -394,7 +400,7 @@ static CVPixelBufferRef npa_create_16bit_pixel_buffer(
     return pixel_buffer;
 }
 
-NPA_EXPORT CVPixelBufferRef npa_renderer_create_pixel_buffer(
+NPA_EXPORT __attribute__((noinline)) CVPixelBufferRef npa_renderer_create_pixel_buffer(
     NPAFFmpegVideoFrame *frame,
     CVPixelBufferPoolRef source_pool
 )
@@ -410,7 +416,7 @@ NPA_EXPORT CVPixelBufferRef npa_renderer_create_pixel_buffer(
     NPA10BitLayout layout;
     if (!npa_10bit_layout(frame->pixel_format, &layout)) {
         npa_highbit_log("unsupported pixel format; calling the original renderer", frame->pixel_format);
-        return npa_call_original_pixel_buffer(frame, source_pool);
+        return npa_call_original_pixel_buffer(frame, source_pool, __builtin_return_address(0));
     }
     AVFrame *av_frame = frame->av_frame;
     if (av_frame && av_frame->color_range == AVCOL_RANGE_JPEG && layout.packed_p010) {

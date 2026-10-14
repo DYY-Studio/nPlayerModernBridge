@@ -209,7 +209,7 @@ def _bridge_callback(dylib: Dylib) -> str:
     return CALLBACK_ARGS
 
 
-def verify_bridge(path: Path, dylib: Dylib) -> VerificationReport:
+def verify_bridge(path: Path, dylib: Dylib, manifest: Manifest | None = None) -> VerificationReport:
     """Verify one bridge dylib against its frozen manifest entry."""
 
     path = Path(path).resolve()
@@ -226,6 +226,9 @@ def verify_bridge(path: Path, dylib: Dylib) -> VerificationReport:
     checks.run("bridge.initializers", lambda: _bridge_initializers(binary))
     checks.run("bridge.host_paths", lambda: _host_paths(path))
     checks.run("bridge.callback", lambda: _bridge_callback(dylib))
+    if dylib.id == "renderer-highbit":
+        from .renderer_bindings import verify_table
+        checks.run("bridge.renderer_bindings", lambda: verify_table(binary, manifest))
     return VerificationReport(
         str(path),
         "bridge",
@@ -536,7 +539,7 @@ def verify_artifact(
     digests: dict[str, str] = {}
     for dylib_id in dict.fromkeys(unit.dylib_id for unit in units):
         dylib = manifest.dylib(dylib_id)
-        report = verify_bridge(bridges[dylib_id], dylib)
+        report = verify_bridge(bridges[dylib_id], dylib, manifest)
         checks = checks + report.checks
         digests.update(report.bridge_sha256s)
     return VerificationReport(

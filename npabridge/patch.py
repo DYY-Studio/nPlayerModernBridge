@@ -186,7 +186,7 @@ def patch_ipa(
 
         _stage(progress, 4, f"{len(dylib_ids)} dylib(s)")
         for dylib_id, path in bridges.items():
-            verify.verify_bridge(path, manifest.dylib(dylib_id)).require()
+            verify.verify_bridge(path, manifest.dylib(dylib_id), manifest).require()
         _stage(progress, 5)
         macho.preflight(source_main, manifest, units)
 

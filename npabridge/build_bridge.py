@@ -93,7 +93,10 @@ def nm_exports(path: Path) -> list[str]:
 def verify_dylib(dylib_id: str, path: Path | None = None) -> dict[str, Any]:
     manifest_ = manifest()
     dylib = manifest_.dylib(dylib_id)
-    report = verify.verify_bridge(path or output_path(dylib), dylib)
+    report = verify.verify_bridge(path or output_path(dylib), dylib, manifest_)
+    if dylib_id == "renderer-highbit":
+        plus = load_manifest(ROOT / "manifests/nplayer-plus-3.13.0.json")
+        verify.verify_bridge(path or output_path(dylib), plus.dylib(dylib_id), plus).require()
     report.require()
     report.write(report_path(dylib))
     return report.as_dict()
@@ -107,6 +110,9 @@ def compile_dylib(
     object_file = object_file or object_path(dylib)
     object_file.parent.mkdir(parents=True, exist_ok=True)
     object_file.unlink(missing_ok=True)
+    if dylib_id == "renderer-highbit":
+        from .renderer_bindings import generate_header
+        generate_header(ROOT / "manifests", OBJECT_ROOT / "renderer-bindings.h")
     _run(
         [
             macho.xcrun_find("clang"),
@@ -120,6 +126,7 @@ def compile_dylib(
             "-fvisibility=hidden",
             "-fno-common",
             "-I" + str(ROOT / dylib.build.include_root),
+            "-I" + str(OBJECT_ROOT),
             "-ffile-prefix-map=" + str(ROOT) + "=.",
             "-fdebug-prefix-map=" + str(ROOT) + "=.",
             "-O2",

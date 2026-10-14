@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from npabridge import macho, verify
 from npabridge.manifest import load_manifest
+from support import SOURCE_IPA
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFESTS = [load_manifest(ROOT / 'manifests' / name) for name in (
@@ -46,6 +47,8 @@ def test_renderer_binding_verification(tmp_path):
 
 def test_corrupt_renderer_prevents_packaging(tmp_path):
     from npabridge.patch import patch_ipa
+    if not SOURCE_IPA.is_file():
+        pytest.skip('source IPA is absent')
     path = ROOT / 'build/LibRendererHighBitBridge.dylib'
     binary = macho.parse(path)
     section = binary.get_section('__npa_renderer')
@@ -55,7 +58,7 @@ def test_corrupt_renderer_prevents_packaging(tmp_path):
     (tmp_path / path.name).write_bytes(raw)
     output = tmp_path / 'rejected.ipa'
     with pytest.raises(verify.VerificationError) as raised:
-        patch_ipa(ROOT.parent / 'nPlayer_3.13.0.ipa', output, tmp_path,
+        patch_ipa(SOURCE_IPA, output, tmp_path,
                   ROOT / 'manifests', ('renderer-highbit',))
     assert 'bridge.renderer_bindings' in raised.value.codes
     assert not output.exists()

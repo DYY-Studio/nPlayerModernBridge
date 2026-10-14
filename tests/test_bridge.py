@@ -207,7 +207,7 @@ class BridgeTests(unittest.TestCase):
                         "bridge.initializers",
                         "bridge.host_paths",
                         "bridge.callback",
-                    ],
+                    ] + (["bridge.renderer_bindings"] if dylib.id == "renderer-highbit" else []),
                 )
                 self.assertTrue(all(check["ok"] for check in report["checks"]))
 

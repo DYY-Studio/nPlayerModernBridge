@@ -156,6 +156,13 @@ fixed AVFrame layout and supported pixel-format values to the app's FFmpeg 4.4
 ABI. The default selection omits it; it can be combined with any supported
 FFmpeg selection.
 
+The original converter is resolved from the renderer caller's image via `dladdr`,
+then selected by the manifest-generated caller offset for standard or Plus.
+The read-only `__npa_renderer` table carries both builds' pins and offsets;
+build verification checks both records and packaging checks the selected host.
+An unrecognized caller logs an error and returns NULL. This also supports
+LiveContainer, where dyld image 0 belongs to the container executable.
+
 The bridge preserves BT.709/BT.2020 primaries, transfer and matrix attachments.
 For the 16-bit targets, full-range luma maps to 4096..60160 and chroma maps
 around 32768 into 4096..61440, matching the ranges documented for `sv22` and

@@ -187,3 +187,38 @@ playback and seek pass with no crash. This is behavioural evidence - no unit
 state word was read for the Plus run - so it records that the artifact works,
 not which unit served it. `dev/acceptance.json` holds the entry
 (`nplayer-plus`).
+
+## 2026-10-22: Metal renderer HDR output under Post Processing
+
+`renderer-hdr` is optional and only applies while the app's Post Processing is
+enabled; with it off the app renders through `AVSampleBufferRenderer` and the
+dylib is never called. It moves the Metal path to `RGBA16Float` and hands
+linear light to CoreAnimation instead of tone-mapping HDR to SDR.
+
+Measured on the installed artifact under PlayCover on macOS with the hook-free
+reader `nPlayerFridaHook/probe-renderer-hdr.py`:
+
+| state | `CAMetalLayer` reading |
+|---|---|
+| before playback | `pixelFormat=115`, `ExtendedLinearSRGB`, `wantsEDR=false`, no metadata |
+| Sol Levante (PQ / BT.2020) | `pixelFormat=115`, `ExtendedLinearITUR_2020`, `wantsEDR=true`, `CAEDRMetadata` |
+| `sample-20s-contained.mkv` (SDR) | `pixelFormat=115`, `ExtendedLinearSRGB`, `wantsEDR=true`, no metadata |
+
+The layer change only happens when the shader rewrite succeeded, so the reading
+proves both halves ran. `nPlayerFridaHook/probe-10bit-output.py` reported 16/16
+decoded frames as `x420` (`0x78343230`) with no null buffers, so VideoToolbox
+accepts the widened request and the software decoder is not used. No
+`[npa-hdr]` log line appeared, which is the only thing the bridge prints when
+it gives up.
+
+On a real device the user confirmed the point of the change: with Post
+Processing enabled the unpatched app renders HDR clips dim, while this artifact
+matches the PP-disabled appearance. Playing a PQ clip and then an SDR clip in
+one session leaves the SDR clip on the SDR-linear branch with no stale metadata.
+
+One probe hazard is worth recording: do not `Interceptor.attach` the bridge
+export. The bridge finds its own original through
+`__builtin_return_address(0)` (`x30`), and a Frida attach replaces `x30` with a
+trampoline address, so the frozen-table lookup fails, the export returns nil and
+the host aborts in `MTLReportFailure`. This is a property of the probe, not of
+the bridge. `dev/acceptance.json` holds the entry (`renderer-hdr`).

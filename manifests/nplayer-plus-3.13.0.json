@@ -38,6 +38,18 @@
   ],
   "domains": [
     {
+      "id": "renderer-hdr",
+      "apis": [
+        {
+          "symbol": "npa_renderer_shader_source",
+          "call_sites": [
+            "0x10018ECE8"
+          ],
+          "old_target": "0x100190660"
+        }
+      ]
+    },
+    {
       "id": "renderer-highbit",
       "apis": [
         {
@@ -2438,6 +2450,48 @@
       },
       "domains": [
         "renderer-highbit"
+      ]
+    },
+    {
+      "id": "renderer-hdr",
+      "library_version": "1.0",
+      "basename": "LibRendererHDRBridge.dylib",
+      "build": {
+        "source": "bridge/npa_renderer_hdr_dylib.c",
+        "exports": "bridge/renderer-hdr.exports",
+        "closure": "deps/renderer-hdr-closure.txt",
+        "include_root": "build/deps/ffmpeg-core/include",
+        "lib_root": "build/deps/ffmpeg-core/lib"
+      },
+      "domains": [
+        "renderer-hdr"
+      ],
+      "extra_sites": [
+        {
+          "site": "0x10018E6C4",
+          "expected": "0x52800A02",
+          "replacement": "0x52800E62"
+        },
+        {
+          "site": "0x10018EDD8",
+          "expected": "0x52800A02",
+          "replacement": "0x52800E62"
+        },
+        {
+          "site": "0x1002B5F78",
+          "expected": "0x52860EC2",
+          "replacement": "0x52864602"
+        },
+        {
+          "site": "0x1002B5F7C",
+          "expected": "0x72A68642",
+          "replacement": "0x72AF0682"
+        },
+        {
+          "site": "0x100320278",
+          "expected": "0x39452000",
+          "replacement": "0x52800020"
+        }
       ]
     },
     {

@@ -176,6 +176,16 @@ current transfer. The shader anchors are matched literally; when any of them is
 missing, or for the 3D variant whose return mixes two eyes, the app's own shader
 is kept and the layer is left as the app configured it.
 
+The same API can bake a scaling kernel into the MSL, chosen by the shared
+`PPVideoScaleKernel` preference: Catmull-Rom, Mitchell, Keys a=-0.75, Lanczos2,
+Lanczos3 and B-Spline, with zero (the default) keeping the host's bilinear
+sampling. The first four are one (B,C) cubic function, so the whole set shares
+one tap loop. Each 2x2 block of taps is folded into a single bilinear fetch when
+its weights share a sign, which halves the fetches per axis when it applies and
+costs nothing when it does not; B-Spline is the only fully non-negative kernel
+here and therefore the cheap choice for large downscales. The kernel is read
+once per generated shader, so a change takes effect on the next video.
+
 Because the rewrite happens in the shader, the feature requires Post Processing
 to be on. With Post Processing off the app renders through
 `AVSampleBufferRenderer` and this dylib is never called. Without

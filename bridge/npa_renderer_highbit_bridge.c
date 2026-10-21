@@ -3,7 +3,7 @@
 
 #include <CoreVideo/CoreVideo.h>
 #include <dlfcn.h>
-#include "renderer-bindings.h"
+#include "renderer-highbit-bindings.h"
 #include <pthread.h>
 #include <stdio.h>
 

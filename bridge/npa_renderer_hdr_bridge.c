@@ -306,13 +306,14 @@ static void npa_configure_layer(void *context)
     );
     CGColorSpaceRelease(space);
 
+    /* A previous video may have left HDR metadata on this layer; SDR content
+     * must not keep it, or the system tone-maps it as HDR. */
     id metadata = npa_edr_metadata(config->transfer);
     ((void (*)(id, SEL, BOOL))objc_msgSend)(
         layer, npa_sel("setWantsExtendedDynamicRangeContent:"), YES
     );
-    if (metadata) {
-        ((void (*)(id, SEL, id))objc_msgSend)(layer, npa_sel("setEDRMetadata:"), metadata);
-    } else if (config->hdr) {
+    ((void (*)(id, SEL, id))objc_msgSend)(layer, npa_sel("setEDRMetadata:"), metadata);
+    if (config->hdr && !metadata) {
         npa_hdr_log("no EDR metadata for this transfer function", config->transfer);
     }
 

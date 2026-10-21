@@ -182,6 +182,14 @@ static void npa_hdr_log(const char *message, int status)
     fprintf(stderr, "[npa-pp-hdr] %s (status=%d)\n", message, status);
 }
 
+/* One line per generated shader, so the active kernel is observable without a
+ * debugger: the choice is otherwise only visible in the MSL text. */
+static void npa_hdr_log_kernel(int kernel, int transfer, int hdr, int edr)
+{
+    fprintf(stderr, "[npa-pp-hdr] shader kernel=%d transfer=%d hdr=%d edr=%d\n",
+            kernel, transfer, hdr, edr);
+}
+
 /* The original shader generator is reached through the frozen table; the
  * caller offset identifies the host build. */
 static NPAOriginalShaderSourceFn npa_call_original_shader_source(void *caller)
@@ -670,6 +678,7 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
         return source;
     }
 
+    npa_hdr_log_kernel(kernel, transfer, hdr, edr);
     char *rewritten = npa_rewrite_shader(utf8, transfer, hdr, edr, kernel);
     if (!rewritten) {
         npa_hdr_log("shader was not rewritten; keeping the host shader", transfer);

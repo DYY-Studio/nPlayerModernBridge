@@ -14,7 +14,18 @@ KERNELS = {
     3: ('keys075', ('NP_SUPPORT 2.0f', 'NP_B 0.0f', 'NP_C 0.75f')),
     4: ('lanczos2', ('NP_SUPPORT 2.0f', 'NP_A 2.0f')),
     5: ('lanczos3', ('NP_SUPPORT 3.0f', 'NP_A 3.0f')),
+    6: ('bspline', ('NP_SUPPORT 2.0f', 'NP_B 1.0f', 'NP_C 0.0f')),
 }
+
+
+def test_tap_pairing_is_exact():
+    """The folded fetch must equal the four separate taps it replaces."""
+    output = ROOT / 'build' / 'pp-scale-pairing-probe'
+    subprocess.run([
+        'xcrun', 'clang', '-O1', '-Wall', '-Wextra',
+        str(ROOT / 'tests/pp_scale_pairing_probe.c'), '-lm', '-o', str(output),
+    ], check=True)
+    subprocess.run([str(output)], check=True)
 
 
 def test_kernel_math():

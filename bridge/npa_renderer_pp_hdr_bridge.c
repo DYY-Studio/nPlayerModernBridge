@@ -101,35 +101,16 @@ static const char NPA_WEIGHT_LANCZOS[] =
 /* One pass over the source texels around the sample point. `st` stretches the
  * kernel to the pixel footprint, which is what makes it a low-pass when the
  * video is larger than the drawable; at 1.0 it is a plain 4x4 or 6x6 tap. */
-static const char NPA_SCALE_TAPS[] =
+static const char NPA_SCALE_FOOTPRINT[] =
     "\n"
     "static inline float2 npa_footprint(float2 dudx, float2 dudy, float2 size) {\n"
     "  const float2 a = dudx * size;\n"
     "  const float2 b = dudy * size;\n"
     "  return sqrt(a * a + b * b);\n"
-    "}\n"
-    "\n"
-    "static inline float4 npa_tap(texture2d<float, access::sample> t, sampler sn,\n"
-    "                             float2 uv, float2 dudx, float2 dudy) {\n"
-    "  const float2 size = float2(t.get_width(), t.get_height());\n"
-    "  const float2 st = clamp(npa_footprint(dudx, dudy, size), 1.0f, NP_ST_MAX);\n"
-    "  const float2 k = ceil(NP_SUPPORT * st);\n"
-    "  const int2 lo = int2(1.0f - k);\n"
-    "  const int2 hi = int2(k);\n"
-    "  const float2 pos = uv * size - 0.5f;\n"
-    "  const float2 base = floor(pos);\n"
-    "  float4 acc = float4(0.0f);\n"
-    "  float wsum = 0.0f;\n"
-    "  for (int j = lo.y; j <= hi.y; ++j) {\n"
-    "    const float wy = npa_kernel_w((pos.y - (base.y + float(j))) / st.y);\n"
-    "    for (int i = lo.x; i <= hi.x; ++i) {\n"
-    "      const float w = npa_kernel_w((pos.x - (base.x + float(i))) / st.x) * wy;\n"
-    "      acc += t.sample(sn, (base + float2(float(i), float(j)) + 0.5f) / size) * w;\n"
-    "      wsum += w;\n"
-    "    }\n"
-    "  }\n"
-    "  return acc / max(wsum, 1e-5f);\n"
-    "}\n"
+    "}\n";
+
+/* The wrappers must follow npa_tap, so they are appended last. */
+static const char NPA_SCALE_WRAPPERS[] =
     "\n"
     "static inline float npa_scale1(texture2d<float, access::sample> t, sampler sn,\n"
     "                              float2 uv, float2 dudx, float2 dudy) {\n"
@@ -139,6 +120,58 @@ static const char NPA_SCALE_TAPS[] =
     "static inline float2 npa_scale2(texture2d<float, access::sample> t, sampler sn,\n"
     "                               float2 uv, float2 dudx, float2 dudy) {\n"
     "  return npa_tap(t, sn, uv, dudx, dudy).rg;\n"
+    "}\n";
+
+/* Tap pairing: fold each 2x2 block of taps into one bilinear fetch. The fold
+ * places the fetch at w1/(w0+w1) and scales by w0+w1, which is algebraically
+ * identical to the two separate taps. The hardware clamps that fraction to
+ * [0,1], so a block whose weights change sign cannot be folded; it falls back
+ * to four fetches. The test is per block, not per kernel: Catmull-Rom pairs at
+ * some footprints and not others.
+ *
+ * Sampling uses a linear sampler. At a texel centre it returns that texel
+ * exactly, so the unfolded path is unaffected. */
+static const char NPA_SCALE_TAP_PAIR[] =
+    "\n"
+    "static inline float4 npa_tap(texture2d<float, access::sample> t, sampler sn,\n"
+    "                             float2 uv, float2 dudx, float2 dudy) {\n"
+    "  const float2 size = float2(t.get_width(), t.get_height());\n"
+    "  const float2 st = clamp(npa_footprint(dudx, dudy, size), 1.0f, NP_ST_MAX);\n"
+    "  const int2 k = int2(ceil(NP_SUPPORT * st));\n"
+    "  const float2 pos = uv * size - 0.5f;\n"
+    "  const float2 base = floor(pos);\n"
+    "  float4 acc = float4(0.0f);\n"
+    "  float wsum = 0.0f;\n"
+    "  for (int j = 0; j < k.y; ++j) {\n"
+    "    const int iy = 1 - k.y + 2 * j;\n"
+    "    const float wy0 = npa_kernel_w((pos.y - (base.y + float(iy))) / st.y);\n"
+    "    const float wy1 = npa_kernel_w((pos.y - (base.y + float(iy + 1))) / st.y);\n"
+    "    const float sy = wy0 + wy1;\n"
+    "    const bool foldY = wy0 * wy1 >= 0.0f && fabs(sy) > 1e-8f;\n"
+    "    const float fy = foldY ? wy1 / sy : 0.0f;\n"
+    "    for (int i = 0; i < k.x; ++i) {\n"
+    "      const int ix = 1 - k.x + 2 * i;\n"
+    "      const float wx0 = npa_kernel_w((pos.x - (base.x + float(ix))) / st.x);\n"
+    "      const float wx1 = npa_kernel_w((pos.x - (base.x + float(ix + 1))) / st.x);\n"
+    "      const float sx = wx0 + wx1;\n"
+    "      const bool foldX = wx0 * wx1 >= 0.0f && fabs(sx) > 1e-8f;\n"
+    "      if (foldX && foldY) {\n"
+    "        const float fx = wx1 / sx;\n"
+    "        const float2 at = base + float2(float(ix) + fx, float(iy) + fy) + 0.5f;\n"
+    "        acc += t.sample(sn, at / size) * (sx * sy);\n"
+    "        wsum += sx * sy;\n"
+    "      } else {\n"
+    "        const float2 corner = base + float2(float(ix), float(iy)) + 0.5f;\n"
+    "        const float2 step = float2(1.0f) / size;\n"
+    "        acc += t.sample(sn, corner / size) * (wx0 * wy0);\n"
+    "        acc += t.sample(sn, corner / size + float2(step.x, 0.0f)) * (wx1 * wy0);\n"
+    "        acc += t.sample(sn, corner / size + float2(0.0f, step.y)) * (wx0 * wy1);\n"
+    "        acc += t.sample(sn, corner / size + step) * (wx1 * wy1);\n"
+    "        wsum += (wx0 + wx1) * (wy0 + wy1);\n"
+    "      }\n"
+    "    }\n"
+    "  }\n"
+    "  return acc / max(wsum, 1e-5f);\n"
     "}\n";
 
 typedef struct {
@@ -154,6 +187,7 @@ static const NPAKernelSpec NPA_KERNELS[] = {
     {"#define NP_B 0.0f\n#define NP_C 0.75f\n", NPA_WEIGHT_CUBIC, 2.0f},
     {"#define NP_A 2.0f\n", NPA_WEIGHT_LANCZOS, 2.0f},
     {"#define NP_A 3.0f\n", NPA_WEIGHT_LANCZOS, 3.0f},
+    {"#define NP_B 1.0f\n#define NP_C 0.0f\n", NPA_WEIGHT_CUBIC, 2.0f},
 };
 
 #define NPA_KERNEL_COUNT (sizeof(NPA_KERNELS) / sizeof(NPA_KERNELS[0]))
@@ -430,7 +464,7 @@ static int npa_apply_scale(char **stage, int kernel)
     }
     if (!npa_sub(stage, NPA_SAMPLER_ANCHOR,
                  NPA_SAMPLER_ANCHOR
-                 "  constexpr sampler sn(address::clamp_to_edge, filter::nearest);\n",
+                 "  constexpr sampler sn(address::clamp_to_edge, filter::linear);\n",
                  1)) {
         return 0;
     }
@@ -445,7 +479,11 @@ static int npa_apply_scale(char **stage, int kernel)
              && npa_append(&helper, spec->parameters, strlen(spec->parameters))
              && npa_append(&helper, prologue, strlen(prologue))
              && npa_append(&helper, spec->weight, strlen(spec->weight))
-             && npa_append(&helper, NPA_SCALE_TAPS, strlen(NPA_SCALE_TAPS));
+             && npa_append(&helper, NPA_SCALE_FOOTPRINT, strlen(NPA_SCALE_FOOTPRINT));
+    if (ok) {
+        ok = npa_append(&helper, NPA_SCALE_TAP_PAIR, strlen(NPA_SCALE_TAP_PAIR))
+             && npa_append(&helper, NPA_SCALE_WRAPPERS, strlen(NPA_SCALE_WRAPPERS));
+    }
     if (!ok) {
         free(helper.data);
         return 0;

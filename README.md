@@ -148,7 +148,10 @@ The default combines `libass` and `ffmpeg-full`. `--dylib` replaces that default
 so list every feature you want. 
 
 Experimental `renderer-highbit` output applies
-to software decoding and is disabled by default.
+to software decoding and is disabled by default. Experimental `renderer-pp-hdr`
+is the high-bit-depth and HDR output fix for the Post Processing Metal path: it
+only applies while the app's Post Processing is enabled and needs iOS 16 or
+later for extended-range output; it is also disabled by default.
 
 For higher ASS/SSA animation frame rates, **[nPlayerEnhance](https://github.com/DYY-Studio/nPlayerEnhance)** can be used
 alongside this project.
@@ -178,6 +181,8 @@ uv run npa-patch --dylib libass --dylib ffmpeg --dylib ffmpeg-core "/path/to/nPl
 uv run npa-patch --dylib libass --dylib ffmpeg-core902 --dylib ffmpeg-out448 "/path/to/nPlayer_3.13.0.ipa"
 # add the standalone high-bit-depth renderer to a selection:
 uv run npa-patch --dylib libass --dylib ffmpeg-full --dylib renderer-highbit "/path/to/nPlayer_3.13.0.ipa"
+# add the Post Processing high-bit-depth and HDR output fix (needs PP enabled):
+uv run npa-patch --dylib libass --dylib ffmpeg-full --dylib renderer-pp-hdr "/path/to/nPlayer_3.13.0.ipa"
 ```
 
 Be careful that the names are little tricky. Please check [Internals](docs/Internals.md) for more details.

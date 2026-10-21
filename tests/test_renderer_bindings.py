@@ -13,7 +13,7 @@ MANIFESTS = [load_manifest(ROOT / 'manifests' / name) for name in (
 
 def test_original_renderer_forwarding(tmp_path):
     from npabridge.renderer_bindings import generate_header
-    generate_header(ROOT / 'manifests', tmp_path / 'renderer-bindings.h')
+    generate_header(ROOT / 'manifests', tmp_path / 'renderer-highbit-bindings.h', 'renderer-highbit')
     output = tmp_path / 'probe'
     subprocess.run(['xcrun', 'clang', '-O2', '-Werror=implicit-function-declaration',
                     '-I' + str(ROOT / 'build/deps/ffmpeg-core/include'),

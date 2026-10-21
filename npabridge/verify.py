@@ -226,9 +226,12 @@ def verify_bridge(path: Path, dylib: Dylib, manifest: Manifest | None = None) ->
     checks.run("bridge.initializers", lambda: _bridge_initializers(binary))
     checks.run("bridge.host_paths", lambda: _host_paths(path))
     checks.run("bridge.callback", lambda: _bridge_callback(dylib))
-    if dylib.id == "renderer-highbit":
-        from .renderer_bindings import verify_table
-        checks.run("bridge.renderer_bindings", lambda: verify_table(binary, manifest))
+    from .renderer_bindings import RENDERER_DYLIB_IDS, verify_table
+    if dylib.id in RENDERER_DYLIB_IDS:
+        checks.run(
+            "bridge.renderer_bindings",
+            lambda: verify_table(binary, manifest, dylib.id),
+        )
     return VerificationReport(
         str(path),
         "bridge",

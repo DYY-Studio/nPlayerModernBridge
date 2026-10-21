@@ -9,24 +9,45 @@ from .manifest import Manifest, load_manifest
 SECTION = '__npa_renderer'
 RECORD_SIZE = 48
 
+# Dylibs whose call site has to find its own original implementation through
+# the caller's image. Each one carries its own read-only table.
+RENDERER_DYLIB_IDS = ('renderer-highbit', 'renderer-pp-hdr')
 
-def record(manifest: Manifest) -> bytes:
-    api = manifest.api('npa_renderer_create_pixel_buffer')
-    if len(api.call_sites) != 1:
-        raise ValueError('renderer binding requires one frozen caller')
-    return bytes.fromhex(manifest.main_pin_sha256) + struct.pack(
-        '<2Q', api.old_target - manifest.imagebase,
-        api.call_sites[0] + 4 - manifest.imagebase,
-    )
+# Every table carries one record per host build and API; verification only
+# demands the records of the host being packaged.
+HOST_MANIFESTS = ('nplayer-3.13.0.json', 'nplayer-plus-3.13.0.json')
 
 
-def generate_header(directory: Path, output: Path) -> None:
+def records(manifest: Manifest, dylib_id: str) -> list[bytes]:
+    """One frozen record per API of this dylib in this host build."""
+
     rows = []
-    for name in ('nplayer-3.13.0.json', 'nplayer-plus-3.13.0.json'):
-        data = record(load_manifest(directory / name))
-        pin = ','.join(str(x) for x in data[:32])
-        original, caller = struct.unpack('<2Q', data[32:])
-        rows.append('{{' + pin + '},' + hex(original) + ',' + hex(caller) + '}')
+    for domain in manifest.dylib(dylib_id).domains:
+        for api in domain.apis:
+            if len(api.call_sites) != 1:
+                raise ValueError(
+                    f'{dylib_id}/{api.symbol} requires one frozen caller'
+                )
+            rows.append(
+                bytes.fromhex(manifest.main_pin_sha256)
+                + struct.pack(
+                    '<2Q',
+                    api.old_target - manifest.imagebase,
+                    api.call_sites[0] + 4 - manifest.imagebase,
+                )
+            )
+    if not rows:
+        raise ValueError(f'{dylib_id} declares no renderer binding')
+    return rows
+
+
+def generate_header(directory: Path, output: Path, dylib_id: str) -> None:
+    rows = []
+    for name in HOST_MANIFESTS:
+        for data in records(load_manifest(directory / name), dylib_id):
+            pin = ','.join(str(x) for x in data[:32])
+            original, caller = struct.unpack('<2Q', data[32:])
+            rows.append('{{' + pin + '},' + hex(original) + ',' + hex(caller) + '}')
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(
         '/* Generated from supported host manifests; pins are checked at packaging. */\n'
@@ -38,18 +59,20 @@ def generate_header(directory: Path, output: Path) -> None:
     )
 
 
-def verify_table(binary: object, manifest: Manifest | None) -> str:
+def verify_table(binary: object, manifest: Manifest | None, dylib_id: str) -> str:
     if manifest is None:
         raise ValueError('renderer verification requires a host manifest')
     section = binary.get_section(SECTION)
     if section is None or section.segment_name != '__TEXT':
         raise ValueError('renderer read-only binding section is missing')
     content = bytes(section.content)
-    if len(content) != 2 * RECORD_SIZE:
+    total = len(HOST_MANIFESTS) * len(records(manifest, dylib_id))
+    if len(content) != total * RECORD_SIZE:
         raise ValueError('renderer binding table has an unexpected size')
-    records = [content[i:i + RECORD_SIZE] for i in range(0, len(content), RECORD_SIZE)]
-    if sum(r[:32] == bytes.fromhex(manifest.main_pin_sha256) for r in records) != 1:
-        raise ValueError('renderer binding host pin is missing or duplicated')
-    if record(manifest) not in records:
-        raise ValueError('renderer binding offsets do not match the host manifest')
+    found = [
+        content[i:i + RECORD_SIZE] for i in range(0, len(content), RECORD_SIZE)
+    ]
+    for row in records(manifest, dylib_id):
+        if found.count(row) != 1:
+            raise ValueError('renderer binding offsets do not match the host manifest')
     return 'host pin, original renderer and caller match'

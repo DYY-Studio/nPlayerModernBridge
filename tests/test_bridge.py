@@ -6,6 +6,7 @@ from unittest import mock
 
 from npabridge import build_bridge, macho, verify
 from npabridge.manifest import load_manifest
+from npabridge.renderer_bindings import RENDERER_DYLIB_IDS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -207,7 +208,10 @@ class BridgeTests(unittest.TestCase):
                         "bridge.initializers",
                         "bridge.host_paths",
                         "bridge.callback",
-                    ] + (["bridge.renderer_bindings"] if dylib.id == "renderer-highbit" else []),
+                    ] + (
+                        ["bridge.renderer_bindings"]
+                        if dylib.id in RENDERER_DYLIB_IDS else []
+                    ),
                 )
                 self.assertTrue(all(check["ok"] for check in report["checks"]))
 

@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 
@@ -67,3 +68,28 @@ def test_hdr_can_be_selected_with_highbit():
         units = manifest.units(['libass', 'renderer-highbit', 'renderer-hdr'])
         assert [unit.dylib_id for unit in units] == [
             'libass', 'renderer-highbit', 'renderer-hdr']
+
+
+def test_hdr_shader_rewrite(tmp_path):
+    from npabridge.renderer_bindings import generate_header
+
+    generate_header(
+        ROOT / 'manifests', tmp_path / 'renderer-hdr-bindings.h', 'renderer-hdr')
+    output = tmp_path / 'probe'
+    subprocess.run([
+        'xcrun', 'clang', '-O2', '-Werror=implicit-function-declaration',
+        '-I' + str(tmp_path), str(ROOT / 'tests/renderer_hdr_probe.c'),
+        '-framework', 'QuartzCore', '-framework', 'CoreGraphics',
+        '-framework', 'CoreFoundation', '-framework', 'Foundation',
+        '-o', str(output),
+    ], check=True)
+    subprocess.run([str(output)], check=True)
+
+
+def test_hdr_bridge_verification():
+    path = ROOT / 'build/LibRendererHDRBridge.dylib'
+    if not path.is_file():
+        pytest.skip('renderer-hdr bridge has not been built')
+    for manifest in MANIFESTS:
+        verify.verify_bridge(path, manifest.dylib('renderer-hdr'), manifest).require()
+    assert macho.exported_symbols(macho.parse(path)) == ['_npa_renderer_shader_source']

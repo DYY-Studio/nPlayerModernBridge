@@ -317,7 +317,7 @@ static void npa_configure_layer(void *context)
     }
 
 done:
-    CFRelease((CFTypeRef)config->view);
+    ((void (*)(id, SEL))objc_msgSend)(config->view, npa_sel("release"));
     free(config);
 }
 
@@ -333,7 +333,7 @@ static void npa_configure_layer_async(void *renderer, int transfer, int hdr)
         npa_hdr_log("layer configuration allocation failed", -1);
         return;
     }
-    config->view = (id)CFRetain((CFTypeRef)view);
+    config->view = ((id (*)(id, SEL))objc_msgSend)(view, npa_sel("retain"));
     config->transfer = transfer;
     config->hdr = hdr;
     dispatch_async_f(dispatch_get_main_queue(), config, npa_configure_layer);

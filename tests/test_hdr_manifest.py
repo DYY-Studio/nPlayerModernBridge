@@ -58,7 +58,6 @@ def test_hdr_closure_links_only_system_frameworks():
     assert values['system_link_args'].split() == [
         '-framework', 'QuartzCore',
         '-framework', 'CoreGraphics',
-        '-framework', 'CoreFoundation',
         '-framework', 'Foundation',
     ]
 

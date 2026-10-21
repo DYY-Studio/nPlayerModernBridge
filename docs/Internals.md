@@ -227,8 +227,8 @@ notices are in `THIRD-PARTY.md`.
 - `LibRendererHighBitBridge.dylib` links CoreVideo and CoreFoundation only; its
   frame layout and pixel-format constants are compile-time pinned to the app's
   legacy FFmpeg headers.
-- `LibRendererHDRBridge.dylib` links QuartzCore, CoreGraphics, CoreFoundation
-  and Foundation only; it has no FFmpeg dependency and no static closure.
+- `LibRendererHDRBridge.dylib` links QuartzCore, CoreGraphics and Foundation
+  only; it has no FFmpeg dependency and no static closure.
 
 ## Fallback
 

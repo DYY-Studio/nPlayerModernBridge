@@ -1,2 +1,2 @@
 project_archives=
-system_link_args=-framework QuartzCore -framework CoreGraphics -framework CoreFoundation -framework Foundation
+system_link_args=-framework QuartzCore -framework CoreGraphics -framework Foundation

@@ -16,7 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "renderer-hdr-bindings.h"
+#include "renderer-pp-hdr-bindings.h"
 
 #define NPA_EXPORT __attribute__((visibility("default")))
 
@@ -74,7 +74,7 @@ static SEL npa_sel(const char *name)
 
 static void npa_hdr_log(const char *message, int status)
 {
-    fprintf(stderr, "[npa-hdr] %s (status=%d)\n", message, status);
+    fprintf(stderr, "[npa-pp-hdr] %s (status=%d)\n", message, status);
 }
 
 /* The original shader generator is reached through the frozen table; the
@@ -340,7 +340,7 @@ static void npa_configure_layer_async(void *renderer, int transfer, int hdr)
     dispatch_async_f(dispatch_get_main_queue(), config, npa_configure_layer);
 }
 
-NPA_EXPORT __attribute__((noinline)) id npa_renderer_shader_source(
+NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
     void *renderer,
     int mode,
     int flag

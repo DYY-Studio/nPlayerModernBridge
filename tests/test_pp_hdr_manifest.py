@@ -29,12 +29,12 @@ PLUS_SITES = {
 
 
 def test_hdr_is_a_renderer_dylib():
-    assert 'renderer-hdr' in RENDERER_DYLIB_IDS
+    assert 'renderer-pp-hdr' in RENDERER_DYLIB_IDS
     for manifest in MANIFESTS:
-        dylib = manifest.dylib('renderer-hdr')
-        assert dylib.basename == 'LibRendererHDRBridge.dylib'
+        dylib = manifest.dylib('renderer-pp-hdr')
+        assert dylib.basename == 'LibRendererPPHDRBridge.dylib'
         assert [api.symbol for domain in dylib.domains for api in domain.apis] == [
-            'npa_renderer_shader_source']
+            'npa_renderer_pp_hdr_shader_source']
         assert dylib.conflicts == ()
 
 
@@ -44,14 +44,14 @@ def test_hdr_is_a_renderer_dylib():
 )
 def test_hdr_patches(manifest, expected):
     sites = {site.site: (site.expected, site.replacement)
-             for site in manifest.dylib('renderer-hdr').extra_sites}
+             for site in manifest.dylib('renderer-pp-hdr').extra_sites}
     assert sites == expected
-    api = manifest.dylib('renderer-hdr').domains[0].apis[0]
+    api = manifest.dylib('renderer-pp-hdr').domains[0].apis[0]
     assert len(api.call_sites) == 1
 
 
 def test_hdr_closure_links_only_system_frameworks():
-    closure = (ROOT / 'deps/renderer-hdr-closure.txt').read_text()
+    closure = (ROOT / 'deps/renderer-pp-hdr-closure.txt').read_text()
     values = dict(line.split('=', 1) for line in closure.splitlines())
     assert not values['project_archives'].strip()
     assert values['system_link_args'].split() == [
@@ -63,20 +63,20 @@ def test_hdr_closure_links_only_system_frameworks():
 
 def test_hdr_can_be_selected_with_highbit():
     for manifest in MANIFESTS:
-        units = manifest.units(['libass', 'renderer-highbit', 'renderer-hdr'])
+        units = manifest.units(['libass', 'renderer-highbit', 'renderer-pp-hdr'])
         assert [unit.dylib_id for unit in units] == [
-            'libass', 'renderer-highbit', 'renderer-hdr']
+            'libass', 'renderer-highbit', 'renderer-pp-hdr']
 
 
 def test_hdr_shader_rewrite(tmp_path):
     from npabridge.renderer_bindings import generate_header
 
     generate_header(
-        ROOT / 'manifests', tmp_path / 'renderer-hdr-bindings.h', 'renderer-hdr')
+        ROOT / 'manifests', tmp_path / 'renderer-pp-hdr-bindings.h', 'renderer-pp-hdr')
     output = tmp_path / 'probe'
     subprocess.run([
         'xcrun', 'clang', '-O2', '-Werror=implicit-function-declaration',
-        '-I' + str(tmp_path), str(ROOT / 'tests/renderer_hdr_probe.c'),
+        '-I' + str(tmp_path), str(ROOT / 'tests/renderer_pp_hdr_probe.c'),
         '-framework', 'QuartzCore', '-framework', 'CoreGraphics',
         '-framework', 'CoreFoundation', '-framework', 'Foundation',
         '-o', str(output),
@@ -85,9 +85,9 @@ def test_hdr_shader_rewrite(tmp_path):
 
 
 def test_hdr_bridge_verification():
-    path = ROOT / 'build/LibRendererHDRBridge.dylib'
+    path = ROOT / 'build/LibRendererPPHDRBridge.dylib'
     if not path.is_file():
-        pytest.skip('renderer-hdr bridge has not been built')
+        pytest.skip('renderer-pp-hdr bridge has not been built')
     for manifest in MANIFESTS:
-        verify.verify_bridge(path, manifest.dylib('renderer-hdr'), manifest).require()
-    assert macho.exported_symbols(macho.parse(path)) == ['_npa_renderer_shader_source']
+        verify.verify_bridge(path, manifest.dylib('renderer-pp-hdr'), manifest).require()
+    assert macho.exported_symbols(macho.parse(path)) == ['_npa_renderer_pp_hdr_shader_source']

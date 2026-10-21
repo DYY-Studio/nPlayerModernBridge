@@ -38,10 +38,10 @@
   ],
   "domains": [
     {
-      "id": "renderer-hdr",
+      "id": "renderer-pp-hdr",
       "apis": [
         {
-          "symbol": "npa_renderer_shader_source",
+          "symbol": "npa_renderer_pp_hdr_shader_source",
           "call_sites": [
             "0x10018ECE8"
           ],
@@ -2453,18 +2453,18 @@
       ]
     },
     {
-      "id": "renderer-hdr",
+      "id": "renderer-pp-hdr",
       "library_version": "1.0",
-      "basename": "LibRendererHDRBridge.dylib",
+      "basename": "LibRendererPPHDRBridge.dylib",
       "build": {
-        "source": "bridge/npa_renderer_hdr_dylib.c",
-        "exports": "bridge/renderer-hdr.exports",
-        "closure": "deps/renderer-hdr-closure.txt",
+        "source": "bridge/npa_renderer_pp_hdr_dylib.c",
+        "exports": "bridge/renderer-pp-hdr.exports",
+        "closure": "deps/renderer-pp-hdr-closure.txt",
         "include_root": "build/deps/ffmpeg-core/include",
         "lib_root": "build/deps/ffmpeg-core/lib"
       },
       "domains": [
-        "renderer-hdr"
+        "renderer-pp-hdr"
       ],
       "extra_sites": [
         {

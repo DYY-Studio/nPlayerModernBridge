@@ -27,10 +27,10 @@
   "default_dylibs": ["libass", "ffmpeg-full"],
   "domains": [
     {
-      "id": "renderer-hdr",
+      "id": "renderer-pp-hdr",
       "apis": [
         {
-          "symbol": "npa_renderer_shader_source",
+          "symbol": "npa_renderer_pp_hdr_shader_source",
           "call_sites": ["0x1009A76BC"],
           "old_target": "0x1009A9034"
         }
@@ -1432,17 +1432,17 @@
       "domains": ["renderer-highbit"]
     },
     {
-      "id": "renderer-hdr",
+      "id": "renderer-pp-hdr",
       "library_version": "1.0",
-      "basename": "LibRendererHDRBridge.dylib",
+      "basename": "LibRendererPPHDRBridge.dylib",
       "build": {
-        "source": "bridge/npa_renderer_hdr_dylib.c",
-        "exports": "bridge/renderer-hdr.exports",
-        "closure": "deps/renderer-hdr-closure.txt",
+        "source": "bridge/npa_renderer_pp_hdr_dylib.c",
+        "exports": "bridge/renderer-pp-hdr.exports",
+        "closure": "deps/renderer-pp-hdr-closure.txt",
         "include_root": "build/deps/ffmpeg-core/include",
         "lib_root": "build/deps/ffmpeg-core/lib"
       },
-      "domains": ["renderer-hdr"],
+      "domains": ["renderer-pp-hdr"],
       "extra_sites": [
         {
           "site": "0x1009A7098",

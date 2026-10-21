@@ -11,7 +11,7 @@ RECORD_SIZE = 48
 
 # Dylibs whose call site has to find its own original implementation through
 # the caller's image. Each one carries its own read-only table.
-RENDERER_DYLIB_IDS = ('renderer-highbit', 'renderer-hdr')
+RENDERER_DYLIB_IDS = ('renderer-highbit', 'renderer-pp-hdr')
 
 # Every table carries one record per host build and API; verification only
 # demands the records of the host being packaged.

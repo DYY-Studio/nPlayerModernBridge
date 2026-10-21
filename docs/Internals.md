@@ -20,7 +20,7 @@ per unit; each unit uses one library generation.
 | `ffmpeg-core902` *(nightly)* | `LibFFmpegCore902Bridge.dylib` | the input side: demux, subtitle decoding, playback/probe/poster decoding, scaler, resampler | 9.0.2 |
 | `ffmpeg-out448` | `LibFFmpegOut448Bridge.dylib` | the output side: HLS session and muxer, SPDIF, poster encoding - usually pairs with `ffmpeg-core902` | 4.4.8 |
 | `renderer-highbit` *(nightly, opt-in)* | `LibRendererHighBitBridge.dylib` | (S/W) converts P010 and planar 10-bit frames to `x420` / `x422` / `x444`, plus planar 12-bit and 16-bit frames to `sv22` / `sv44`; independent of the selected FFmpeg bridge | app 3.13.0 frame ABI |
-| `renderer-hdr` *(nightly, opt-in)* | `LibRendererHDRBridge.dylib` | (PP) renders the Post Processing Metal path into `RGBA16Float` and passes PQ/HLG through to the display instead of tone-mapping to SDR | app 3.13.0 Metal renderer |
+| `renderer-pp-hdr` *(nightly, opt-in)* | `LibRendererPPHDRBridge.dylib` | (PP) high-bit-depth and HDR output fix for the Post Processing Metal path: renders into `RGBA16Float` and passes PQ/HLG through to the display instead of tone-mapping to SDR | app 3.13.0 Metal renderer |
 
 The high-bit-depth renderer is independent of the FFmpeg selection. All bridge
 dylibs are built from this repository and link only system libraries and
@@ -99,7 +99,7 @@ every call site.
 | `libass` | libass 0.17.5 | `libass` 15 / 16 |
 | `ffmpeg-full` (default) | 4.4.8 | `ffmpeg-core` 99 / 449, `libswscale` 5 / 13, `libswresample` 6 / 7 = 110 / 469 |
 | `renderer-highbit` (experimental, opt-in) | app 3.13.0 frame ABI | renderer conversion 1 / 1 |
-| `renderer-hdr` (experimental, opt-in) | app 3.13.0 Metal renderer | renderer shader 1 / 1 |
+| `renderer-pp-hdr` (experimental, opt-in) | app 3.13.0 Metal renderer | renderer PP high-bit-depth + HDR 1 / 1 |
 | `ffmpeg-core` | 4.4.8 | `ffmpeg-core` 99 / 449 |
 | `ffmpeg` | 9.0.2 | `libswscale` 5 / 13, `libswresample` 6 / 7 = 11 / 20 |
 | `ffmpeg-core902` | 9.0.2 | `ffmpeg-demux` 15 / 38, `libswscale` 5 / 13, `libswresample` 6 / 7, `ffmpeg-subdecode` 10 / 16, `ffmpeg-codec` 12 / 46 = 48 / 120 |
@@ -161,8 +161,10 @@ FFmpeg selection.
 The original converter is resolved from the renderer caller's image via `dladdr`,
 then selected by the manifest-generated caller offset for standard or Plus.
 
-`renderer-hdr` covers the other renderer: the Metal path that only runs while
-Post Processing is enabled. It carries no FFmpeg code and no frame conversion.
+`renderer-pp-hdr` is the high-bit-depth and HDR output fix for the other
+renderer: the Metal path that only runs while Post Processing is enabled. It
+carries no FFmpeg code and no frame conversion, and it is a separate dylib from
+`renderer-highbit` so the two paths can be enabled and reverted independently.
 Its frozen sites change the layer and pipeline pixel format from `BGRA8Unorm`
 (80) to `RGBA16Float` (115), ask VideoToolbox for `x420` instead of `420v`, and
 force the HDR gate on. The one API rewrites the shader the app generates at
@@ -227,7 +229,7 @@ notices are in `THIRD-PARTY.md`.
 - `LibRendererHighBitBridge.dylib` links CoreVideo and CoreFoundation only; its
   frame layout and pixel-format constants are compile-time pinned to the app's
   legacy FFmpeg headers.
-- `LibRendererHDRBridge.dylib` links QuartzCore, CoreGraphics and Foundation
+- `LibRendererPPHDRBridge.dylib` links QuartzCore, CoreGraphics and Foundation
   only; it has no FFmpeg dependency and no static closure.
 
 ## Fallback

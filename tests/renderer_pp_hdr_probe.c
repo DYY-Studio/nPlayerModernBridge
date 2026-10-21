@@ -16,7 +16,7 @@ static int probe_dladdr(const void *address, Dl_info *info)
 }
 #define dladdr probe_dladdr
 #define __builtin_return_address(level) probe_caller
-#include "../bridge/npa_renderer_hdr_bridge.c"
+#include "../bridge/npa_renderer_pp_hdr_bridge.c"
 #undef dladdr
 #undef __builtin_return_address
 

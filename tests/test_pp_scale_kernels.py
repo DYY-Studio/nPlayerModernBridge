@@ -15,6 +15,7 @@ KERNELS = {
     4: ('lanczos2', ('NP_SUPPORT 2.0f', 'NP_A 2.0f')),
     5: ('lanczos3', ('NP_SUPPORT 3.0f', 'NP_A 3.0f')),
     6: ('bspline', ('NP_SUPPORT 2.0f', 'NP_B 1.0f', 'NP_C 0.0f')),
+    7: ('lanczos3-2pass', ('NP_SUPPORT 3.0f', 'NP_A 3.0f')),
 }
 
 
@@ -63,6 +64,17 @@ def test_kernels_bake_into_the_shader(tmp_path):
         assert '.sample(s,' not in source
         assert 'npa_scale1(' in source and 'npa_scale2(' in source
         assert 'dfdx(texcoord)' in source and 'dfdy(texcoord)' in source
+        # A separable variant runs its horizontal axis in a pre-pass, so the
+        # generated MSL carries that entry point and both axis modes.
+        if kernel == 7:
+            assert 'fragment float4 npaHorizontal(' in source
+            # The second definition is renamed by macro, so the text keeps the
+            # original identifier and the preprocessor separates the two.
+            assert '#define npa_tap4 npa_h_tap4' in source
+            assert '#define NP_MODE 2' in source
+            assert '#define NP_MODE 1' in source
+        else:
+            assert 'npaHorizontal(' not in source
         # And the result must compile.
         subprocess.run([
             'xcrun', '-sdk', 'iphoneos', 'metal', '-c', str(shader),

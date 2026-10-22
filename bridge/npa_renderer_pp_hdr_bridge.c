@@ -25,6 +25,14 @@
  * MetalVideoView at +0x1E0. */
 #define NPA_RENDERER_TRANSFER 0x1B8
 #define NPA_RENDERER_VIEW 0x1E0
+#define NPA_RENDERER_DEVICE 0x1E8
+#define NPA_RENDERER_LIBRARY 0x1F8
+#define NPA_RENDERER_QUEUE 0x1F0
+#define NPA_RENDERER_VERTEX_BUFFER 0x208
+#define NPA_RENDERER_TEXTURE_Y 0x220
+#define NPA_RENDERER_TEXTURE_CBCR 0x228
+#define NPA_RENDERER_TEXTURE_CB 0x230
+#define NPA_RENDERER_TEXTURE_CR 0x238
 
 #define NPA_TRANSFER_PQ 16
 #define NPA_TRANSFER_HLG 18
@@ -110,7 +118,9 @@ static const char NPA_SCALE_FOOTPRINT[] =
     "  return sqrt(a * a + b * b);\n"
     "}\n";
 
-/* The wrappers must follow the tap loops, so they are appended last. */
+/* The wrappers must follow the tap loops, so they are appended last. The
+ * separable variant only ever needs the scalar loop, which carries the final
+ * vertical pass; NP_MODE is a compile-time constant either way. */
 static const char NPA_SCALE_WRAPPERS[] =
     "\n"
     "static inline float npa_scale1(texture2d<float, access::sample> t, sampler sn,\n"
@@ -120,12 +130,28 @@ static const char NPA_SCALE_WRAPPERS[] =
     "\n"
     "static inline float2 npa_scale2(texture2d<float, access::sample> t, sampler sn,\n"
     "                               float2 uv, float2 dudx, float2 dudy) {\n"
-    "  return npa_tap2(t, sn, uv, dudx, dudy);\n"
+    "  return npa_tap4(t, sn, uv, dudx, dudy).rg;\n"
     "}\n";
 
-/* Shared geometry for both tap loops: footprint, tap count and texel origin.
- * Keeping it in one place means the scalar and the two-channel loop cannot
- * drift apart. */
+/* Horizontal pre-pass for a separable kernel: filter one plane of the source
+ * into an intermediate of the same height. The tap loop is the same code with
+ * NP_MODE 2, so both passes share one weight function and one fold rule. */
+static const char NPA_SCALE_HORIZONTAL[] =
+    "\n"
+    "fragment float4 npaHorizontal(Varyings in [[ stage_in ]],\n"
+    "                              texture2d<float, access::sample> src [[ texture(0) ]]) {\n"
+    "  constexpr sampler sn(address::clamp_to_edge, filter::linear);\n"
+    "  const float2 uv = in.texcoord;\n"
+    "  return npa_tap4(src, sn, uv, dfdx(uv), dfdy(uv));\n"
+    "}\n";
+
+/* Tap geometry. `mode` selects which axes this pass filters: 0 is the whole 2D
+ * footprint, 1 filters vertically only, 2 horizontally only. A separable
+ * kernel runs mode 2 into an intermediate and then mode 1 into the drawable, so
+ * each pass stretches the kernel by its own ratio rather than the combined 2D
+ * footprint. Forcing the unused axis to st=1 and k=1 collapses it to a single
+ * fetch per tap pair: at a texel centre the two weights are 1 and 0, so the
+ * pairing fold keeps one of them. */
 static const char NPA_SCALE_AXIS[] =
     "\n"
     "struct NpaAxis {\n"
@@ -137,11 +163,15 @@ static const char NPA_SCALE_AXIS[] =
     "};\n"
     "\n"
     "static inline NpaAxis npa_axis(texture2d<float, access::sample> t,\n"
-    "                               float2 uv, float2 dudx, float2 dudy) {\n"
+    "                               float2 uv, float2 dudx, float2 dudy, int mode) {\n"
     "  NpaAxis a;\n"
     "  a.size = float2(t.get_width(), t.get_height());\n"
     "  a.st = clamp(npa_footprint(dudx, dudy, a.size), 1.0f, NP_ST_MAX);\n"
+    "  if (mode == 1) a.st.x = 1.0f;\n"
+    "  if (mode == 2) a.st.y = 1.0f;\n"
     "  a.k = int2(ceil(NP_SUPPORT * a.st));\n"
+    "  if (mode == 1) a.k.x = 1;\n"
+    "  if (mode == 2) a.k.y = 1;\n"
     "  a.pos = uv * a.size - 0.5f;\n"
     "  a.base = floor(a.pos);\n"
     "  return a;\n"
@@ -169,7 +199,7 @@ static const char NPA_SCALE_TAP_R[] =
     "\n"
     "static inline float npa_tap1(texture2d<float, access::sample> t, sampler sn,\n"
     "                             float2 uv, float2 dudx, float2 dudy) {\n"
-    "  const NpaAxis a = npa_axis(t, uv, dudx, dudy);\n"
+    "  const NpaAxis a = npa_axis(t, uv, dudx, dudy, NP_MODE);\n"
     "  float wx[2 * NP_MAX_K];\n"
     "  for (int i = 0; i < 2 * a.k.x; ++i) {\n"
     "    wx[i] = npa_kernel_w((a.pos.x - (a.base.x + float(1 - a.k.x + i))) / a.st.x);\n"
@@ -221,16 +251,19 @@ static const char NPA_SCALE_TAP_R[] =
     "  return acc / max(wsum, 1e-5f);\n"
     "}\n";
 
+/* The four-component loop. It covers the chroma plane, whose two channels
+ * gather cannot return, and the horizontal pre-pass of a separable kernel,
+ * which filters every channel of a plane. */
 static const char NPA_SCALE_TAP_RG[] =
     "\n"
-    "static inline float2 npa_tap2(texture2d<float, access::sample> t, sampler sn,\n"
+    "static inline float4 npa_tap4(texture2d<float, access::sample> t, sampler sn,\n"
     "                              float2 uv, float2 dudx, float2 dudy) {\n"
-    "  const NpaAxis a = npa_axis(t, uv, dudx, dudy);\n"
+    "  const NpaAxis a = npa_axis(t, uv, dudx, dudy, NP_MODE);\n"
     "  float wx[2 * NP_MAX_K];\n"
     "  for (int i = 0; i < 2 * a.k.x; ++i) {\n"
     "    wx[i] = npa_kernel_w((a.pos.x - (a.base.x + float(1 - a.k.x + i))) / a.st.x);\n"
     "  }\n"
-    "  float2 acc = float2(0.0f);\n"
+    "  float4 acc = float4(0.0f);\n"
     "  float wsum = 0.0f;\n"
     "  for (int j = 0; j < a.k.y; ++j) {\n"
     "    const int iy = 1 - a.k.y + 2 * j;\n"
@@ -249,21 +282,21 @@ static const char NPA_SCALE_TAP_RG[] =
     "      if (foldX) {\n"
     "        const float2 x0 = at + float2(wx1 / sx, 0.0f);\n"
     "        if (foldY) {\n"
-    "          acc += t.sample(sn, (x0 + float2(0.0f, fy)) / a.size).rg * (sx * sy);\n"
+    "          acc += t.sample(sn, (x0 + float2(0.0f, fy)) / a.size) * (sx * sy);\n"
     "        } else {\n"
-    "          acc += t.sample(sn, x0 / a.size).rg * (sx * wy0);\n"
-    "          acc += t.sample(sn, (x0 + float2(0.0f, 1.0f)) / a.size).rg * (sx * wy1);\n"
+    "          acc += t.sample(sn, x0 / a.size) * (sx * wy0);\n"
+    "          acc += t.sample(sn, (x0 + float2(0.0f, 1.0f)) / a.size) * (sx * wy1);\n"
     "        }\n"
     "      } else if (foldY) {\n"
     "        const float2 y0 = at + float2(0.0f, fy);\n"
-    "        acc += t.sample(sn, y0 / a.size).rg * (wx0 * sy);\n"
-    "        acc += t.sample(sn, (y0 + float2(1.0f, 0.0f)) / a.size).rg * (wx1 * sy);\n"
+    "        acc += t.sample(sn, y0 / a.size) * (wx0 * sy);\n"
+    "        acc += t.sample(sn, (y0 + float2(1.0f, 0.0f)) / a.size) * (wx1 * sy);\n"
     "      } else {\n"
     "        const float2 step = float2(1.0f) / a.size;\n"
-    "        acc += t.sample(sn, at / a.size).rg * (wx0 * wy0);\n"
-    "        acc += t.sample(sn, at / a.size + float2(step.x, 0.0f)).rg * (wx1 * wy0);\n"
-    "        acc += t.sample(sn, at / a.size + float2(0.0f, step.y)).rg * (wx0 * wy1);\n"
-    "        acc += t.sample(sn, at / a.size + step).rg * (wx1 * wy1);\n"
+    "        acc += t.sample(sn, at / a.size) * (wx0 * wy0);\n"
+    "        acc += t.sample(sn, at / a.size + float2(step.x, 0.0f)) * (wx1 * wy0);\n"
+    "        acc += t.sample(sn, at / a.size + float2(0.0f, step.y)) * (wx0 * wy1);\n"
+    "        acc += t.sample(sn, at / a.size + step) * (wx1 * wy1);\n"
     "      }\n"
     "      wsum += sx * sy;\n"
     "    }\n"
@@ -275,21 +308,29 @@ typedef struct {
     const char *parameters;
     const char *weight;
     float support;
+    /* A separable variant runs one axis here and the other in a second pass, so
+     * each pass stretches the kernel by its own ratio instead of the combined
+     * 2D footprint. */
+    int separable;
 } NPAKernelSpec;
 
 static const NPAKernelSpec NPA_KERNELS[] = {
-    {NULL, NULL, 0.0f},
-    {"#define NP_B 0.0f\n#define NP_C 0.5f\n", NPA_WEIGHT_CUBIC, 2.0f},
-    {"#define NP_B 0.33333334f\n#define NP_C 0.33333334f\n", NPA_WEIGHT_CUBIC, 2.0f},
-    {"#define NP_B 0.0f\n#define NP_C 0.75f\n", NPA_WEIGHT_CUBIC, 2.0f},
-    {"#define NP_A 2.0f\n", NPA_WEIGHT_LANCZOS, 2.0f},
-    {"#define NP_A 3.0f\n", NPA_WEIGHT_LANCZOS, 3.0f},
-    {"#define NP_B 1.0f\n#define NP_C 0.0f\n", NPA_WEIGHT_CUBIC, 2.0f},
+    {NULL, NULL, 0.0f, 0},
+    {"#define NP_B 0.0f\n#define NP_C 0.5f\n", NPA_WEIGHT_CUBIC, 2.0f, 0},
+    {"#define NP_B 0.33333334f\n#define NP_C 0.33333334f\n", NPA_WEIGHT_CUBIC, 2.0f, 0},
+    {"#define NP_B 0.0f\n#define NP_C 0.75f\n", NPA_WEIGHT_CUBIC, 2.0f, 0},
+    {"#define NP_A 2.0f\n", NPA_WEIGHT_LANCZOS, 2.0f, 0},
+    {"#define NP_A 3.0f\n", NPA_WEIGHT_LANCZOS, 3.0f, 0},
+    {"#define NP_B 1.0f\n#define NP_C 0.0f\n", NPA_WEIGHT_CUBIC, 2.0f, 0},
+    {"#define NP_A 3.0f\n", NPA_WEIGHT_LANCZOS, 3.0f, 1},
 };
 
 #define NPA_KERNEL_COUNT (sizeof(NPA_KERNELS) / sizeof(NPA_KERNELS[0]))
 
 typedef id (*NPAOriginalShaderSourceFn)(void *renderer, int mode, int flag);
+/* Same frozen lookup serves the draw wrapper; the two share the caller table
+ * because each has its own call site. */
+typedef void (*NPAOriginalDrawFn)(void *renderer);
 
 typedef struct {
     char *data;
@@ -570,9 +611,10 @@ static int npa_apply_scale(char **stage, int kernel)
     char constants[128];
     snprintf(constants, sizeof(constants),
              "#define NP_SUPPORT %.1ff\n#define NP_ST_MAX %s\n"
-             "#define NP_MAX_K %d\n",
+             "#define NP_MAX_K %d\n#define NP_MODE %d\n",
              spec->support, NPA_SCALE_ST_MAX,
-             (int)ceilf(spec->support * atof(NPA_SCALE_ST_MAX)));
+             (int)ceilf(spec->support * atof(NPA_SCALE_ST_MAX)),
+             spec->separable ? 1 : 0);
     const char prologue[] = "\nstatic inline float npa_kernel_w(float x) {\n";
     int ok = npa_append(&helper, constants, strlen(constants))
              && npa_append(&helper, spec->parameters, strlen(spec->parameters))
@@ -584,6 +626,23 @@ static int npa_apply_scale(char **stage, int kernel)
              && npa_append(&helper, NPA_SCALE_TAP_R, strlen(NPA_SCALE_TAP_R))
              && npa_append(&helper, NPA_SCALE_TAP_RG, strlen(NPA_SCALE_TAP_RG))
              && npa_append(&helper, NPA_SCALE_WRAPPERS, strlen(NPA_SCALE_WRAPPERS));
+    }
+    if (ok && spec->separable) {
+        /* The pre-pass filters horizontally, so it re-emits the geometry and
+         * the four-component loop under different names with NP_MODE 2, then
+         * restores the vertical mode for the fragment shader below. The
+         * renames keep both definitions in one translation unit. */
+        static const char pre[] =
+            "\n#undef NP_MODE\n#define NP_MODE 2\n"
+            "#define NpaAxis NpaAxisH\n#define npa_axis npa_h_axis\n"
+            "#define npa_tap4 npa_h_tap4\n";
+        static const char post[] =
+            "\n#undef npa_tap4\n#undef npa_axis\n#undef NpaAxis\n"
+            "#undef NP_MODE\n#define NP_MODE 1\n";
+        ok = npa_append(&helper, pre, strlen(pre))
+             && npa_append(&helper, NPA_SCALE_AXIS, strlen(NPA_SCALE_AXIS))
+             && npa_append(&helper, NPA_SCALE_TAP_RG, strlen(NPA_SCALE_TAP_RG))
+             && npa_append(&helper, post, strlen(post));
     }
     if (!ok) {
         free(helper.data);
@@ -600,8 +659,26 @@ static int npa_apply_scale(char **stage, int kernel)
         return 0;
     }
     merged.data[merged.length] = '\0';
-    const int applied = npa_sub(stage, NPA_NAMESPACE_ANCHOR, merged.data, 1);
+    int applied = npa_sub(stage, NPA_NAMESPACE_ANCHOR, merged.data, 1);
     free(merged.data);
+    if (!applied) {
+        return 0;
+    }
+    if (spec->separable) {
+        /* The pre-pass takes Varyings, which the host declares after the
+         * namespace, so this function goes in front of the fragment shader
+         * instead of into the helper block. */
+        static const char anchor[] = "fragment ";
+        static const char replacement[] = "fragment ";
+        NPABuffer spliced = {0};
+        applied = npa_append(&spliced, NPA_SCALE_HORIZONTAL, strlen(NPA_SCALE_HORIZONTAL))
+                  && npa_append(&spliced, replacement, strlen(replacement));
+        if (applied) {
+            spliced.data[spliced.length] = '\0';
+            applied = npa_sub(stage, anchor, spliced.data, 1);
+        }
+        free(spliced.data);
+    }
     return applied;
 }
 
@@ -779,6 +856,343 @@ static void npa_configure_layer_async(void *renderer, int transfer, int hdr)
     config->transfer = transfer;
     config->hdr = hdr;
     dispatch_async_f(dispatch_get_main_queue(), config, npa_configure_layer);
+}
+
+/* ---- Separable pre-pass -------------------------------------------------
+ *
+ * A separable kernel filters one axis into an intermediate and the other axis
+ * into the drawable. The intermediate keeps the source plane layout (Y plus
+ * one chroma plane) and the source pixel format, so the second pass is the
+ * same shader with NP_MODE 1 and the intermediate is lossless.
+ *
+ * The pre-pass runs as its own command buffer on the renderer's queue, which
+ * Metal executes in submission order, so the draw that follows sees a finished
+ * intermediate without an extra wait.
+ *
+ * State is keyed on the renderer and rebuilt whenever a size, format or
+ * library changes. The host rebuilds its library on every pixel-format change,
+ * so the cached pipeline is dropped by comparing the library pointer. */
+
+typedef struct {
+    void *renderer;
+    id library;
+    id pipeline[3];
+    uint64_t pipeline_format[3];
+    id plane[3];
+    int plane_count;
+    int width;
+    int height;
+} NPAPrepass;
+
+static NPAPrepass npa_prepass;
+
+static int npa_prepass_active(void)
+{
+    int kernel = npa_scale_kernel_preference();
+    return kernel > 0 && (size_t)kernel < NPA_KERNEL_COUNT
+           && NPA_KERNELS[kernel].separable;
+}
+
+static id npa_msg_id(id object, const char *selector)
+{
+    return ((id (*)(id, SEL))objc_msgSend)(object, npa_sel(selector));
+}
+
+static void npa_release(void *object)
+{
+    if (object) {
+        ((void (*)(id, SEL))objc_msgSend)((id)object, npa_sel("release"));
+    }
+}
+
+static void npa_prepass_reset(NPAPrepass *state)
+{
+    for (int index = 0; index < 3; index++) {
+        npa_release(state->pipeline[index]);
+        npa_release(state->plane[index]);
+        state->pipeline[index] = NULL;
+        state->plane[index] = NULL;
+    }
+    state->plane_count = 0;
+    state->width = 0;
+    state->height = 0;
+}
+
+/* One pipeline per pixel format: the attachment format is part of the pipeline
+ * descriptor, and the source planes differ between 8- and 10-bit content. */
+static id npa_prepass_pipeline(NPAPrepass *state, id device, uint64_t format)
+{
+    for (int index = 0; index < state->plane_count; index++) {
+        if (state->pipeline[index] && state->pipeline_format[index] == format) {
+            return state->pipeline[index];
+        }
+    }
+    id function = ((id (*)(id, SEL, id))objc_msgSend)(
+        state->library, npa_sel("newFunctionWithName:"),
+        ((id (*)(id, SEL, const char *))objc_msgSend)(
+            (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"),
+            "npaHorizontal"
+        )
+    );
+    if (!function) {
+        npa_hdr_log("separable pre-pass function is missing", -1);
+        return NULL;
+    }
+    id vertex = ((id (*)(id, SEL, id))objc_msgSend)(
+        state->library, npa_sel("newFunctionWithName:"),
+        ((id (*)(id, SEL, const char *))objc_msgSend)(
+            (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"),
+            "vertexPassthrough"
+        )
+    );
+    id descriptor = npa_msg_id((id)objc_getClass("MTLRenderPipelineDescriptor"), "alloc");
+    descriptor = npa_msg_id(descriptor, "init");
+    if (!vertex || !descriptor) {
+        npa_hdr_log("separable pre-pass pipeline could not be built", -1);
+        npa_release(function);
+        npa_release(vertex);
+        npa_release(descriptor);
+        return NULL;
+    }
+    ((void (*)(id, SEL, id))objc_msgSend)(descriptor, npa_sel("setLabel:"), NULL);
+    ((void (*)(id, SEL, id))objc_msgSend)(descriptor, npa_sel("setVertexFunction:"), vertex);
+    ((void (*)(id, SEL, id))objc_msgSend)(descriptor, npa_sel("setFragmentFunction:"), function);
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(descriptor, npa_sel("setSampleCount:"), 1);
+    id attachment = npa_msg_id(npa_msg_id(descriptor, "colorAttachments"), "objectAtIndexedSubscript:");
+    if (attachment) {
+        ((void (*)(id, SEL, unsigned long))objc_msgSend)(
+            attachment, npa_sel("setPixelFormat:"), (unsigned long)format
+        );
+    }
+    id error = NULL;
+    id pipeline = ((id (*)(id, SEL, id, void **))objc_msgSend)(
+        device, npa_sel("newRenderPipelineStateWithDescriptor:error:"), descriptor, (void **)&error
+    );
+    if (!pipeline) {
+        npa_hdr_log("separable pre-pass pipeline compilation failed", (int)format);
+    }
+    npa_release(function);
+    npa_release(vertex);
+    npa_release(descriptor);
+
+    /* Reuse the first free slot; there is at most one format per frame in
+     * practice, and the array is only a small cache. */
+    for (int index = 0; index < 3; index++) {
+        if (!state->pipeline[index]) {
+            state->pipeline[index] = pipeline;
+            state->pipeline_format[index] = format;
+            return pipeline;
+        }
+    }
+    npa_hdr_log("separable pre-pass pipeline cache is full", -1);
+    npa_release(pipeline);
+    return NULL;
+}
+
+static id npa_prepass_texture(id device, uint64_t format, int width, int height)
+{
+    id descriptor = ((id (*)(id, SEL, unsigned long, unsigned long, unsigned long, unsigned long))objc_msgSend)(
+        (id)objc_getClass("MTLTextureDescriptor"),
+        npa_sel("texture2DDescriptorWithPixelFormat:width:height:mipmapped:"),
+        (unsigned long)format, (unsigned long)width, (unsigned long)height, 0UL
+    );
+    if (!descriptor) {
+        return NULL;
+    }
+    /* The pre-pass renders into it and the draw samples it. */
+    ((void (*)(id, SEL, unsigned long))objc_msgSend)(descriptor, npa_sel("setUsage:"), 5);
+    return ((id (*)(id, SEL, id))objc_msgSend)(device, npa_sel("newTextureWithDescriptor:"), descriptor);
+}
+
+/* Returns 0 when the pre-pass could not run; the caller then falls back to the
+ * host draw and logs, because the fragment shader is already vertical-only. */
+static int npa_prepass_run(void *renderer)
+{
+    NPAPrepass *state = &npa_prepass;
+    if (state->renderer != renderer) {
+        npa_prepass_reset(state);
+        state->renderer = renderer;
+    }
+
+    id device = *(id *)((char *)renderer + NPA_RENDERER_DEVICE);
+    id queue = *(id *)((char *)renderer + NPA_RENDERER_QUEUE);
+    id library = *(id *)((char *)renderer + NPA_RENDERER_LIBRARY);
+    id vertex_buffer = *(id *)((char *)renderer + NPA_RENDERER_VERTEX_BUFFER);
+    id view = *(id *)((char *)renderer + NPA_RENDERER_VIEW);
+    if (!device || !queue || !library || !vertex_buffer || !view) {
+        npa_hdr_log("separable pre-pass is missing renderer state", -1);
+        return 0;
+    }
+    if (state->library != library) {
+        npa_prepass_reset(state);
+        state->library = library;
+    }
+
+    /* Plane 0 is luma, plane 1 is either interleaved chroma or Cb, plane 2 is
+     * Cr. The host clears all four slots on a format change, so an empty slot
+     * means that layout is not in use. */
+    id sources[3] = {
+        *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y),
+        *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR),
+        *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR),
+    };
+    if (!sources[1]) {
+        sources[1] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB);
+    }
+    int plane_count = 0;
+    for (int index = 0; index < 3; index++) {
+        if (sources[index]) {
+            plane_count++;
+        } else {
+            break;
+        }
+    }
+    if (plane_count < 2) {
+        npa_hdr_log("separable pre-pass found no source planes", -1);
+        return 0;
+    }
+
+    id layer = npa_msg_id(view, "metalLayer");
+    CGSize drawable = {0, 0};
+    if (layer) {
+        ((CGSize (*)(id, SEL))objc_msgSend)(layer, npa_sel("drawableSize"));
+    }
+    if (drawable.width < 1.0 || drawable.height < 1.0) {
+        npa_hdr_log("separable pre-pass has no drawable size", -1);
+        return 0;
+    }
+
+    /* Luma keeps the source height and takes the drawable width; chroma keeps
+     * its own subsampling, so the second pass sees an exactly 1:1 horizontal
+     * footprint on both planes. */
+    uint64_t formats[3] = {0, 0, 0};
+    int sizes[3][2] = {{0, 0}, {0, 0}, {0, 0}};
+    const int luma_width = (int)((unsigned long (*)(id, SEL))objc_msgSend)(
+        sources[0], npa_sel("width")
+    );
+    for (int index = 0; index < plane_count; index++) {
+        formats[index] = ((unsigned long (*)(id, SEL))objc_msgSend)(
+            sources[index], npa_sel("pixelFormat")
+        );
+        const int source_width = (int)((unsigned long (*)(id, SEL))objc_msgSend)(
+            sources[index], npa_sel("width")
+        );
+        const int source_height = (int)((unsigned long (*)(id, SEL))objc_msgSend)(
+            sources[index], npa_sel("height")
+        );
+        if (source_width < 1 || source_height < 1) {
+            npa_hdr_log("separable pre-pass source plane is empty", index);
+            return 0;
+        }
+        const int scale = source_width == luma_width ? 1 : 2;
+        sizes[index][0] = (int)(drawable.width / scale);
+        sizes[index][1] = source_height;
+        if (sizes[index][0] < 1) {
+            sizes[index][0] = 1;
+        }
+    }
+
+    if (state->plane_count != plane_count || state->width != sizes[0][0]
+        || state->height != sizes[0][1]) {
+        npa_prepass_reset(state);
+        state->library = library;
+        state->plane_count = plane_count;
+        state->width = sizes[0][0];
+        state->height = sizes[0][1];
+        for (int index = 0; index < plane_count; index++) {
+            state->plane[index] = npa_prepass_texture(
+                device, formats[index], sizes[index][0], sizes[index][1]
+            );
+            if (!state->plane[index]) {
+                npa_hdr_log("separable pre-pass texture allocation failed", index);
+                npa_prepass_reset(state);
+                state->library = library;
+                return 0;
+            }
+        }
+    }
+
+    id command_buffer = npa_msg_id(queue, "commandBuffer");
+    if (!command_buffer) {
+        npa_hdr_log("separable pre-pass could not get a command buffer", -1);
+        return 0;
+    }
+    const unsigned long vertex_count =
+        ((unsigned long (*)(id, SEL))objc_msgSend)(vertex_buffer, npa_sel("length")) >> 4;
+
+    for (int index = 0; index < plane_count; index++) {
+        id pipeline = npa_prepass_pipeline(state, device, formats[index]);
+        if (!pipeline) {
+            return 0;
+        }
+        id descriptor = npa_msg_id((id)objc_getClass("MTLRenderPassDescriptor"), "renderPassDescriptor");
+        if (!descriptor) {
+            npa_hdr_log("separable pre-pass could not get a pass descriptor", -1);
+            return 0;
+        }
+        id attachment = npa_msg_id(npa_msg_id(descriptor, "colorAttachments"), "objectAtIndexedSubscript:");
+        ((void (*)(id, SEL, id))objc_msgSend)(attachment, npa_sel("setTexture:"), state->plane[index]);
+        ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setLoadAction:"), 2);
+        ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setStoreAction:"), 1);
+
+        id encoder = ((id (*)(id, SEL, id))objc_msgSend)(
+            command_buffer, npa_sel("renderCommandEncoderWithDescriptor:"), descriptor
+        );
+        if (!encoder) {
+            npa_hdr_log("separable pre-pass could not get an encoder", -1);
+            return 0;
+        }
+        ((void (*)(id, SEL, id))objc_msgSend)(encoder, npa_sel("setRenderPipelineState:"), pipeline);
+        ((void (*)(id, SEL, id, unsigned long))objc_msgSend)(
+            encoder, npa_sel("setFragmentTexture:atIndex:"), sources[index], 0
+        );
+        ((void (*)(id, SEL, id, unsigned long, unsigned long))objc_msgSend)(
+            encoder, npa_sel("setVertexBuffer:offset:atIndex:"), vertex_buffer, 0, 0
+        );
+        ((void (*)(id, SEL, unsigned long, unsigned long, unsigned long, unsigned long))objc_msgSend)(
+            encoder, npa_sel("drawPrimitives:vertexStart:vertexCount:instanceCount:"),
+            3, 0, vertex_count, 1
+        );
+        ((void (*)(id, SEL))objc_msgSend)(encoder, npa_sel("endEncoding"));
+    }
+    ((void (*)(id, SEL))objc_msgSend)(command_buffer, npa_sel("commit"));
+
+    /* The second pass samples the intermediates. The host never releases these
+     * slots, it overwrites them on the next upload, so assigning without a
+     * retain mirrors that and keeps the refcount where the host left it. The
+     * intermediates stay alive in the cache. */
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y) = state->plane[0];
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR) =
+        plane_count == 2 ? state->plane[1] : NULL;
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB) =
+        plane_count == 3 ? state->plane[1] : NULL;
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR) =
+        plane_count == 3 ? state->plane[2] : NULL;
+    return 1;
+}
+
+/* Draw wrapper. The separable variant needs its horizontal pass to land in the
+ * intermediate before the host draw samples it, so the wrapper runs the
+ * pre-pass and then hands off to the original draw. Everything else goes
+ * straight to the original, which keeps the non-separable path byte-identical
+ * to a build without this hook. */
+NPA_EXPORT __attribute__((noinline)) void npa_renderer_pp_hdr_draw(void *renderer)
+{
+    NPAOriginalDrawFn draw = (NPAOriginalDrawFn)npa_call_original_shader_source(
+        __builtin_return_address(0)
+    );
+    if (!draw) {
+        return;
+    }
+    if (renderer && npa_prepass_active()) {
+        /* A failed pre-pass leaves the source planes in place; the fragment
+         * shader is vertical-only by then, so say so rather than shipping a
+         * silently under-filtered frame. */
+        if (!npa_prepass_run(renderer)) {
+            npa_hdr_log("separable pre-pass did not run; frame is vertical-only", -1);
+        }
+    }
+    draw(renderer);
 }
 
 NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(

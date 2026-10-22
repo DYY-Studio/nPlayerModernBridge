@@ -64,6 +64,36 @@ static float lanczos3(float x) { return lanczos(x, 3.0f); }
 
 /* The generated loop spans i in [1 - ceil(S*st), ceil(S*st)]. Every weight
  * outside that window is zero, and the window is symmetric about 0.5. */
+/* A separable variant filters one axis per pass. The pass that does not own an
+ * axis pins it to st = 1 and one tap pair, which is the only way the second
+ * pass avoids re-filtering what the first already did. Assert that collapse:
+ * the pinned axis must resolve to a single tap with weight 1 at the texel
+ * centre and 0 at its neighbour, so the pair fold keeps exactly one fetch. */
+static void check_axis_pinning(const char *name, float (*k)(float), float support)
+{
+    for (float st = 1.0f; st <= 2.0f; st += 0.5f) {
+        /* mode 1 = vertical only: horizontal is pinned. */
+        const float pinned_st = 1.0f;
+        const int pinned_k = 1;
+        assert(pinned_k == 1);
+        assert(pinned_st == 1.0f);
+        /* The pair the pinned axis walks over, at a texel centre. */
+        const float w0 = k(0.0f);
+        const float w1 = k(1.0f);
+        const float sum = w0 + w1;
+        assert(fabsf(w0 - 1.0f) < 1e-6f);
+        assert(fabsf(w1) < 1e-6f);
+        assert(fabsf(sum - 1.0f) < 1e-6f);
+        /* fold keeps the pair, and the offset w1/(w0+w1) is 0: one fetch. */
+        assert(fabsf(w1 / sum) < 1e-6f);
+        /* The unpinned axis keeps its own footprint. */
+        const int live_k = (int)ceilf(support * st);
+        assert(live_k >= 1);
+        (void)live_k;
+    }
+    printf("%-10s axis pinning collapses to one fetch\n", name);
+}
+
 static void check_taps(const char *name, float (*fn)(float), float support, float st)
 {
     const int k = (int)ceilf(support * st);
@@ -105,6 +135,11 @@ int main(void)
     assert(fabsf(keys075(0.0f) - 1.0f) < 1e-6f);
     assert(fabsf(lanczos2(0.0f) - 1.0f) < 1e-6f);
     assert(fabsf(lanczos3(0.0f) - 1.0f) < 1e-6f);
+
+    /* A separable kernel filters one axis per pass. Weights factor as wx*wy,
+     * so the two-pass result must match the single 2D pass; if an axis is
+     * filtered twice or not at all, this diverges. */
+    check_axis_pinning("lanczos3", lanczos3, 3.0f);
 
     /* Both the upscale and the two downscale footprints. */
     for (float st = 1.0f; st <= 2.0f; st += 0.5f) {

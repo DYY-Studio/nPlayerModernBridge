@@ -8,6 +8,7 @@
 #include <CoreGraphics/CoreGraphics.h>
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
+#include <math.h>
 #include <objc/message.h>
 #include <objc/objc.h>
 #include <objc/runtime.h>
@@ -140,6 +141,14 @@ static const char NPA_SCALE_TAP_PAIR[] =
     "  const int2 k = int2(ceil(NP_SUPPORT * st));\n"
     "  const float2 pos = uv * size - 0.5f;\n"
     "  const float2 base = floor(pos);\n"
+    /* The horizontal weights do not depend on the vertical tap, so the whole
+     * row is evaluated once instead of once per 2x2 block. That is the
+     * difference between 4k and 2k^2+2k kernel evaluations per pixel, which
+     * matters because Lanczos spends two sin() calls on each. */
+    "  float wx[2 * NP_MAX_K];\n"
+    "  for (int i = 0; i < 2 * k.x; ++i) {\n"
+    "    wx[i] = npa_kernel_w((pos.x - (base.x + float(1 - k.x + i))) / st.x);\n"
+    "  }\n"
     "  float4 acc = float4(0.0f);\n"
     "  float wsum = 0.0f;\n"
     "  for (int j = 0; j < k.y; ++j) {\n"
@@ -149,26 +158,36 @@ static const char NPA_SCALE_TAP_PAIR[] =
     "    const float sy = wy0 + wy1;\n"
     "    const bool foldY = wy0 * wy1 >= 0.0f && fabs(sy) > 1e-8f;\n"
     "    const float fy = foldY ? wy1 / sy : 0.0f;\n"
+    "    const float2 corner = base + float2(0.0f, float(iy)) + 0.5f;\n"
     "    for (int i = 0; i < k.x; ++i) {\n"
-    "      const int ix = 1 - k.x + 2 * i;\n"
-    "      const float wx0 = npa_kernel_w((pos.x - (base.x + float(ix))) / st.x);\n"
-    "      const float wx1 = npa_kernel_w((pos.x - (base.x + float(ix + 1))) / st.x);\n"
+    "      const float wx0 = wx[2 * i];\n"
+    "      const float wx1 = wx[2 * i + 1];\n"
     "      const float sx = wx0 + wx1;\n"
     "      const bool foldX = wx0 * wx1 >= 0.0f && fabs(sx) > 1e-8f;\n"
-    "      if (foldX && foldY) {\n"
-    "        const float fx = wx1 / sx;\n"
-    "        const float2 at = base + float2(float(ix) + fx, float(iy) + fy) + 0.5f;\n"
-    "        acc += t.sample(sn, at / size) * (sx * sy);\n"
-    "        wsum += sx * sy;\n"
+    "      const float2 at = corner + float2(float(1 - k.x + 2 * i), 0.0f);\n"
+    /* One fetch when both axes fold, two when only one does, four otherwise.
+     * The middle case is common: a kernel with mixed-sign lobes along one
+     * axis often still folds along the other. */
+    "      if (foldX) {\n"
+    "        const float2 x0 = at + float2(wx1 / sx, 0.0f);\n"
+    "        if (foldY) {\n"
+    "          acc += t.sample(sn, (x0 + float2(0.0f, fy)) / size) * (sx * sy);\n"
+    "        } else {\n"
+    "          acc += t.sample(sn, x0 / size) * (sx * wy0);\n"
+    "          acc += t.sample(sn, (x0 + float2(0.0f, 1.0f)) / size) * (sx * wy1);\n"
+    "        }\n"
+    "      } else if (foldY) {\n"
+    "        const float2 y0 = at + float2(0.0f, fy);\n"
+    "        acc += t.sample(sn, y0 / size) * (wx0 * sy);\n"
+    "        acc += t.sample(sn, (y0 + float2(1.0f, 0.0f)) / size) * (wx1 * sy);\n"
     "      } else {\n"
-    "        const float2 corner = base + float2(float(ix), float(iy)) + 0.5f;\n"
     "        const float2 step = float2(1.0f) / size;\n"
-    "        acc += t.sample(sn, corner / size) * (wx0 * wy0);\n"
-    "        acc += t.sample(sn, corner / size + float2(step.x, 0.0f)) * (wx1 * wy0);\n"
-    "        acc += t.sample(sn, corner / size + float2(0.0f, step.y)) * (wx0 * wy1);\n"
-    "        acc += t.sample(sn, corner / size + step) * (wx1 * wy1);\n"
-    "        wsum += (wx0 + wx1) * (wy0 + wy1);\n"
+    "        acc += t.sample(sn, at / size) * (wx0 * wy0);\n"
+    "        acc += t.sample(sn, at / size + float2(step.x, 0.0f)) * (wx1 * wy0);\n"
+    "        acc += t.sample(sn, at / size + float2(0.0f, step.y)) * (wx0 * wy1);\n"
+    "        acc += t.sample(sn, at / size + step) * (wx1 * wy1);\n"
     "      }\n"
+    "      wsum += sx * sy;\n"
     "    }\n"
     "  }\n"
     "  return acc / max(wsum, 1e-5f);\n"
@@ -472,8 +491,10 @@ static int npa_apply_scale(char **stage, int kernel)
     NPABuffer helper = {0};
     char constants[128];
     snprintf(constants, sizeof(constants),
-             "#define NP_SUPPORT %.1ff\n#define NP_ST_MAX %s\n",
-             spec->support, NPA_SCALE_ST_MAX);
+             "#define NP_SUPPORT %.1ff\n#define NP_ST_MAX %s\n"
+             "#define NP_MAX_K %d\n",
+             spec->support, NPA_SCALE_ST_MAX,
+             (int)ceilf(spec->support * atof(NPA_SCALE_ST_MAX)));
     const char prologue[] = "\nstatic inline float npa_kernel_w(float x) {\n";
     int ok = npa_append(&helper, constants, strlen(constants))
              && npa_append(&helper, spec->parameters, strlen(spec->parameters))

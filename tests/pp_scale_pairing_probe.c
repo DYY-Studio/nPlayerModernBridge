@@ -97,7 +97,8 @@ static float plain(Kernel k, float support, float u, float v, float st)
     return acc / fmaxf(wsum, 1e-5f);
 }
 
-/* The paired loop now in the shader. */
+/* The paired loop now in the shader. Horizontal weights are hoisted out of
+ * the vertical loop, and each block fetches once, twice or four times. */
 static float paired(Kernel k, float support, float u, float v, float st)
 {
     const float px = u * WIDTH - 0.5f;
@@ -105,6 +106,10 @@ static float paired(Kernel k, float support, float u, float v, float st)
     const float bx = floorf(px);
     const float by = floorf(py);
     const int kx = (int)ceilf(support * st);
+    float wx[2 * 8];
+    for (int i = 0; i < 2 * kx; i++) {
+        wx[i] = k((px - (bx + (float)(1 - kx + i))) / st);
+    }
     float acc = 0.0f;
     float wsum = 0.0f;
     for (int j = 0; j < kx; j++) {
@@ -115,25 +120,31 @@ static float paired(Kernel k, float support, float u, float v, float st)
         const int foldY = wy0 * wy1 >= 0.0f && fabsf(sy) > 1e-8f;
         const float fy = foldY ? wy1 / sy : 0.0f;
         for (int i = 0; i < kx; i++) {
-            const int ix = 1 - kx + 2 * i;
-            const float wx0 = k((px - (bx + (float)ix)) / st);
-            const float wx1 = k((px - (bx + (float)(ix + 1))) / st);
+            const float wx0 = wx[2 * i];
+            const float wx1 = wx[2 * i + 1];
             const float sx = wx0 + wx1;
             const int foldX = wx0 * wx1 >= 0.0f && fabsf(sx) > 1e-8f;
-            if (foldX && foldY) {
-                const float fx = wx1 / sx;
-                acc += bilinear(bx + (float)ix + fx + 0.5f,
-                                by + (float)iy + fy + 0.5f) * (sx * sy);
-                wsum += sx * sy;
+            const float ax = bx + (float)(1 - kx + 2 * i) + 0.5f;
+            const float ay = by + (float)iy + 0.5f;
+            if (foldX) {
+                const float x0 = ax + wx1 / sx;
+                if (foldY) {
+                    acc += bilinear(x0, ay + fy) * (sx * sy);
+                } else {
+                    acc += bilinear(x0, ay) * (sx * wy0);
+                    acc += bilinear(x0, ay + 1.0f) * (sx * wy1);
+                }
+            } else if (foldY) {
+                const float y0 = ay + fy;
+                acc += bilinear(ax, y0) * (wx0 * sy);
+                acc += bilinear(ax + 1.0f, y0) * (wx1 * sy);
             } else {
-                const float cx = bx + (float)ix + 0.5f;
-                const float cy = by + (float)iy + 0.5f;
-                acc += bilinear(cx, cy) * (wx0 * wy0);
-                acc += bilinear(cx + 1.0f, cy) * (wx1 * wy0);
-                acc += bilinear(cx, cy + 1.0f) * (wx0 * wy1);
-                acc += bilinear(cx + 1.0f, cy + 1.0f) * (wx1 * wy1);
-                wsum += (wx0 + wx1) * (wy0 + wy1);
+                acc += bilinear(ax, ay) * (wx0 * wy0);
+                acc += bilinear(ax + 1.0f, ay) * (wx1 * wy0);
+                acc += bilinear(ax, ay + 1.0f) * (wx0 * wy1);
+                acc += bilinear(ax + 1.0f, ay + 1.0f) * (wx1 * wy1);
             }
+            wsum += sx * sy;
         }
     }
     return acc / fmaxf(wsum, 1e-5f);

@@ -67,16 +67,36 @@ static const char NPA_HLG_SCALE[] = "  rgb1 *= float3(trc_nom_peak);\n";
  * the tap loops stay compile-time constants. */
 #define NPA_PREF_SCALE_KERNEL "PPVideoScaleKernel"
 #define NPA_PREF_SCALE_KERNEL_UP "PPVideoScaleKernelUpscale"
+/* Downscaling anti-ringing keeps its original key so the existing switch
+ * keeps working; upscaling anti-ringing is a separate decision. */
 #define NPA_PREF_ANTIRING "PPVideoAntiRinging"
+#define NPA_PREF_ANTIRING_UP "PPVideoAntiRingingUpscale"
+#define NPA_PREF_ANTIALIASING "PPVideoAntiAliasing"
 
 #define NPA_SAMPLER_ANCHOR \
     "  constexpr sampler s(address::clamp_to_edge, filter::linear);\n"
 #define NPA_TEXCOORD_ANCHOR "  float2 texcoord = in.texcoord;\n"
 #define NPA_NAMESPACE_ANCHOR "using namespace metal;\n"
 
-/* Footprint cap. Raising it sharpens large downscales and costs tap count
- * quadratically; the value is a measurement knob, not a correctness limit. */
-#define NPA_SCALE_ST_MAX "2.0f"
+/* Anti-aliasing strength for downscaling, as libplacebo models it: the kernel
+ * is stretched by the footprint ratio so it low-passes the pixels it skips.
+ * Skipping the stretch is libplacebo's skip_anti_aliasing, and the only cost
+ * of the stronger settings is tap count, which grows linearly with the ratio. */
+#define NPA_AA_SKIP 0
+#define NPA_AA_BALANCE 1
+#define NPA_AA_QUALITY 2
+/* Not a quality ceiling: the footprint comes from dfdx, and a degenerate
+ * derivative would otherwise ask for thousands of taps. 16 covers 8K to 480p. */
+#define NPA_AA_QUALITY_CAP 16.0f
+
+static float npa_st_cap(int antialiasing)
+{
+    switch (antialiasing) {
+    case NPA_AA_BALANCE: return 2.0f;
+    case NPA_AA_QUALITY: return NPA_AA_QUALITY_CAP;
+    default: return 1.0f;
+    }
+}
 
 /* Mitchell-Netravali family: one function covers B-Spline (1,0),
  * Catmull-Rom (0,0.5), Keys a=-0.75 (0,0.75) and Mitchell (1/3,1/3). */
@@ -188,18 +208,25 @@ static const char NPA_SCALE_AXIS[] =
     "  float pos;\n"
     "  float base;\n"
     "  int k;\n"
+    "  bool down;\n"
+    "  bool antiring;\n"
     "};\n"
     "\n"
-    /* The footprint is per-pixel but the whole quad shares it, so choosing the
-     * kernel here is a uniform branch. st > 1 means the source is larger than
-     * the drawable, which is the only case that can ring. */
+    /* Direction and widening are separate decisions. The footprint says which
+     * kernel applies, because that is a property of the geometry. Widening is
+     * the anti-aliasing strength, and turning it off must not change which
+     * kernel is chosen: with st pinned to 1 a footprint test on st would pick
+     * the upscaling kernel for every downscale. */
     "static inline NpaAxis npa_axis(texture2d<float, access::sample> t,\n"
     "                               float2 uv, float2 dudx, float2 dudy) {\n"
     "  NpaAxis a;\n"
     "  a.size = float2(t.get_width(), t.get_height());\n"
     "  const float2 footprint = npa_footprint(dudx, dudy, a.size);\n"
-    "  a.st = clamp(NP_HORIZONTAL ? footprint.x : footprint.y, 1.0f, NP_ST_MAX);\n"
-    "  a.k = int(ceil(npa_support(a.st) * a.st));\n"
+    "  const float f = NP_HORIZONTAL ? footprint.x : footprint.y;\n"
+    "  a.down = f > 1.0f;\n"
+    "  a.st = a.down ? min(f, NP_ST_CAP) : 1.0f;\n"
+    "  a.k = int(ceil(npa_support(a.down) * a.st));\n"
+    "  a.antiring = a.down ? (NP_ANTIRING_DOWN != 0) : (NP_ANTIRING_UP != 0);\n"
     "  const float at = NP_HORIZONTAL ? uv.x * a.size.x : uv.y * a.size.y;\n"
     "  a.pos = at - 0.5f;\n"
     "  a.base = floor(a.pos);\n"
@@ -213,16 +240,10 @@ static const char NPA_SCALE_AXIS[] =
     "  const float2 keep = (floor(uv * a.size - 0.5f) + 0.5f) / a.size;\n"
     "  float4 acc = float4(0.0f);\n"
     "  float wsum = 0.0f;\n"
-    /* Anti-ringing clamps the result to the two texels that straddle the
-     * sample point, the same two libplacebo uses. Ringing lives at edges, and
-     * those texels bracket every edge inside the footprint. */
-    "  float4 lo = float4(0.0f);\n"
-    "  float4 hi = float4(0.0f);\n"
-    "  const int centre = a.k / 2 - 1;\n"
     "  for (int j = 0; j < a.k; ++j) {\n"
     "    const int i0 = 1 - a.k + 2 * j;\n"
-    "    const float w0 = npa_kernel_w((a.pos - (a.base + float(i0))) / a.st, a.st);\n"
-    "    const float w1 = npa_kernel_w((a.pos - (a.base + float(i0 + 1))) / a.st, a.st);\n"
+    "    const float w0 = npa_kernel_w((a.pos - (a.base + float(i0))) / a.st, a.down);\n"
+    "    const float w1 = npa_kernel_w((a.pos - (a.base + float(i0 + 1))) / a.st, a.down);\n"
     "    const float s = w0 + w1;\n"
     "    const float first = a.base + float(i0) + 0.5f;\n"
     "    const float2 at0 = NP_HORIZONTAL ? float2(first / a.size.x, keep.y)\n"
@@ -239,19 +260,21 @@ static const char NPA_SCALE_AXIS[] =
     "      acc += t.sample(sn, at0) * w0;\n"
     "      acc += t.sample(sn, at1) * w1;\n"
     "    }\n"
-    "    if (NP_ANTIRING && j == centre) {\n"
-    "      const float2 at1 = NP_HORIZONTAL ? float2((first + 1.0f) / a.size.x, keep.y)\n"
-    "                                       : float2(keep.x, (first + 1.0f) / a.size.y);\n"
-    "      const float4 c0 = t.sample(sn, at0);\n"
-    "      const float4 c1 = t.sample(sn, at1);\n"
-    "      lo = min(c0, c1);\n"
-    "      hi = max(c0, c1);\n"
-    "    }\n"
     "    wsum += s;\n"
     "  }\n"
     "  float4 result = acc / max(wsum, 1e-5f);\n"
-    "  if (NP_ANTIRING) {\n"
-    "    result = clamp(result, lo, hi);\n"
+    /* Anti-ringing clamps to the two texels that straddle the sample point, as
+     * libplacebo does. Those are a.base and a.base + 1 whatever the tap count
+     * is: the loop pairs texels at even offsets, so an odd k straddles the
+     * boundary between two pairs and no single pair brackets the point. */
+    "  if (a.antiring) {\n"
+    "    const float2 c0 = NP_HORIZONTAL ? float2(a.base / a.size.x, keep.y)\n"
+    "                                    : float2(keep.x, a.base / a.size.y);\n"
+    "    const float2 c1 = NP_HORIZONTAL ? float2((a.base + 1.0f) / a.size.x, keep.y)\n"
+    "                                    : float2(keep.x, (a.base + 1.0f) / a.size.y);\n"
+    "    const float4 t0 = t.sample(sn, c0);\n"
+    "    const float4 t1 = t.sample(sn, c1);\n"
+    "    result = clamp(result, min(t0, t1), max(t0, t1));\n"
     "  }\n"
     "  return result;\n"
     "}\n";
@@ -338,11 +361,14 @@ static void npa_hdr_log(const char *message, int status)
 /* One line per generated shader, so the active kernel is observable without a
  * debugger: the choice is otherwise only visible in the MSL text. */
 static void npa_hdr_log_kernel(int kernel, int kernel_up, int antiring,
+                               int antiring_up, int antialiasing,
                                int transfer, int hdr, int edr)
 {
     fprintf(stderr,
-            "[npa-pp-hdr] shader down=%d up=%d antiring=%d transfer=%d hdr=%d edr=%d\n",
-            kernel, kernel_up, antiring, transfer, hdr, edr);
+            "[npa-pp-hdr] shader down=%d up=%d antiring=%d/%d aa=%d"
+            " transfer=%d hdr=%d edr=%d\n",
+            kernel, kernel_up, antiring, antiring_up, antialiasing,
+            transfer, hdr, edr);
 }
 
 /* The original shader generator is reached through the frozen table; the
@@ -560,7 +586,8 @@ static char *npa_scale_samples(const char *source)
 /* Bake one kernel into the shader. Selection happens once per generation, so
  * the tap bounds become compile-time constants and the GPU pays nothing for
  * the choice. */
-static int npa_apply_scale(char **stage, int kernel, int kernel_up, int antiring)
+static int npa_apply_scale(char **stage, int kernel, int kernel_up,
+                           int antiring_down, int antiring_up, int antialiasing)
 {
     if (kernel <= 0 || (size_t)kernel >= NPA_KERNEL_COUNT) {
         return 0;
@@ -592,17 +619,22 @@ static int npa_apply_scale(char **stage, int kernel, int kernel_up, int antiring
     }
 
     NPABuffer helper = {0};
-    char constants[192];
+    char constants[256];
     /* Both kernels are baked, because the drawable can be resized while the
      * shader stays: the choice has to happen at sample time. The support is
-     * the larger of the two so the tap loop covers whichever is picked. */
-    const float support = spec->support > spec_up->support ? spec->support : spec_up->support;
+     * the larger of the two so the tap loop covers whichever is picked.
+     *
+     * NP_ST_CAP is the anti-aliasing strength, not a kernel property: 1 keeps
+     * the filter at its base width, 2 is the historical cap, and the quality
+     * setting only exists to bound a degenerate derivative. */
     snprintf(constants, sizeof(constants),
-             "#define NP_ST_MAX %s\n"
+             "#define NP_ST_CAP %.1ff\n"
              "#define NP_SUPPORT_DOWN %.1ff\n#define NP_SUPPORT_UP %.1ff\n"
-             "#define NP_ANTIRING %d\n#define NP_HORIZONTAL 0\n",
-             NPA_SCALE_ST_MAX, spec->support, spec_up->support,
-             antiring && spec->rings ? 1 : 0);
+             "#define NP_ANTIRING_DOWN %d\n#define NP_ANTIRING_UP %d\n"
+             "#define NP_HORIZONTAL 0\n",
+             npa_st_cap(antialiasing), spec->support, spec_up->support,
+             antiring_down && spec->rings ? 1 : 0,
+             antiring_up && spec_up->rings ? 1 : 0);
     int ok = npa_append(&helper, constants, strlen(constants));
 
     /* One weight function per kernel under its own name, plus the dispatcher
@@ -618,19 +650,18 @@ static int npa_apply_scale(char **stage, int kernel, int kernel_up, int antiring
     }
     /* st > 1 is a downscale: the source is larger than the drawable. */
     static const char dispatch[] =
-        "\n/* st is the footprint this pass actually uses, so it is the only\n"
-        " * input needed to pick the kernel. */\n"
-        "static inline float npa_kernel_w(float x, float st) {\n"
-        "  return st > 1.0f ? npa_w_down(x) : npa_w_up(x);\n"
+        "\n/* down is the axis direction, not the widening amount, so pinning the\n"
+        " * anti-aliasing strength cannot change which kernel is chosen. */\n"
+        "static inline float npa_kernel_w(float x, bool down) {\n"
+        "  return down ? npa_w_down(x) : npa_w_up(x);\n"
         "}\n"
-        "\nstatic inline float npa_support(float st) {\n"
-        "  return st > 1.0f ? NP_SUPPORT_DOWN : NP_SUPPORT_UP;\n"
+        "\nstatic inline float npa_support(bool down) {\n"
+        "  return down ? NP_SUPPORT_DOWN : NP_SUPPORT_UP;\n"
         "}\n";
     if (ok) {
         ok = npa_append(&helper, dispatch, strlen(dispatch))
              && npa_append(&helper, NPA_SCALE_FOOTPRINT, strlen(NPA_SCALE_FOOTPRINT));
     }
-    (void)support;
     if (ok) {
         /* The pre-pass filters the other axis, so the loop is emitted twice
          * with NP_HORIZONTAL flipped and the second copy renamed. */
@@ -737,7 +768,9 @@ static char *npa_rewrite_shader(
     int edr,
     int kernel,
     int kernel_up,
-    int antiring
+    int antiring_down,
+    int antiring_up,
+    int antialiasing
 )
 {
     char *stage = strdup(source);
@@ -767,7 +800,9 @@ static char *npa_rewrite_shader(
             goto fail;
         }
     }
-    if (kernel > 0 && !npa_apply_scale(&stage, kernel, kernel_up, antiring)) {
+    if (kernel > 0
+        && !npa_apply_scale(&stage, kernel, kernel_up,
+                            antiring_down, antiring_up, antialiasing)) {
         goto fail;
     }
     return stage;
@@ -1270,7 +1305,11 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
      * choice, so it applies whether or not the layer can go extended-range. */
     const int kernel = npa_scale_kernel_preference();
     const int kernel_up = npa_scale_kernel_up_preference();
-    const int antiring = npa_int_preference(NPA_PREF_ANTIRING) != 0;
+    const int antiring_down = npa_int_preference(NPA_PREF_ANTIRING) != 0;
+    const int antiring_up = npa_int_preference(NPA_PREF_ANTIRING_UP) != 0;
+    /* npa_st_cap folds anything outside the three settings to Skip, so the raw
+     * value is passed through and the log shows what was actually stored. */
+    const int antialiasing = npa_int_preference(NPA_PREF_ANTIALIASING);
     const int edr = npa_edr_available();
     if (!edr && kernel == 0 && kernel_up == 0) {
         /* Nothing to change: without CAEDRMetadata the layer stays SDR and the
@@ -1288,8 +1327,11 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
         return source;
     }
 
-    npa_hdr_log_kernel(kernel, kernel_up, antiring, transfer, hdr, edr);
-    char *rewritten = npa_rewrite_shader(utf8, transfer, hdr, edr, kernel, kernel_up, antiring);
+    npa_hdr_log_kernel(kernel, kernel_up, antiring_down, antiring_up,
+                       antialiasing, transfer, hdr, edr);
+    char *rewritten = npa_rewrite_shader(utf8, transfer, hdr, edr, kernel,
+                                         kernel_up, antiring_down, antiring_up,
+                                         antialiasing);
     if (!rewritten) {
         npa_hdr_log("shader was not rewritten; keeping the host shader", transfer);
         if (edr && hdr) {

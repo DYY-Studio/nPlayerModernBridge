@@ -63,7 +63,7 @@ static float spline36(float x)
 {
     const float ax = fabsf(x);
     if (ax < 1.0f) {
-        return 1.0f + ax * ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f
+        return 1.0f + ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f
                + ax * (13.0f / 11.0f)));
     }
     if (ax < 2.0f) {
@@ -81,7 +81,7 @@ static float spline64(float x)
 {
     const float ax = fabsf(x);
     if (ax < 1.0f) {
-        return 1.0f + ax * ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f
+        return 1.0f + ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f
                + ax * (49.0f / 41.0f)));
     }
     if (ax < 2.0f) {

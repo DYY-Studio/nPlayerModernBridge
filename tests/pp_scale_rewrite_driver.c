@@ -15,11 +15,14 @@ static char *slurp(const char *p){FILE*f=fopen(p,"rb");if(!f)return NULL;fseek(f
 int main(int argc,char**argv){
   char *s=slurp(argv[1]); if(!s){fprintf(stderr,"read %s\n",argv[1]);return 2;}
   /* argv[5] = downscale kernel, argv[6] = upscale kernel (defaults to 5),
-   * argv[7] = anti-ringing flag. */
+   * argv[7] = downscaling anti-ringing, argv[8] = upscaling anti-ringing,
+   * argv[9] = anti-aliasing setting (0 skip, 1 balance, 2 quality). */
   int down=atoi(argv[5]);
   int up=argc>6?atoi(argv[6]):down;
-  int ar=argc>7?atoi(argv[7]):0;
-  char *r=npa_rewrite_shader(s,atoi(argv[3]),atoi(argv[4]),1,down,up,ar);
+  int ar_down=argc>7?atoi(argv[7]):0;
+  int ar_up=argc>8?atoi(argv[8]):ar_down;
+  int aa=argc>9?atoi(argv[9]):0;
+  char *r=npa_rewrite_shader(s,atoi(argv[3]),atoi(argv[4]),1,down,up,ar_down,ar_up,aa);
   if(!r){fprintf(stderr,"REWRITE FAILED\n");return 3;}
   FILE*f=fopen(argv[2],"wb");fputs(r,f);fclose(f);
   free(r);free(s);return 0;

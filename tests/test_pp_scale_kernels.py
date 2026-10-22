@@ -20,6 +20,20 @@ KERNELS = {
 }
 
 
+def test_scaling_on_metal(tmp_path):
+    """Read back the production two-pass output and each generated kernel."""
+    generate_header(
+        ROOT / 'manifests', tmp_path / 'renderer-pp-hdr-bindings.h', 'renderer-pp-hdr')
+    output = tmp_path / 'render-probe'
+    subprocess.run([
+        'xcrun', 'clang', '-O1', '-I' + str(tmp_path),
+        str(ROOT / 'tests/pp_scale_render_probe.m'),
+        '-framework', 'Foundation', '-framework', 'QuartzCore',
+        '-framework', 'CoreGraphics', '-framework', 'Metal', '-o', str(output),
+    ], check=True)
+    subprocess.run([str(output)], check=True)
+
+
 def test_tap_pairing_is_exact():
     """The folded fetch must equal the four separate taps it replaces."""
     output = ROOT / 'build' / 'pp-scale-pairing-probe'
@@ -79,6 +93,39 @@ def test_kernels_bake_into_the_shader(tmp_path):
         assert 'npa_w_down(' in source and 'npa_w_up(' in source
         assert 'NP_SUPPORT_DOWN' in source and 'NP_SUPPORT_UP' in source
         # And the result must compile.
+        subprocess.run([
+            'xcrun', '-sdk', 'iphoneos', 'metal', '-c', str(shader),
+            '-o', str(tmp_path / f'{name}.air'),
+        ], check=True)
+
+
+@pytest.mark.skipif(not HOST_MSL.is_file(), reason='no captured host shader')
+def test_antialiasing_and_antiringing_bake(tmp_path):
+    """Compile representative AA, anti-ringing and mixed-kernel settings."""
+    generate_header(
+        ROOT / 'manifests', tmp_path / 'renderer-pp-hdr-bindings.h', 'renderer-pp-hdr')
+    driver = tmp_path / 'rewrite'
+    subprocess.run([
+        'xcrun', 'clang', '-O1', '-I' + str(tmp_path),
+        str(ROOT / 'tests/pp_scale_rewrite_driver.c'),
+        '-framework', 'QuartzCore', '-framework', 'CoreGraphics',
+        '-framework', 'Foundation', '-o', str(driver),
+    ], check=True)
+
+    cases = [
+        (5, 5, 0, 0, 0),
+        (5, 5, 1, 1, 1),
+        (5, 5, 1, 1, 2),
+        (5, 6, 1, 0, 2),
+        (6, 5, 1, 1, 1),
+    ]
+    for down, up, ar_down, ar_up, aa in cases:
+        name = f'aa{aa}-{down}-{up}-{ar_down}{ar_up}'
+        shader = tmp_path / f'{name}.metal'
+        subprocess.run([
+            str(driver), str(HOST_MSL), str(shader), '16', '1',
+            str(down), str(up), str(ar_down), str(ar_up), str(aa),
+        ], check=True)
         subprocess.run([
             'xcrun', '-sdk', 'iphoneos', 'metal', '-c', str(shader),
             '-o', str(tmp_path / f'{name}.air'),

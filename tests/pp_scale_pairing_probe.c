@@ -45,7 +45,7 @@ static float spline36(float x)
 {
     const float ax = fabsf(x);
     if (ax < 1.0f) {
-        return 1.0f + ax * ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f
+        return 1.0f + ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f
                + ax * (13.0f / 11.0f)));
     }
     if (ax < 2.0f) {
@@ -63,7 +63,7 @@ static float spline64(float x)
 {
     const float ax = fabsf(x);
     if (ax < 1.0f) {
-        return 1.0f + ax * ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f
+        return 1.0f + ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f
                + ax * (49.0f / 41.0f)));
     }
     if (ax < 2.0f) {
@@ -133,8 +133,8 @@ static void compare(const char *name, Kernel k, float support, float st, float t
                 const float p = (axis ? v * HEIGHT : u * WIDTH) - 0.5f;
                 const float base = floorf(p);
                 const int n = (int)ceilf(support * st);
-                const float keepx = (floorf(u * WIDTH - 0.5f) + 0.5f) / WIDTH;
-                const float keepy = (floorf(v * HEIGHT - 0.5f) + 0.5f) / HEIGHT;
+                const float keepx = (floorf(u * WIDTH) + 0.5f) / WIDTH;
+                const float keepy = (floorf(v * HEIGHT) + 0.5f) / HEIGHT;
                 float folded = 0.0f;
                 float plain = 0.0f;
                 float wsum = 0.0f;
@@ -181,48 +181,46 @@ static void compare(const char *name, Kernel k, float support, float st, float t
     assert(worst <= tolerance);
 }
 
-/* Anti-ringing clamps the result to the two texels straddling the sample
- * point. Two properties matter: it must remove the overshoot a negative lobe
- * produces at a step edge, and it must leave a smooth ramp alone. */
-static float filter_axis(Kernel k, float support, float st, float u, float v,
-                         int antiring, int *clamped)
+/* Anti-ringing clamps the result to the two texels that straddle the sample
+ * point, which are `base` and `base + 1` whatever the tap count is. Three
+ * properties matter: it must remove the overshoot a negative lobe produces at
+ * a step edge, it must leave a smooth ramp alone, and the clamp pair must not
+ * depend on the parity of the tap count. */
+static float filter_axis(Kernel k, float support, float st, int down, int antiring,
+                         float u, float v, int *clamped)
 {
     const float p = u * WIDTH - 0.5f;
-    const float keepy = (floorf(v * HEIGHT - 0.5f) + 0.5f) / HEIGHT;
+    const float keepy = (floorf(v * HEIGHT) + 0.5f) / HEIGHT;
     const float base = floorf(p);
     const int n = (int)ceilf(support * st);
     float acc = 0.0f;
     float wsum = 0.0f;
-    float lo = 0.0f;
-    float hi = 0.0f;
-    const int centre = n / 2 - 1;
     for (int j = 0; j < n; j++) {
         const int i0 = 1 - n + 2 * j;
-        const float w0 = k((p - (base + (float)i0)) / st);
-        const float w1 = k((p - (base + (float)(i0 + 1))) / st);
+        const float w0 = down ? k((p - (base + (float)i0)) / st)
+                              : k((p - (base + (float)i0)));
+        const float w1 = down ? k((p - (base + (float)(i0 + 1))) / st)
+                              : k((p - (base + (float)(i0 + 1))));
         const float first = base + (float)i0 + 0.5f;
         acc += bilinear(first, keepy * HEIGHT) * w0;
         acc += bilinear(first + 1.0f, keepy * HEIGHT) * w1;
-        if (j == centre) {
-            const float c0 = bilinear(first, keepy * HEIGHT);
-            const float c1 = bilinear(first + 1.0f, keepy * HEIGHT);
-            lo = fminf(c0, c1);
-            hi = fmaxf(c0, c1);
-        }
         wsum += w0 + w1;
     }
     const float result = acc / fmaxf(wsum, 1e-5f);
     if (!antiring) {
         return result;
     }
-    const float clampedResult = fminf(fmaxf(result, lo), hi);
+    const float c0 = bilinear(base + 0.5f, keepy * HEIGHT);
+    const float c1 = bilinear(base + 1.5f, keepy * HEIGHT);
+    const float clampedResult =
+        fminf(fmaxf(result, fminf(c0, c1)), fmaxf(c0, c1));
     if (clamped) {
         *clamped = fabsf(clampedResult - result) > 1e-7f;
     }
     return clampedResult;
 }
 
-static void check_antiring(Kernel k, float support, float st)
+static void check_antiring(Kernel k, float support, float st, int down)
 {
     /* A hard step: Lanczos overshoots on both sides of it. */
     for (int y = 0; y < HEIGHT; y++) {
@@ -234,10 +232,13 @@ static void check_antiring(Kernel k, float support, float st)
     float stepChange = 0.0f;
     int fired = 0;
     for (int x = WIDTH / 2 - 6; x <= WIDTH / 2 + 6; x++) {
-        const float u = ((float)x + 0.5f) / (float)WIDTH;
-        const float plain = filter_axis(k, support, st, u, 0.5f, 0, NULL);
+        /* A non-integer phase: at an exact texel centre every interpolating
+         * kernel reduces to a copy and there is nothing to ring. */
+        const float u = ((float)x + 0.37f) / (float)WIDTH;
+        const float plain = filter_axis(k, support, st, down, 0, u, 0.5f, NULL);
         int clamped = 0;
-        const float guarded = filter_axis(k, support, st, u, 0.5f, 1, &clamped);
+        const float guarded =
+            filter_axis(k, support, st, down, 1, u, 0.5f, &clamped);
         if (clamped) fired++;
         stepChange = fmaxf(stepChange, fabsf(guarded - plain));
         /* The clamp can only pull the value towards [0,1]. */
@@ -248,7 +249,8 @@ static void check_antiring(Kernel k, float support, float st)
             worst = fmaxf(worst, overshoot);
         }
     }
-    printf("antiring   overshoot=%.4f clamped_pixels=%d\n", worst, fired);
+    printf("antiring %s overshoot=%.4f clamped_pixels=%d\n",
+           down ? "down" : "up  ", worst, fired);
     /* The kernel must actually ring on a step, or this test proves nothing. */
     assert(worst > 1e-3f);
     assert(fired > 0);
@@ -264,13 +266,44 @@ static void check_antiring(Kernel k, float support, float st)
     }
     float rampChange = 0.0f;
     for (int x = 8; x < WIDTH - 8; x += 3) {
-        const float u = ((float)x + 0.5f) / (float)WIDTH;
-        const float plain = filter_axis(k, support, st, u, 0.5f, 0, NULL);
-        const float guarded = filter_axis(k, support, st, u, 0.5f, 1, NULL);
+        const float u = ((float)x + 0.37f) / (float)WIDTH;
+        const float plain = filter_axis(k, support, st, down, 0, u, 0.5f, NULL);
+        const float guarded =
+            filter_axis(k, support, st, down, 1, u, 0.5f, NULL);
         rampChange = fmaxf(rampChange, fabsf(guarded - plain));
     }
-    printf("antiring   step=%.4f ramp=%.4f\n", stepChange, rampChange);
+    printf("antiring %s step=%.4f ramp=%.4f\n",
+           down ? "down" : "up  ", stepChange, rampChange);
     assert(stepChange > 10.0f * rampChange);
+}
+
+/* A linear ramp is reproduced exactly by every interpolating kernel, and the
+ * two texels that straddle a point on a ramp bracket its value. So a correct
+ * clamp pair leaves the ramp untouched even at full strength. Clamping to a
+ * pair one texel to the left, which is what indexing the pair by the tap count
+ * does for an even tap count, offsets the whole ramp by half a texel. */
+static void check_antiring_preserves_ramp(Kernel k, float support)
+{
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            image[y][x] = (float)x / (float)WIDTH;
+        }
+    }
+    float worst = 0.0f;
+    for (int x = 8; x < WIDTH - 8; x++) {
+        for (int phase = 0; phase < 4; phase++) {
+            const float u = ((float)x + 0.125f * (float)(phase * 2 + 1)) / (float)WIDTH;
+            const float plain = filter_axis(k, support, 1.0f, 0, 0, u, 0.5f, NULL);
+            const float guarded = filter_axis(k, support, 1.0f, 0, 1, u, 0.5f, NULL);
+            /* Texel n holds n/WIDTH and sits at n + 0.5, so the ramp's value
+             * at the sample point is (p - 0.5) / WIDTH. */
+            const float ideal = (u * WIDTH - 1.0f) / (float)WIDTH;
+            assert(fabsf(plain - ideal) < 0.02f);
+            worst = fmaxf(worst, fabsf(guarded - plain));
+        }
+    }
+    printf("antiring up   ramp shift=%.6f\n", worst);
+    assert(worst < 1e-4f);
 }
 
 int main(void)
@@ -296,7 +329,13 @@ int main(void)
         compare("spline36", spline36, 3.0f, st, 2e-6f);
         compare("spline64", spline64, 4.0f, st, 2e-6f);
     }
-    check_antiring(lanczos3, 3.0f, 1.5f);
+    check_antiring(lanczos3, 3.0f, 1.5f, 1);
+    /* st=1 is an odd tap count for the radius-3 kernels and even for the
+     * radius-2 ones; both parities must clamp to the same pair. */
+    check_antiring(catmull, 2.0f, 1.0f, 0);
+    check_antiring(lanczos3, 3.0f, 1.0f, 0);
+    check_antiring_preserves_ramp(catmull, 2.0f);
+    check_antiring_preserves_ramp(lanczos3, 3.0f);
     printf("folding matches the plain taps for every kernel\n");
     return 0;
 }

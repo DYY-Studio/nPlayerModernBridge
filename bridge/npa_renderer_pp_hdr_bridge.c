@@ -67,16 +67,36 @@ static const char NPA_HLG_SCALE[] = "  rgb1 *= float3(trc_nom_peak);\n";
  * the tap loops stay compile-time constants. */
 #define NPA_PREF_SCALE_KERNEL "PPVideoScaleKernel"
 #define NPA_PREF_SCALE_KERNEL_UP "PPVideoScaleKernelUpscale"
+/* Downscaling anti-ringing keeps its original key so the existing switch
+ * keeps working; upscaling anti-ringing is a separate decision. */
 #define NPA_PREF_ANTIRING "PPVideoAntiRinging"
+#define NPA_PREF_ANTIRING_UP "PPVideoAntiRingingUpscale"
+#define NPA_PREF_ANTIALIASING "PPVideoAntiAliasing"
 
 #define NPA_SAMPLER_ANCHOR \
     "  constexpr sampler s(address::clamp_to_edge, filter::linear);\n"
 #define NPA_TEXCOORD_ANCHOR "  float2 texcoord = in.texcoord;\n"
 #define NPA_NAMESPACE_ANCHOR "using namespace metal;\n"
 
-/* Footprint cap. Raising it sharpens large downscales and costs tap count
- * quadratically; the value is a measurement knob, not a correctness limit. */
-#define NPA_SCALE_ST_MAX "2.0f"
+/* Anti-aliasing strength for downscaling, as libplacebo models it: the kernel
+ * is stretched by the footprint ratio so it low-passes the pixels it skips.
+ * Skipping the stretch is libplacebo's skip_anti_aliasing, and the only cost
+ * of the stronger settings is tap count, which grows linearly with the ratio. */
+#define NPA_AA_SKIP 0
+#define NPA_AA_BALANCE 1
+#define NPA_AA_QUALITY 2
+/* Not a quality ceiling: the footprint comes from dfdx, and a degenerate
+ * derivative would otherwise ask for thousands of taps. 16 covers 8K to 480p. */
+#define NPA_AA_QUALITY_CAP 16.0f
+
+static float npa_st_cap(int antialiasing)
+{
+    switch (antialiasing) {
+    case NPA_AA_BALANCE: return 2.0f;
+    case NPA_AA_QUALITY: return NPA_AA_QUALITY_CAP;
+    default: return 1.0f;
+    }
+}
 
 /* Mitchell-Netravali family: one function covers B-Spline (1,0),
  * Catmull-Rom (0,0.5), Keys a=-0.75 (0,0.75) and Mitchell (1/3,1/3). */
@@ -102,7 +122,7 @@ static const char NPA_WEIGHT_CUBIC[] =
 static const char NPA_WEIGHT_SPLINE36[] =
     "  const float ax = fabs(x);\n"
     "  if (ax < 1.0f) {\n"
-    "    return 1.0f + ax * ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f\n"
+    "    return 1.0f + ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f\n"
     "           + ax * (13.0f / 11.0f)));\n"
     "  }\n"
     "  if (ax < 2.0f) {\n"
@@ -121,7 +141,7 @@ static const char NPA_WEIGHT_SPLINE36[] =
 static const char NPA_WEIGHT_SPLINE64[] =
     "  const float ax = fabs(x);\n"
     "  if (ax < 1.0f) {\n"
-    "    return 1.0f + ax * ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f\n"
+    "    return 1.0f + ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f\n"
     "           + ax * (49.0f / 41.0f)));\n"
     "  }\n"
     "  if (ax < 2.0f) {\n"
@@ -171,10 +191,10 @@ static const char NPA_SCALE_FOOTPRINT[] =
  * one-dimensional: the other axis is not filtered here at all.
  *
  * That is only sound because the intermediate keeps the source height and the
- * source plane's pixel format, while its width matches the drawable. Both
- * passes therefore land on a texel centre along the axis they do not filter,
- * where bilinear returns that texel exactly. Snapping is explicit so a rounding
- * difference cannot smear the untouched axis.
+ * source plane's pixel format, while its width matches the effective video
+ * width, including the host's fit/crop geometry. Both
+ * passes normally land on a texel centre along the axis they do not filter.
+ * The final pass keeps horizontal interpolation for fractional viewport edges.
  *
  * Folding: a tap pair folds into one bilinear fetch at w1/(w0+w1) scaled by
  * w0+w1, which is algebraically the same two taps. The hardware clamps that
@@ -188,18 +208,25 @@ static const char NPA_SCALE_AXIS[] =
     "  float pos;\n"
     "  float base;\n"
     "  int k;\n"
+    "  bool down;\n"
+    "  bool antiring;\n"
     "};\n"
     "\n"
-    /* The footprint is per-pixel but the whole quad shares it, so choosing the
-     * kernel here is a uniform branch. st > 1 means the source is larger than
-     * the drawable, which is the only case that can ring. */
+    /* Direction and widening are separate decisions. The footprint says which
+     * kernel applies, because that is a property of the geometry. Widening is
+     * the anti-aliasing strength, and turning it off must not change which
+     * kernel is chosen: with st pinned to 1 a footprint test on st would pick
+     * the upscaling kernel for every downscale. */
     "static inline NpaAxis npa_axis(texture2d<float, access::sample> t,\n"
     "                               float2 uv, float2 dudx, float2 dudy) {\n"
     "  NpaAxis a;\n"
     "  a.size = float2(t.get_width(), t.get_height());\n"
     "  const float2 footprint = npa_footprint(dudx, dudy, a.size);\n"
-    "  a.st = clamp(NP_HORIZONTAL ? footprint.x : footprint.y, 1.0f, NP_ST_MAX);\n"
-    "  a.k = int(ceil(npa_support(a.st) * a.st));\n"
+    "  const float f = NP_HORIZONTAL ? footprint.x : footprint.y;\n"
+    "  a.down = f > 1.0f;\n"
+    "  a.st = a.down ? min(f, NP_ST_CAP) : 1.0f;\n"
+    "  a.k = int(ceil(npa_support(a.down) * a.st));\n"
+    "  a.antiring = a.down ? (NP_ANTIRING_DOWN != 0) : (NP_ANTIRING_UP != 0);\n"
     "  const float at = NP_HORIZONTAL ? uv.x * a.size.x : uv.y * a.size.y;\n"
     "  a.pos = at - 0.5f;\n"
     "  a.base = floor(a.pos);\n"
@@ -209,20 +236,15 @@ static const char NPA_SCALE_AXIS[] =
     "static inline float4 npa_tap(texture2d<float, access::sample> t, sampler sn,\n"
     "                             float2 uv, float2 dudx, float2 dudy) {\n"
     "  const NpaAxis a = npa_axis(t, uv, dudx, dudy);\n"
-    /* The unfiltered axis stays on a texel centre so bilinear cannot blur it. */
-    "  const float2 keep = (floor(uv * a.size - 0.5f) + 0.5f) / a.size;\n"
+    /* Snap rows in the pre-pass; preserve horizontal subpixel placement in
+     * the final pass when the fitted video width rounds to an integer. */
+    "  const float2 keep = NP_HORIZONTAL ? (floor(uv * a.size) + 0.5f) / a.size : uv;\n"
     "  float4 acc = float4(0.0f);\n"
     "  float wsum = 0.0f;\n"
-    /* Anti-ringing clamps the result to the two texels that straddle the
-     * sample point, the same two libplacebo uses. Ringing lives at edges, and
-     * those texels bracket every edge inside the footprint. */
-    "  float4 lo = float4(0.0f);\n"
-    "  float4 hi = float4(0.0f);\n"
-    "  const int centre = a.k / 2 - 1;\n"
     "  for (int j = 0; j < a.k; ++j) {\n"
     "    const int i0 = 1 - a.k + 2 * j;\n"
-    "    const float w0 = npa_kernel_w((a.pos - (a.base + float(i0))) / a.st, a.st);\n"
-    "    const float w1 = npa_kernel_w((a.pos - (a.base + float(i0 + 1))) / a.st, a.st);\n"
+    "    const float w0 = npa_kernel_w((a.pos - (a.base + float(i0))) / a.st, a.down);\n"
+    "    const float w1 = npa_kernel_w((a.pos - (a.base + float(i0 + 1))) / a.st, a.down);\n"
     "    const float s = w0 + w1;\n"
     "    const float first = a.base + float(i0) + 0.5f;\n"
     "    const float2 at0 = NP_HORIZONTAL ? float2(first / a.size.x, keep.y)\n"
@@ -239,19 +261,21 @@ static const char NPA_SCALE_AXIS[] =
     "      acc += t.sample(sn, at0) * w0;\n"
     "      acc += t.sample(sn, at1) * w1;\n"
     "    }\n"
-    "    if (NP_ANTIRING && j == centre) {\n"
-    "      const float2 at1 = NP_HORIZONTAL ? float2((first + 1.0f) / a.size.x, keep.y)\n"
-    "                                       : float2(keep.x, (first + 1.0f) / a.size.y);\n"
-    "      const float4 c0 = t.sample(sn, at0);\n"
-    "      const float4 c1 = t.sample(sn, at1);\n"
-    "      lo = min(c0, c1);\n"
-    "      hi = max(c0, c1);\n"
-    "    }\n"
     "    wsum += s;\n"
     "  }\n"
     "  float4 result = acc / max(wsum, 1e-5f);\n"
-    "  if (NP_ANTIRING) {\n"
-    "    result = clamp(result, lo, hi);\n"
+    /* Anti-ringing clamps to the two texels that straddle the sample point, as
+     * libplacebo does. Those are a.base and a.base + 1 whatever the tap count
+     * is: the loop pairs texels at even offsets, so an odd k straddles the
+     * boundary between two pairs and no single pair brackets the point. */
+    "  if (a.antiring) {\n"
+    "    const float2 c0 = NP_HORIZONTAL ? float2((a.base + 0.5f) / a.size.x, keep.y)\n"
+    "                                    : float2(keep.x, (a.base + 0.5f) / a.size.y);\n"
+    "    const float2 c1 = NP_HORIZONTAL ? float2((a.base + 1.5f) / a.size.x, keep.y)\n"
+    "                                    : float2(keep.x, (a.base + 1.5f) / a.size.y);\n"
+    "    const float4 t0 = t.sample(sn, c0);\n"
+    "    const float4 t1 = t.sample(sn, c1);\n"
+    "    result = clamp(result, min(t0, t1), max(t0, t1));\n"
     "  }\n"
     "  return result;\n"
     "}\n";
@@ -273,11 +297,19 @@ static const char NPA_SCALE_WRAPPERS[] =
 
 static const char NPA_SCALE_HORIZONTAL[] =
     "\n"
+    "vertex Varyings npaHorizontalVertex(uint vid [[vertex_id]]) {\n"
+    "  const float2 p = float2((vid << 1) & 2, vid & 2);\n"
+    "  Varyings out;\n"
+    "  out.position = float4(p * 2.0f - 1.0f, 0.0f, 1.0f);\n"
+    "  out.texcoord = float2(p.x, 1.0f - p.y);\n"
+    "  return out;\n"
+    "}\n"
+    "\n"
     "fragment float4 npaHorizontal(Varyings in [[ stage_in ]],\n"
     "                              texture2d<float, access::sample> src [[ texture(0) ]]) {\n"
     "  constexpr sampler sn(address::clamp_to_edge, filter::linear);\n"
     "  const float2 uv = in.texcoord;\n"
-    "  return npa_tap(src, sn, uv, dfdx(uv), dfdy(uv));\n"
+    "  return npa_h_tap(src, sn, uv, dfdx(uv), dfdy(uv));\n"
     "}\n";
 
 typedef struct {
@@ -292,12 +324,11 @@ typedef struct {
 
 /* Every kernel runs as two passes: one axis into an intermediate, the other
  * into the drawable. A single 2D pass costs k^2 tap blocks while two passes
- * cost k per pass, so the separable form is never slower and wins quickly as
- * the footprint grows. */
+ * cost k per pass, at the cost of intermediate texture reads and writes. */
 static const NPAKernelSpec NPA_KERNELS[] = {
     {NULL, NULL, 0.0f, 0},
     {"#define NP_B 0.0f\n#define NP_C 0.5f\n", NPA_WEIGHT_CUBIC, 2.0f, 1},
-    {"#define NP_B 0.33333334f\n#define NP_C 0.33333334f\n", NPA_WEIGHT_CUBIC, 2.0f, 0},
+    {"#define NP_B 0.33333334f\n#define NP_C 0.33333334f\n", NPA_WEIGHT_CUBIC, 2.0f, 1},
     {"#define NP_B 0.0f\n#define NP_C 0.75f\n", NPA_WEIGHT_CUBIC, 2.0f, 1},
     {"#define NP_A 2.0f\n", NPA_WEIGHT_LANCZOS, 2.0f, 1},
     {"#define NP_A 3.0f\n", NPA_WEIGHT_LANCZOS, 3.0f, 1},
@@ -338,11 +369,14 @@ static void npa_hdr_log(const char *message, int status)
 /* One line per generated shader, so the active kernel is observable without a
  * debugger: the choice is otherwise only visible in the MSL text. */
 static void npa_hdr_log_kernel(int kernel, int kernel_up, int antiring,
+                               int antiring_up, int antialiasing,
                                int transfer, int hdr, int edr)
 {
     fprintf(stderr,
-            "[npa-pp-hdr] shader down=%d up=%d antiring=%d transfer=%d hdr=%d edr=%d\n",
-            kernel, kernel_up, antiring, transfer, hdr, edr);
+            "[npa-pp-hdr] shader down=%d up=%d antiring=%d/%d aa=%d"
+            " transfer=%d hdr=%d edr=%d\n",
+            kernel, kernel_up, antiring, antiring_up, antialiasing,
+            transfer, hdr, edr);
 }
 
 /* The original shader generator is reached through the frozen table; the
@@ -560,7 +594,8 @@ static char *npa_scale_samples(const char *source)
 /* Bake one kernel into the shader. Selection happens once per generation, so
  * the tap bounds become compile-time constants and the GPU pays nothing for
  * the choice. */
-static int npa_apply_scale(char **stage, int kernel, int kernel_up, int antiring)
+static int npa_apply_scale(char **stage, int kernel, int kernel_up,
+                           int antiring_down, int antiring_up, int antialiasing)
 {
     if (kernel <= 0 || (size_t)kernel >= NPA_KERNEL_COUNT) {
         return 0;
@@ -592,17 +627,21 @@ static int npa_apply_scale(char **stage, int kernel, int kernel_up, int antiring
     }
 
     NPABuffer helper = {0};
-    char constants[192];
+    char constants[256];
     /* Both kernels are baked, because the drawable can be resized while the
-     * shader stays: the choice has to happen at sample time. The support is
-     * the larger of the two so the tap loop covers whichever is picked. */
-    const float support = spec->support > spec_up->support ? spec->support : spec_up->support;
+     * shader stays: direction and tap count are selected at sample time.
+     *
+     * NP_ST_CAP is the anti-aliasing strength, not a kernel property: 1 keeps
+     * the filter at its base width, 2 is the historical cap, and the quality
+     * setting only exists to bound a degenerate derivative. */
     snprintf(constants, sizeof(constants),
-             "#define NP_ST_MAX %s\n"
+             "#define NP_ST_CAP %.1ff\n"
              "#define NP_SUPPORT_DOWN %.1ff\n#define NP_SUPPORT_UP %.1ff\n"
-             "#define NP_ANTIRING %d\n#define NP_HORIZONTAL 0\n",
-             NPA_SCALE_ST_MAX, spec->support, spec_up->support,
-             antiring && spec->rings ? 1 : 0);
+             "#define NP_ANTIRING_DOWN %d\n#define NP_ANTIRING_UP %d\n"
+             "#define NP_HORIZONTAL 0\n",
+             npa_st_cap(antialiasing), spec->support, spec_up->support,
+             antiring_down && spec->rings ? 1 : 0,
+             antiring_up && spec_up->rings ? 1 : 0);
     int ok = npa_append(&helper, constants, strlen(constants));
 
     /* One weight function per kernel under its own name, plus the dispatcher
@@ -618,19 +657,18 @@ static int npa_apply_scale(char **stage, int kernel, int kernel_up, int antiring
     }
     /* st > 1 is a downscale: the source is larger than the drawable. */
     static const char dispatch[] =
-        "\n/* st is the footprint this pass actually uses, so it is the only\n"
-        " * input needed to pick the kernel. */\n"
-        "static inline float npa_kernel_w(float x, float st) {\n"
-        "  return st > 1.0f ? npa_w_down(x) : npa_w_up(x);\n"
+        "\n/* down is the axis direction, not the widening amount, so pinning the\n"
+        " * anti-aliasing strength cannot change which kernel is chosen. */\n"
+        "static inline float npa_kernel_w(float x, bool down) {\n"
+        "  return down ? npa_w_down(x) : npa_w_up(x);\n"
         "}\n"
-        "\nstatic inline float npa_support(float st) {\n"
-        "  return st > 1.0f ? NP_SUPPORT_DOWN : NP_SUPPORT_UP;\n"
+        "\nstatic inline float npa_support(bool down) {\n"
+        "  return down ? NP_SUPPORT_DOWN : NP_SUPPORT_UP;\n"
         "}\n";
     if (ok) {
         ok = npa_append(&helper, dispatch, strlen(dispatch))
              && npa_append(&helper, NPA_SCALE_FOOTPRINT, strlen(NPA_SCALE_FOOTPRINT));
     }
-    (void)support;
     if (ok) {
         /* The pre-pass filters the other axis, so the loop is emitted twice
          * with NP_HORIZONTAL flipped and the second copy renamed. */
@@ -737,7 +775,9 @@ static char *npa_rewrite_shader(
     int edr,
     int kernel,
     int kernel_up,
-    int antiring
+    int antiring_down,
+    int antiring_up,
+    int antialiasing
 )
 {
     char *stage = strdup(source);
@@ -767,7 +807,9 @@ static char *npa_rewrite_shader(
             goto fail;
         }
     }
-    if (kernel > 0 && !npa_apply_scale(&stage, kernel, kernel_up, antiring)) {
+    if (kernel > 0
+        && !npa_apply_scale(&stage, kernel, kernel_up,
+                            antiring_down, antiring_up, antialiasing)) {
         goto fail;
     }
     return stage;
@@ -886,7 +928,8 @@ static void npa_configure_layer_async(void *renderer, int transfer, int hdr)
  * A separable kernel filters one axis into an intermediate and the other axis
  * into the drawable. The intermediate keeps the source plane layout (Y plus
  * one chroma plane) and the source pixel format, so the second pass is the
- * same shader with NP_MODE 1 and the intermediate is lossless.
+ * same sampling shader. UNorm intermediates retain the source precision and
+ * clamp out-of-range values; they are not lossless for negative-lobe filters.
  *
  * The pre-pass runs as its own command buffer on the renderer's queue, which
  * Metal executes in submission order, so the draw that follows sees a finished
@@ -899,21 +942,15 @@ static void npa_configure_layer_async(void *renderer, int transfer, int hdr)
 typedef struct {
     void *renderer;
     id library;
+    int active;
     id pipeline[3];
     uint64_t pipeline_format[3];
     id plane[3];
     int plane_count;
-    int width;
-    int height;
 } NPAPrepass;
 
 static NPAPrepass npa_prepass;
 static id npa_prepass_saved[4];
-
-static int npa_prepass_active(void)
-{
-    return npa_scale_kernel_preference() > 0;
-}
 
 static id npa_msg_id(id object, const char *selector)
 {
@@ -936,8 +973,28 @@ static void npa_prepass_reset(NPAPrepass *state)
         state->plane[index] = NULL;
     }
     state->plane_count = 0;
-    state->width = 0;
-    state->height = 0;
+}
+
+/* Preferences are baked when the host compiles its library, not per frame.
+ * Retaining this one library also prevents pointer reuse from hitting the
+ * cache after the host rebuilds it. A host-only library needs no pre-pass. */
+static int npa_prepass_active(void *renderer)
+{
+    if (!renderer) return 0;
+    NPAPrepass *state = &npa_prepass;
+    id library = *(id *)((char *)renderer + NPA_RENDERER_LIBRARY);
+    if (state->renderer == renderer && state->library == library) return state->active;
+    npa_prepass_reset(state);
+    npa_release(state->library);
+    state->renderer = renderer;
+    state->library = library ? npa_msg_id(library, "retain") : NULL;
+    id function = ((id (*)(id, SEL, id))objc_msgSend)(
+        library, npa_sel("newFunctionWithName:"),
+        ((id (*)(id, SEL, const char *))objc_msgSend)(
+            (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"), "npaHorizontal"));
+    state->active = function != NULL;
+    npa_release(function);
+    return state->active;
 }
 
 /* One pipeline per pixel format: the attachment format is part of the pipeline
@@ -964,7 +1021,7 @@ static id npa_prepass_pipeline(NPAPrepass *state, id device, uint64_t format)
         state->library, npa_sel("newFunctionWithName:"),
         ((id (*)(id, SEL, const char *))objc_msgSend)(
             (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"),
-            "vertexPassthrough"
+            "npaHorizontalVertex"
         )
     );
     id descriptor = npa_msg_id((id)objc_getClass("MTLRenderPipelineDescriptor"), "alloc");
@@ -976,11 +1033,12 @@ static id npa_prepass_pipeline(NPAPrepass *state, id device, uint64_t format)
         npa_release(descriptor);
         return NULL;
     }
-    ((void (*)(id, SEL, id))objc_msgSend)(descriptor, npa_sel("setLabel:"), NULL);
     ((void (*)(id, SEL, id))objc_msgSend)(descriptor, npa_sel("setVertexFunction:"), vertex);
     ((void (*)(id, SEL, id))objc_msgSend)(descriptor, npa_sel("setFragmentFunction:"), function);
     ((void (*)(id, SEL, unsigned long))objc_msgSend)(descriptor, npa_sel("setSampleCount:"), 1);
-    id attachment = npa_msg_id(npa_msg_id(descriptor, "colorAttachments"), "objectAtIndexedSubscript:");
+    id attachment = ((id (*)(id, SEL, unsigned long))objc_msgSend)(
+        npa_msg_id(descriptor, "colorAttachments"), npa_sel("objectAtIndexedSubscript:"), 0UL
+    );
     if (attachment) {
         ((void (*)(id, SEL, unsigned long))objc_msgSend)(
             attachment, npa_sel("setPixelFormat:"), (unsigned long)format
@@ -1026,8 +1084,31 @@ static id npa_prepass_texture(id device, uint64_t format, int width, int height)
     return ((id (*)(id, SEL, id))objc_msgSend)(device, npa_sel("newTextureWithDescriptor:"), descriptor);
 }
 
-/* Returns 0 when the pre-pass could not run; the caller then falls back to the
- * host draw and logs, because the fragment shader is already vertical-only.
+/* Recover pixels per source-u from the host's affine triangle. This includes
+ * aspect-fit and zoom without applying that geometry to the intermediate. */
+static int npa_prepass_width(id vertex_buffer, CGSize drawable)
+{
+    const unsigned long length = ((unsigned long (*)(id, SEL))objc_msgSend)(
+        vertex_buffer, npa_sel("length"));
+    const float (*v)[4] = ((const void *(*)(id, SEL))objc_msgSend)(
+        vertex_buffer, npa_sel("contents"));
+    if (!v || length < 3 * 4 * sizeof(float)) return 0;
+    const double x1 = v[1][0] - v[0][0], y1 = v[1][1] - v[0][1];
+    const double x2 = v[2][0] - v[0][0], y2 = v[2][1] - v[0][1];
+    const double u1 = v[1][2] - v[0][2], u2 = v[2][2] - v[0][2];
+    const double det = x1 * y2 - x2 * y1;
+    if (det == 0.0) return 0;
+    const double dx = (u1 * y2 - u2 * y1) / det * 2.0 / drawable.width;
+    const double dy = (x1 * u2 - x2 * u1) / det * 2.0 / drawable.height;
+    const double width = 1.0 / hypot(dx, dy);
+    /* Metal's maximum 2D extent on supported Apple GPUs. Fail before passing
+     * invalid dimensions into a texture descriptor. */
+    if (!isfinite(width) || width < 0.5 || width > 16384.0) return 0;
+    return (int)lround(width);
+}
+
+/* Returns 0 when the pre-pass could not run; the caller skips the frame and
+ * logs, because the fragment shader is already vertical-only.
  * On success the renderer's texture slots point at the intermediates, and the
  * caller must restore them: the host writes the next frame into those slots
  * with replaceRegion at the source size, which would land inside a
@@ -1035,23 +1116,18 @@ static id npa_prepass_texture(id device, uint64_t format, int width, int height)
 static int npa_prepass_run(void *renderer)
 {
     NPAPrepass *state = &npa_prepass;
-    if (state->renderer != renderer) {
-        npa_prepass_reset(state);
-        state->renderer = renderer;
+    if (!npa_prepass_active(renderer)) {
+        npa_hdr_log("separable pre-pass requires a scaling library", -1);
+        return 0;
     }
 
     id device = *(id *)((char *)renderer + NPA_RENDERER_DEVICE);
     id queue = *(id *)((char *)renderer + NPA_RENDERER_QUEUE);
-    id library = *(id *)((char *)renderer + NPA_RENDERER_LIBRARY);
     id vertex_buffer = *(id *)((char *)renderer + NPA_RENDERER_VERTEX_BUFFER);
     id view = *(id *)((char *)renderer + NPA_RENDERER_VIEW);
-    if (!device || !queue || !library || !vertex_buffer || !view) {
+    if (!device || !queue || !vertex_buffer || !view) {
         npa_hdr_log("separable pre-pass is missing renderer state", -1);
         return 0;
-    }
-    if (state->library != library) {
-        npa_prepass_reset(state);
-        state->library = library;
     }
 
     /* Plane 0 is luma, plane 1 is either interleaved chroma or Cb, plane 2 is
@@ -1083,25 +1159,22 @@ static int npa_prepass_run(void *renderer)
     id layer = npa_msg_id(view, "metalLayer");
     CGSize drawable = {0, 0};
     if (layer) {
-        ((CGSize (*)(id, SEL))objc_msgSend)(layer, npa_sel("drawableSize"));
+        drawable = ((CGSize (*)(id, SEL))objc_msgSend)(layer, npa_sel("drawableSize"));
     }
     if (drawable.width < 1.0 || drawable.height < 1.0) {
         npa_hdr_log("separable pre-pass has no drawable size", -1);
         return 0;
     }
 
-    /* Luma keeps the source height and takes the drawable width; chroma keeps
-     * its own subsampling, so the second pass sees an exactly 1:1 horizontal
-     * footprint on both planes. */
-    uint64_t formats[3] = {0, 0, 0};
-    int sizes[3][2] = {{0, 0}, {0, 0}, {0, 0}};
-    const int luma_width = (int)((unsigned long (*)(id, SEL))objc_msgSend)(
-        sources[0], npa_sel("width")
-    );
-    if (luma_width < 1) {
-        npa_hdr_log("separable pre-pass luma plane is empty", -1);
+    const int intermediate_width = npa_prepass_width(vertex_buffer, drawable);
+    if (!intermediate_width) {
+        npa_hdr_log("separable pre-pass has invalid horizontal geometry", -1);
         return 0;
     }
+    /* Complete horizontal reconstruction at the host's effective density;
+     * the final draw alone applies its aspect-fit, crop and zoom geometry. */
+    uint64_t formats[3] = {0, 0, 0};
+    int sizes[3][2] = {{0, 0}, {0, 0}, {0, 0}};
     for (int index = 0; index < plane_count; index++) {
         formats[index] = ((unsigned long (*)(id, SEL))objc_msgSend)(
             sources[index], npa_sel("pixelFormat")
@@ -1116,24 +1189,24 @@ static int npa_prepass_run(void *renderer)
             npa_hdr_log("separable pre-pass source plane is empty", index);
             return 0;
         }
-        /* The intermediate must keep the plane's own subsampling so the second
-         * pass sees a 1:1 footprint. Deriving it from the ratio rather than
-         * assuming 4:2:0 also covers 4:4:4 and any other ratio. */
-        sizes[index][0] = (int)((double)source_width / (double)luma_width
-                                * drawable.width + 0.5);
+        sizes[index][0] = intermediate_width;
         sizes[index][1] = source_height;
         if (sizes[index][0] < 1) {
             sizes[index][0] = 1;
         }
     }
 
-    if (state->plane_count != plane_count || state->width != sizes[0][0]
-        || state->height != sizes[0][1]) {
+    int rebuild = state->plane_count != plane_count;
+    for (int index = 0; !rebuild && index < plane_count; index++) {
+        id plane = state->plane[index];
+        rebuild = !plane
+            || ((unsigned long (*)(id, SEL))objc_msgSend)(plane, npa_sel("width")) != (unsigned long)sizes[index][0]
+            || ((unsigned long (*)(id, SEL))objc_msgSend)(plane, npa_sel("height")) != (unsigned long)sizes[index][1]
+            || ((unsigned long (*)(id, SEL))objc_msgSend)(plane, npa_sel("pixelFormat")) != formats[index];
+    }
+    if (rebuild) {
         npa_prepass_reset(state);
-        state->library = library;
         state->plane_count = plane_count;
-        state->width = sizes[0][0];
-        state->height = sizes[0][1];
         for (int index = 0; index < plane_count; index++) {
             state->plane[index] = npa_prepass_texture(
                 device, formats[index], sizes[index][0], sizes[index][1]
@@ -1141,7 +1214,6 @@ static int npa_prepass_run(void *renderer)
             if (!state->plane[index]) {
                 npa_hdr_log("separable pre-pass texture allocation failed", index);
                 npa_prepass_reset(state);
-                state->library = library;
                 return 0;
             }
         }
@@ -1152,8 +1224,6 @@ static int npa_prepass_run(void *renderer)
         npa_hdr_log("separable pre-pass could not get a command buffer", -1);
         return 0;
     }
-    const unsigned long vertex_count =
-        ((unsigned long (*)(id, SEL))objc_msgSend)(vertex_buffer, npa_sel("length")) >> 4;
 
     for (int index = 0; index < plane_count; index++) {
         id pipeline = npa_prepass_pipeline(state, device, formats[index]);
@@ -1165,7 +1235,9 @@ static int npa_prepass_run(void *renderer)
             npa_hdr_log("separable pre-pass could not get a pass descriptor", -1);
             return 0;
         }
-        id attachment = npa_msg_id(npa_msg_id(descriptor, "colorAttachments"), "objectAtIndexedSubscript:");
+        id attachment = ((id (*)(id, SEL, unsigned long))objc_msgSend)(
+            npa_msg_id(descriptor, "colorAttachments"), npa_sel("objectAtIndexedSubscript:"), 0UL
+        );
         ((void (*)(id, SEL, id))objc_msgSend)(attachment, npa_sel("setTexture:"), state->plane[index]);
         ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setLoadAction:"), 2);
         ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setStoreAction:"), 1);
@@ -1181,12 +1253,9 @@ static int npa_prepass_run(void *renderer)
         ((void (*)(id, SEL, id, unsigned long))objc_msgSend)(
             encoder, npa_sel("setFragmentTexture:atIndex:"), sources[index], 0
         );
-        ((void (*)(id, SEL, id, unsigned long, unsigned long))objc_msgSend)(
-            encoder, npa_sel("setVertexBuffer:offset:atIndex:"), vertex_buffer, 0, 0
-        );
         ((void (*)(id, SEL, unsigned long, unsigned long, unsigned long, unsigned long))objc_msgSend)(
             encoder, npa_sel("drawPrimitives:vertexStart:vertexCount:instanceCount:"),
-            3, 0, vertex_count, 1
+            3, 0, 3, 1
         );
         ((void (*)(id, SEL))objc_msgSend)(encoder, npa_sel("endEncoding"));
     }
@@ -1234,16 +1303,13 @@ NPA_EXPORT __attribute__((noinline)) void npa_renderer_pp_hdr_draw(void *rendere
     if (!draw) {
         return;
     }
-    if (!renderer || !npa_prepass_active()) {
+    if (!renderer || !npa_prepass_active(renderer)) {
         draw(renderer);
         return;
     }
-    /* A failed pre-pass leaves the source planes in place; the fragment shader
-     * is vertical-only by then, so say so rather than shipping a silently
-     * under-filtered frame. */
+    /* A vertical-only shader cannot safely draw the unfiltered source planes. */
     if (!npa_prepass_run(renderer)) {
-        npa_hdr_log("separable pre-pass did not run; frame is vertical-only", -1);
-        draw(renderer);
+        npa_hdr_log("separable pre-pass failed; frame skipped", -1);
         return;
     }
     draw(renderer);
@@ -1270,7 +1336,11 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
      * choice, so it applies whether or not the layer can go extended-range. */
     const int kernel = npa_scale_kernel_preference();
     const int kernel_up = npa_scale_kernel_up_preference();
-    const int antiring = npa_int_preference(NPA_PREF_ANTIRING) != 0;
+    const int antiring_down = npa_int_preference(NPA_PREF_ANTIRING) != 0;
+    const int antiring_up = npa_int_preference(NPA_PREF_ANTIRING_UP) != 0;
+    /* npa_st_cap folds anything outside the three settings to Skip, so the raw
+     * value is passed through and the log shows what was actually stored. */
+    const int antialiasing = npa_int_preference(NPA_PREF_ANTIALIASING);
     const int edr = npa_edr_available();
     if (!edr && kernel == 0 && kernel_up == 0) {
         /* Nothing to change: without CAEDRMetadata the layer stays SDR and the
@@ -1288,8 +1358,11 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
         return source;
     }
 
-    npa_hdr_log_kernel(kernel, kernel_up, antiring, transfer, hdr, edr);
-    char *rewritten = npa_rewrite_shader(utf8, transfer, hdr, edr, kernel, kernel_up, antiring);
+    npa_hdr_log_kernel(kernel, kernel_up, antiring_down, antiring_up,
+                       antialiasing, transfer, hdr, edr);
+    char *rewritten = npa_rewrite_shader(utf8, transfer, hdr, edr, kernel,
+                                         kernel_up, antiring_down, antiring_up,
+                                         antialiasing);
     if (!rewritten) {
         npa_hdr_log("shader was not rewritten; keeping the host shader", transfer);
         if (edr && hdr) {

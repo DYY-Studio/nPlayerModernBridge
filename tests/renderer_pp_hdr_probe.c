@@ -59,7 +59,7 @@ static const char HLG_SOURCE[] =
 int main(void)
 {
     /* PQ: the decoded nits/100 stay as-is, so no Hable tail and no sRGB OETF. */
-    char *pq = npa_rewrite_shader(PQ_SOURCE, NPA_TRANSFER_PQ, 1, 1, 0, 0, 0);
+    char *pq = npa_rewrite_shader(PQ_SOURCE, NPA_TRANSFER_PQ, 1, 1, 0, 0, 0, 0, 0);
     assert(pq);
     assert(strstr(pq, "rgb1 *= float3(10000.0 / MP_REF_WHITE);"));
     assert(!strstr(pq, "sig_orig"));
@@ -70,7 +70,7 @@ int main(void)
     free(pq);
 
     /* HLG: scene linear gains its nominal 12x, still without tone mapping. */
-    char *hlg = npa_rewrite_shader(HLG_SOURCE, NPA_TRANSFER_HLG, 1, 1, 0, 0, 0);
+    char *hlg = npa_rewrite_shader(HLG_SOURCE, NPA_TRANSFER_HLG, 1, 1, 0, 0, 0, 0, 0);
     assert(hlg);
     assert(strstr(hlg, "  rgb1 *= float3(trc_nom_peak);\n  return float4("));
     assert(!strstr(hlg, "sig_orig"));
@@ -83,7 +83,7 @@ int main(void)
         "  float3 rgb1 = colorConversion.matrix * ycbcr1;\n"
         "  float3 rgb2 = colorConversion.matrix * ycbcr2;\n"
         "  return half4(half3(rgb1), 1.0);\n";
-    char *sdr = npa_rewrite_shader(SDR_SOURCE, 0, 0, 1, 0, 0, 0);
+    char *sdr = npa_rewrite_shader(SDR_SOURCE, 0, 0, 1, 0, 0, 0, 0, 0);
     assert(sdr);
     assert(strstr(sdr, "float3 rgb1 = colorConversion.matrix * ycbcr1;\n"
                        "  rgb1 = max(rgb1, float3(0.0));\n"
@@ -103,13 +103,13 @@ int main(void)
         "  rgb1 = mix(rgb1, rgb1, lessthanequal);\n"
         "  float3 rgb2 = colorConversion.matrix * ycbcr2;\n"
         "  return half4(half3(rgb1), 1.0);\n";
-    assert(!npa_rewrite_shader(PQ_3D_SOURCE, NPA_TRANSFER_PQ, 1, 1, 0, 0, 0));
+    assert(!npa_rewrite_shader(PQ_3D_SOURCE, NPA_TRANSFER_PQ, 1, 1, 0, 0, 0, 0, 0));
 
     /* A host whose text no longer matches must fail instead of mixing curves. */
-    assert(!npa_rewrite_shader("fragment float4 f() { return float4(0.0); }\n", 0, 0, 1, 0, 0, 0));
+    assert(!npa_rewrite_shader("fragment float4 f() { return float4(0.0); }\n", 0, 0, 1, 0, 0, 0, 0, 0));
     assert(!npa_rewrite_shader(
         "fragment half4 fragmentShader() {\n  rgb1 *= float3(1.0/trc_nom_peak);\n",
-        NPA_TRANSFER_HLG, 1, 1, 0, 0, 0
+        NPA_TRANSFER_HLG, 1, 1, 0, 0, 0, 0, 0
     ));
     return 0;
 }

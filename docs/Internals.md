@@ -178,19 +178,26 @@ is kept and the layer is left as the app configured it.
 
 The same API can bake a scaling kernel into the MSL, chosen by the shared
 `PPVideoScaleKernel` preference: Catmull-Rom, Mitchell, Keys a=-0.75, Lanczos2,
-Lanczos3 and B-Spline, with zero (the default) keeping the host's bilinear
-sampling. The first four are one (B,C) cubic function, so the whole set shares
-one tap loop. Each 2x2 block of taps is folded into a single bilinear fetch when
-its weights share a sign, which halves the fetches per axis when it applies and
-costs nothing when it does not; B-Spline is the only fully non-negative kernel
-here and therefore the cheap choice for large downscales. The kernel is read
-once per generated shader, so a change takes effect on the next video.
+Lanczos3, B-Spline and Spline36/64, with zero (the default) keeping the host's
+bilinear sampling. Catmull-Rom, Mitchell, Keys and B-Spline share one (B,C)
+cubic function. A full-screen horizontal pre-pass reconstructs every plane at
+the effective video width derived from the host vertices, retaining its source
+height. The final fragment filters vertically and applies the host geometry
+once, including fit and crop. Fractional fitted widths keep horizontal
+interpolation in the final pass.
+Each adjacent same-sign tap pair folds into one bilinear fetch. B-Spline is the
+only fully non-negative kernel. Optional anti-ringing clamps to the two centre
+texels, and anti-aliasing widens the downscale kernel according to its footprint.
+The kernel is read once per generated shader, so a change takes effect on the
+next video. A failed pre-pass logs an error and skips the frame.
+Pre-pass activation follows the compiled library, so changing preferences
+during playback cannot mismatch the two stages.
 
 Because the rewrite happens in the shader, the feature requires Post Processing
 to be on. With Post Processing off the app renders through
 `AVSampleBufferRenderer` and this dylib is never called. Without
-`CAEDRMetadata` (iOS below 16) the shader is not rewritten at all, so the only
-effect is the 16-bit drawable.
+`CAEDRMetadata` (iOS below 16) HDR output stays tone-mapped, while an explicitly
+selected scaling kernel can still rewrite sampling.
 The read-only `__npa_renderer` table carries both builds' pins and offsets;
 build verification checks both records and packaging checks the selected host.
 An unrecognized caller logs an error and returns NULL. This also supports

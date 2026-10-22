@@ -118,211 +118,117 @@ static const char NPA_SCALE_FOOTPRINT[] =
     "  return sqrt(a * a + b * b);\n"
     "}\n";
 
-/* The wrappers must follow the tap loops, so they are appended last. The
- * separable variant only ever needs the scalar loop, which carries the final
- * vertical pass; NP_MODE is a compile-time constant either way. */
+/* One axis per pass. A separable kernel filters horizontally into an
+ * intermediate, then vertically into the drawable, so the tap loop is
+ * one-dimensional: the other axis is not filtered here at all.
+ *
+ * That is only sound because the intermediate keeps the source height and the
+ * source plane's pixel format, while its width matches the drawable. Both
+ * passes therefore land on a texel centre along the axis they do not filter,
+ * where bilinear returns that texel exactly. Snapping is explicit so a rounding
+ * difference cannot smear the untouched axis.
+ *
+ * Folding: a tap pair folds into one bilinear fetch at w1/(w0+w1) scaled by
+ * w0+w1, which is algebraically the same two taps. The hardware clamps that
+ * fraction to [0,1], so a pair whose weights change sign cannot fold; it costs
+ * two fetches instead of one. The test is per pair, not per kernel. */
+static const char NPA_SCALE_AXIS[] =
+    "\n"
+    "struct NpaAxis {\n"
+    "  float2 size;\n"
+    "  float st;\n"
+    "  float pos;\n"
+    "  float base;\n"
+    "  int k;\n"
+    "};\n"
+    "\n"
+    "static inline NpaAxis npa_axis(texture2d<float, access::sample> t,\n"
+    "                               float2 uv, float2 dudx, float2 dudy) {\n"
+    "  NpaAxis a;\n"
+    "  a.size = float2(t.get_width(), t.get_height());\n"
+    "  const float2 footprint = npa_footprint(dudx, dudy, a.size);\n"
+    "  a.st = clamp(NP_HORIZONTAL ? footprint.x : footprint.y, 1.0f, NP_ST_MAX);\n"
+    "  a.k = int(ceil(NP_SUPPORT * a.st));\n"
+    "  const float at = NP_HORIZONTAL ? uv.x * a.size.x : uv.y * a.size.y;\n"
+    "  a.pos = at - 0.5f;\n"
+    "  a.base = floor(a.pos);\n"
+    "  return a;\n"
+    "}\n"
+    "\n"
+    "static inline float4 npa_tap(texture2d<float, access::sample> t, sampler sn,\n"
+    "                             float2 uv, float2 dudx, float2 dudy) {\n"
+    "  const NpaAxis a = npa_axis(t, uv, dudx, dudy);\n"
+    /* The unfiltered axis stays on a texel centre so bilinear cannot blur it. */
+    "  const float2 keep = (floor(uv * a.size - 0.5f) + 0.5f) / a.size;\n"
+    "  float4 acc = float4(0.0f);\n"
+    "  float wsum = 0.0f;\n"
+    "  for (int j = 0; j < a.k; ++j) {\n"
+    "    const int i0 = 1 - a.k + 2 * j;\n"
+    "    const float w0 = npa_kernel_w((a.pos - (a.base + float(i0))) / a.st);\n"
+    "    const float w1 = npa_kernel_w((a.pos - (a.base + float(i0 + 1))) / a.st);\n"
+    "    const float s = w0 + w1;\n"
+    "    if (w0 * w1 >= 0.0f && fabs(s) > 1e-8f) {\n"
+    "      const float folded = a.base + float(i0) + w1 / s + 0.5f;\n"
+    "      const float2 at = NP_HORIZONTAL ? float2(folded / a.size.x, keep.y)\n"
+    "                                      : float2(keep.x, folded / a.size.y);\n"
+    "      acc += t.sample(sn, at) * s;\n"
+    "    } else {\n"
+    "      const float first = a.base + float(i0) + 0.5f;\n"
+    "      const float second = first + 1.0f;\n"
+    "      const float2 a0 = NP_HORIZONTAL ? float2(first / a.size.x, keep.y)\n"
+    "                                      : float2(keep.x, first / a.size.y);\n"
+    "      const float2 a1 = NP_HORIZONTAL ? float2(second / a.size.x, keep.y)\n"
+    "                                      : float2(keep.x, second / a.size.y);\n"
+    "      acc += t.sample(sn, a0) * w0;\n"
+    "      acc += t.sample(sn, a1) * w1;\n"
+    "    }\n"
+    "    wsum += s;\n"
+    "  }\n"
+    "  return acc / max(wsum, 1e-5f);\n"
+    "}\n";
+
+/* The fragment shader only ever filters vertically; the pre-pass filters
+ * horizontally. Both are compiled from this one source, so the caller renames
+ * the loop for the pre-pass and NP_HORIZONTAL selects the axis. */
 static const char NPA_SCALE_WRAPPERS[] =
     "\n"
     "static inline float npa_scale1(texture2d<float, access::sample> t, sampler sn,\n"
     "                              float2 uv, float2 dudx, float2 dudy) {\n"
-    "  return npa_tap1(t, sn, uv, dudx, dudy);\n"
+    "  return npa_tap(t, sn, uv, dudx, dudy).r;\n"
     "}\n"
     "\n"
     "static inline float2 npa_scale2(texture2d<float, access::sample> t, sampler sn,\n"
     "                               float2 uv, float2 dudx, float2 dudy) {\n"
-    "  return npa_tap4(t, sn, uv, dudx, dudy).rg;\n"
+    "  return npa_tap(t, sn, uv, dudx, dudy).rg;\n"
     "}\n";
 
-/* Horizontal pre-pass for a separable kernel: filter one plane of the source
- * into an intermediate of the same height. The tap loop is the same code with
- * NP_MODE 2, so both passes share one weight function and one fold rule. */
 static const char NPA_SCALE_HORIZONTAL[] =
     "\n"
     "fragment float4 npaHorizontal(Varyings in [[ stage_in ]],\n"
     "                              texture2d<float, access::sample> src [[ texture(0) ]]) {\n"
     "  constexpr sampler sn(address::clamp_to_edge, filter::linear);\n"
     "  const float2 uv = in.texcoord;\n"
-    "  return npa_tap4(src, sn, uv, dfdx(uv), dfdy(uv));\n"
-    "}\n";
-
-/* Tap geometry. `mode` selects which axes this pass filters: 0 is the whole 2D
- * footprint, 1 filters vertically only, 2 horizontally only. A separable
- * kernel runs mode 2 into an intermediate and then mode 1 into the drawable, so
- * each pass stretches the kernel by its own ratio rather than the combined 2D
- * footprint. Forcing the unused axis to st=1 and k=1 collapses it to a single
- * fetch per tap pair: at a texel centre the two weights are 1 and 0, so the
- * pairing fold keeps one of them. */
-static const char NPA_SCALE_AXIS[] =
-    "\n"
-    "struct NpaAxis {\n"
-    "  float2 size;\n"
-    "  float2 st;\n"
-    "  float2 pos;\n"
-    "  float2 base;\n"
-    "  int2 k;\n"
-    "};\n"
-    "\n"
-    "static inline NpaAxis npa_axis(texture2d<float, access::sample> t,\n"
-    "                               float2 uv, float2 dudx, float2 dudy, int mode) {\n"
-    "  NpaAxis a;\n"
-    "  a.size = float2(t.get_width(), t.get_height());\n"
-    "  a.st = clamp(npa_footprint(dudx, dudy, a.size), 1.0f, NP_ST_MAX);\n"
-    "  if (mode == 1) a.st.x = 1.0f;\n"
-    "  if (mode == 2) a.st.y = 1.0f;\n"
-    "  a.k = int2(ceil(NP_SUPPORT * a.st));\n"
-    "  if (mode == 1) a.k.x = 1;\n"
-    "  if (mode == 2) a.k.y = 1;\n"
-    "  a.pos = uv * a.size - 0.5f;\n"
-    "  a.base = floor(a.pos);\n"
-    "  return a;\n"
-    "}\n";
-
-/* Tap pairing: fold each 2x2 block of taps into one bilinear fetch. The fold
- * places the fetch at w1/(w0+w1) and scales by w0+w1, which is algebraically
- * identical to the two separate taps. The hardware clamps that fraction to
- * [0,1], so a block whose weights change sign cannot be folded; it falls back
- * to four texels. The test is per block, not per kernel: Catmull-Rom pairs at
- * some footprints and not others.
- *
- * The horizontal weights do not depend on the vertical tap, so the whole row is
- * evaluated once instead of once per block.
- *
- * Sampling uses a linear sampler. At a texel centre it returns that texel
- * exactly, so the unfolded path is unaffected.
- *
- * The scalar loop reads the four unfolded texels with one gather instead of
- * four fetches. gather ignores the filter mode and returns the same 2x2 block
- * bilinear would have interpolated, in x, y, z, w order. A two-channel texture
- * cannot use it: gather only returns the first component, so that loop keeps
- * four fetches. */
-static const char NPA_SCALE_TAP_R[] =
-    "\n"
-    "static inline float npa_tap1(texture2d<float, access::sample> t, sampler sn,\n"
-    "                             float2 uv, float2 dudx, float2 dudy) {\n"
-    "  const NpaAxis a = npa_axis(t, uv, dudx, dudy, NP_MODE);\n"
-    "  float wx[2 * NP_MAX_K];\n"
-    "  for (int i = 0; i < 2 * a.k.x; ++i) {\n"
-    "    wx[i] = npa_kernel_w((a.pos.x - (a.base.x + float(1 - a.k.x + i))) / a.st.x);\n"
-    "  }\n"
-    "  float acc = 0.0f;\n"
-    "  float wsum = 0.0f;\n"
-    "  for (int j = 0; j < a.k.y; ++j) {\n"
-    "    const int iy = 1 - a.k.y + 2 * j;\n"
-    "    const float wy0 = npa_kernel_w((a.pos.y - (a.base.y + float(iy))) / a.st.y);\n"
-    "    const float wy1 = npa_kernel_w((a.pos.y - (a.base.y + float(iy + 1))) / a.st.y);\n"
-    "    const float sy = wy0 + wy1;\n"
-    "    const bool foldY = wy0 * wy1 >= 0.0f && fabs(sy) > 1e-8f;\n"
-    "    const float fy = foldY ? wy1 / sy : 0.0f;\n"
-    "    const float2 row = a.base + float2(0.0f, float(iy)) + 0.5f;\n"
-    "    for (int i = 0; i < a.k.x; ++i) {\n"
-    "      const float wx0 = wx[2 * i];\n"
-    "      const float wx1 = wx[2 * i + 1];\n"
-    "      const float sx = wx0 + wx1;\n"
-    "      const bool foldX = wx0 * wx1 >= 0.0f && fabs(sx) > 1e-8f;\n"
-    "      const float2 at = row + float2(float(1 - a.k.x + 2 * i), 0.0f);\n"
-    "      if (foldX) {\n"
-    "        const float2 x0 = at + float2(wx1 / sx, 0.0f);\n"
-    "        if (foldY) {\n"
-    "          acc += t.sample(sn, (x0 + float2(0.0f, fy)) / a.size).r * (sx * sy);\n"
-    "        } else {\n"
-    "          acc += t.sample(sn, x0 / a.size).r * (sx * wy0);\n"
-    "          acc += t.sample(sn, (x0 + float2(0.0f, 1.0f)) / a.size).r * (sx * wy1);\n"
-    "        }\n"
-    "      } else if (foldY) {\n"
-    "        const float2 y0 = at + float2(0.0f, fy);\n"
-    "        acc += t.sample(sn, y0 / a.size).r * (wx0 * sy);\n"
-    "        acc += t.sample(sn, (y0 + float2(1.0f, 0.0f)) / a.size).r * (wx1 * sy);\n"
-    "      } else {\n"
-    /* MSL puts the four gathered texels counter-clockwise from the lower-left
-     * of the queried location: (-,+) (+,-) ... i.e. x is the top-left texel of
-     * the 2x2 block in a top-left origin texture, y top-right, z bottom-right,
-     * w bottom-left. Ordering these wrong is a silent one-texel swap. */
-    /* Gather picks the quad by frac(uv * size - 0.5), so querying at a texel
-     * centre lands exactly on a quad boundary and the hardware may return the
-     * neighbouring block. Half a texel further puts the query at the block
-     * centre, where the choice is unambiguous. */
-    "        const float4 g = t.gather(sn, (at + 0.5f) / a.size);\n"
-    "        acc += g.x * (wx0 * wy1) + g.y * (wx1 * wy1)\n"
-    "             + g.z * (wx1 * wy0) + g.w * (wx0 * wy0);\n"
-    "      }\n"
-    "      wsum += sx * sy;\n"
-    "    }\n"
-    "  }\n"
-    "  return acc / max(wsum, 1e-5f);\n"
-    "}\n";
-
-/* The four-component loop. It covers the chroma plane, whose two channels
- * gather cannot return, and the horizontal pre-pass of a separable kernel,
- * which filters every channel of a plane. */
-static const char NPA_SCALE_TAP_RG[] =
-    "\n"
-    "static inline float4 npa_tap4(texture2d<float, access::sample> t, sampler sn,\n"
-    "                              float2 uv, float2 dudx, float2 dudy) {\n"
-    "  const NpaAxis a = npa_axis(t, uv, dudx, dudy, NP_MODE);\n"
-    "  float wx[2 * NP_MAX_K];\n"
-    "  for (int i = 0; i < 2 * a.k.x; ++i) {\n"
-    "    wx[i] = npa_kernel_w((a.pos.x - (a.base.x + float(1 - a.k.x + i))) / a.st.x);\n"
-    "  }\n"
-    "  float4 acc = float4(0.0f);\n"
-    "  float wsum = 0.0f;\n"
-    "  for (int j = 0; j < a.k.y; ++j) {\n"
-    "    const int iy = 1 - a.k.y + 2 * j;\n"
-    "    const float wy0 = npa_kernel_w((a.pos.y - (a.base.y + float(iy))) / a.st.y);\n"
-    "    const float wy1 = npa_kernel_w((a.pos.y - (a.base.y + float(iy + 1))) / a.st.y);\n"
-    "    const float sy = wy0 + wy1;\n"
-    "    const bool foldY = wy0 * wy1 >= 0.0f && fabs(sy) > 1e-8f;\n"
-    "    const float fy = foldY ? wy1 / sy : 0.0f;\n"
-    "    const float2 row = a.base + float2(0.0f, float(iy)) + 0.5f;\n"
-    "    for (int i = 0; i < a.k.x; ++i) {\n"
-    "      const float wx0 = wx[2 * i];\n"
-    "      const float wx1 = wx[2 * i + 1];\n"
-    "      const float sx = wx0 + wx1;\n"
-    "      const bool foldX = wx0 * wx1 >= 0.0f && fabs(sx) > 1e-8f;\n"
-    "      const float2 at = row + float2(float(1 - a.k.x + 2 * i), 0.0f);\n"
-    "      if (foldX) {\n"
-    "        const float2 x0 = at + float2(wx1 / sx, 0.0f);\n"
-    "        if (foldY) {\n"
-    "          acc += t.sample(sn, (x0 + float2(0.0f, fy)) / a.size) * (sx * sy);\n"
-    "        } else {\n"
-    "          acc += t.sample(sn, x0 / a.size) * (sx * wy0);\n"
-    "          acc += t.sample(sn, (x0 + float2(0.0f, 1.0f)) / a.size) * (sx * wy1);\n"
-    "        }\n"
-    "      } else if (foldY) {\n"
-    "        const float2 y0 = at + float2(0.0f, fy);\n"
-    "        acc += t.sample(sn, y0 / a.size) * (wx0 * sy);\n"
-    "        acc += t.sample(sn, (y0 + float2(1.0f, 0.0f)) / a.size) * (wx1 * sy);\n"
-    "      } else {\n"
-    "        const float2 step = float2(1.0f) / a.size;\n"
-    "        acc += t.sample(sn, at / a.size) * (wx0 * wy0);\n"
-    "        acc += t.sample(sn, at / a.size + float2(step.x, 0.0f)) * (wx1 * wy0);\n"
-    "        acc += t.sample(sn, at / a.size + float2(0.0f, step.y)) * (wx0 * wy1);\n"
-    "        acc += t.sample(sn, at / a.size + step) * (wx1 * wy1);\n"
-    "      }\n"
-    "      wsum += sx * sy;\n"
-    "    }\n"
-    "  }\n"
-    "  return acc / max(wsum, 1e-5f);\n"
+    "  return npa_tap(src, sn, uv, dfdx(uv), dfdy(uv));\n"
     "}\n";
 
 typedef struct {
     const char *parameters;
     const char *weight;
     float support;
-    /* A separable variant runs one axis here and the other in a second pass, so
-     * each pass stretches the kernel by its own ratio instead of the combined
-     * 2D footprint. */
-    int separable;
 } NPAKernelSpec;
 
+/* Every kernel runs as two passes: one axis into an intermediate, the other
+ * into the drawable. A single 2D pass costs k^2 tap blocks while two passes
+ * cost k per pass, so the separable form is never slower and wins quickly as
+ * the footprint grows. */
 static const NPAKernelSpec NPA_KERNELS[] = {
-    {NULL, NULL, 0.0f, 0},
-    {"#define NP_B 0.0f\n#define NP_C 0.5f\n", NPA_WEIGHT_CUBIC, 2.0f, 0},
-    {"#define NP_B 0.33333334f\n#define NP_C 0.33333334f\n", NPA_WEIGHT_CUBIC, 2.0f, 0},
-    {"#define NP_B 0.0f\n#define NP_C 0.75f\n", NPA_WEIGHT_CUBIC, 2.0f, 0},
-    {"#define NP_A 2.0f\n", NPA_WEIGHT_LANCZOS, 2.0f, 0},
-    {"#define NP_A 3.0f\n", NPA_WEIGHT_LANCZOS, 3.0f, 0},
-    {"#define NP_B 1.0f\n#define NP_C 0.0f\n", NPA_WEIGHT_CUBIC, 2.0f, 0},
-    {"#define NP_A 3.0f\n", NPA_WEIGHT_LANCZOS, 3.0f, 1},
+    {NULL, NULL, 0.0f},
+    {"#define NP_B 0.0f\n#define NP_C 0.5f\n", NPA_WEIGHT_CUBIC, 2.0f},
+    {"#define NP_B 0.33333334f\n#define NP_C 0.33333334f\n", NPA_WEIGHT_CUBIC, 2.0f},
+    {"#define NP_B 0.0f\n#define NP_C 0.75f\n", NPA_WEIGHT_CUBIC, 2.0f},
+    {"#define NP_A 2.0f\n", NPA_WEIGHT_LANCZOS, 2.0f},
+    {"#define NP_A 3.0f\n", NPA_WEIGHT_LANCZOS, 3.0f},
+    {"#define NP_B 1.0f\n#define NP_C 0.0f\n", NPA_WEIGHT_CUBIC, 2.0f},
 };
 
 #define NPA_KERNEL_COUNT (sizeof(NPA_KERNELS) / sizeof(NPA_KERNELS[0]))
@@ -611,10 +517,8 @@ static int npa_apply_scale(char **stage, int kernel)
     char constants[128];
     snprintf(constants, sizeof(constants),
              "#define NP_SUPPORT %.1ff\n#define NP_ST_MAX %s\n"
-             "#define NP_MAX_K %d\n#define NP_MODE %d\n",
-             spec->support, NPA_SCALE_ST_MAX,
-             (int)ceilf(spec->support * atof(NPA_SCALE_ST_MAX)),
-             spec->separable ? 1 : 0);
+             "#define NP_HORIZONTAL 0\n",
+             spec->support, NPA_SCALE_ST_MAX);
     const char prologue[] = "\nstatic inline float npa_kernel_w(float x) {\n";
     int ok = npa_append(&helper, constants, strlen(constants))
              && npa_append(&helper, spec->parameters, strlen(spec->parameters))
@@ -622,26 +526,21 @@ static int npa_apply_scale(char **stage, int kernel)
              && npa_append(&helper, spec->weight, strlen(spec->weight))
              && npa_append(&helper, NPA_SCALE_FOOTPRINT, strlen(NPA_SCALE_FOOTPRINT));
     if (ok) {
-        ok = npa_append(&helper, NPA_SCALE_AXIS, strlen(NPA_SCALE_AXIS))
-             && npa_append(&helper, NPA_SCALE_TAP_R, strlen(NPA_SCALE_TAP_R))
-             && npa_append(&helper, NPA_SCALE_TAP_RG, strlen(NPA_SCALE_TAP_RG))
-             && npa_append(&helper, NPA_SCALE_WRAPPERS, strlen(NPA_SCALE_WRAPPERS));
-    }
-    if (ok && spec->separable) {
-        /* The pre-pass filters horizontally, so it re-emits the geometry and
-         * the four-component loop under different names with NP_MODE 2, then
-         * restores the vertical mode for the fragment shader below. The
-         * renames keep both definitions in one translation unit. */
+        /* The pre-pass filters the other axis, so the loop is emitted twice
+         * with NP_HORIZONTAL flipped and the second copy renamed. */
         static const char pre[] =
-            "\n#undef NP_MODE\n#define NP_MODE 2\n"
+            "\n#undef NP_HORIZONTAL\n#define NP_HORIZONTAL 1\n"
             "#define NpaAxis NpaAxisH\n#define npa_axis npa_h_axis\n"
-            "#define npa_tap4 npa_h_tap4\n";
+            "#define npa_tap npa_h_tap\n";
         static const char post[] =
-            "\n#undef npa_tap4\n#undef npa_axis\n#undef NpaAxis\n"
-            "#undef NP_MODE\n#define NP_MODE 1\n";
-        ok = npa_append(&helper, pre, strlen(pre))
+            "\n#undef npa_tap\n#undef npa_axis\n#undef NpaAxis\n"
+            "#undef NP_HORIZONTAL\n#define NP_HORIZONTAL 0\n";
+        /* Vertical definitions first: the wrappers below bind to them, and the
+         * horizontal copy is renamed so both stay in one translation unit. */
+        ok = npa_append(&helper, NPA_SCALE_AXIS, strlen(NPA_SCALE_AXIS))
+             && npa_append(&helper, NPA_SCALE_WRAPPERS, strlen(NPA_SCALE_WRAPPERS))
+             && npa_append(&helper, pre, strlen(pre))
              && npa_append(&helper, NPA_SCALE_AXIS, strlen(NPA_SCALE_AXIS))
-             && npa_append(&helper, NPA_SCALE_TAP_RG, strlen(NPA_SCALE_TAP_RG))
              && npa_append(&helper, post, strlen(post));
     }
     if (!ok) {
@@ -664,7 +563,7 @@ static int npa_apply_scale(char **stage, int kernel)
     if (!applied) {
         return 0;
     }
-    if (spec->separable) {
+    {
         /* The pre-pass takes Varyings, which the host declares after the
          * namespace, so this function goes in front of the fragment shader
          * instead of into the helper block. */
@@ -889,9 +788,7 @@ static id npa_prepass_saved[4];
 
 static int npa_prepass_active(void)
 {
-    int kernel = npa_scale_kernel_preference();
-    return kernel > 0 && (size_t)kernel < NPA_KERNEL_COUNT
-           && NPA_KERNELS[kernel].separable;
+    return npa_scale_kernel_preference() > 0;
 }
 
 static id npa_msg_id(id object, const char *selector)

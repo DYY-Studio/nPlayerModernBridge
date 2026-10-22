@@ -76,82 +76,12 @@ static float bilinear(float x, float y)
            + (c * (1.0f - tx) + d * tx) * ty;
 }
 
-/* The loop the shader used before pairing. */
-static float plain(Kernel k, float support, float u, float v, float st)
-{
-    const float px = u * WIDTH - 0.5f;
-    const float py = v * HEIGHT - 0.5f;
-    const float bx = floorf(px);
-    const float by = floorf(py);
-    const int kx = (int)ceilf(support * st);
-    float acc = 0.0f;
-    float wsum = 0.0f;
-    for (int j = 1 - kx; j <= kx; j++) {
-        const float wy = k((py - (by + (float)j)) / st);
-        for (int i = 1 - kx; i <= kx; i++) {
-            const float wx = k((px - (bx + (float)i)) / st);
-            acc += texel((int)bx + i, (int)by + j) * (wx * wy);
-            wsum += wx * wy;
-        }
-    }
-    return acc / fmaxf(wsum, 1e-5f);
-}
 
-/* The paired loop now in the shader. Horizontal weights are hoisted out of
- * the vertical loop, and each block fetches once, twice or four times. */
-static float paired(Kernel k, float support, float u, float v, float st)
-{
-    const float px = u * WIDTH - 0.5f;
-    const float py = v * HEIGHT - 0.5f;
-    const float bx = floorf(px);
-    const float by = floorf(py);
-    const int kx = (int)ceilf(support * st);
-    float wx[2 * 8];
-    for (int i = 0; i < 2 * kx; i++) {
-        wx[i] = k((px - (bx + (float)(1 - kx + i))) / st);
-    }
-    float acc = 0.0f;
-    float wsum = 0.0f;
-    for (int j = 0; j < kx; j++) {
-        const int iy = 1 - kx + 2 * j;
-        const float wy0 = k((py - (by + (float)iy)) / st);
-        const float wy1 = k((py - (by + (float)(iy + 1))) / st);
-        const float sy = wy0 + wy1;
-        const int foldY = wy0 * wy1 >= 0.0f && fabsf(sy) > 1e-8f;
-        const float fy = foldY ? wy1 / sy : 0.0f;
-        for (int i = 0; i < kx; i++) {
-            const float wx0 = wx[2 * i];
-            const float wx1 = wx[2 * i + 1];
-            const float sx = wx0 + wx1;
-            const int foldX = wx0 * wx1 >= 0.0f && fabsf(sx) > 1e-8f;
-            const float ax = bx + (float)(1 - kx + 2 * i) + 0.5f;
-            const float ay = by + (float)iy + 0.5f;
-            if (foldX) {
-                const float x0 = ax + wx1 / sx;
-                if (foldY) {
-                    acc += bilinear(x0, ay + fy) * (sx * sy);
-                } else {
-                    acc += bilinear(x0, ay) * (sx * wy0);
-                    acc += bilinear(x0, ay + 1.0f) * (sx * wy1);
-                }
-            } else if (foldY) {
-                const float y0 = ay + fy;
-                acc += bilinear(ax, y0) * (wx0 * sy);
-                acc += bilinear(ax + 1.0f, y0) * (wx1 * sy);
-            } else {
-                const int ix = (int)floorf(ax);
-                const int iy0 = (int)floorf(ay);
-                acc += texel(ix, iy0) * (wx0 * wy0);
-                acc += texel(ix + 1, iy0) * (wx1 * wy0);
-                acc += texel(ix, iy0 + 1) * (wx0 * wy1);
-                acc += texel(ix + 1, iy0 + 1) * (wx1 * wy1);
-            }
-            wsum += sx * sy;
-        }
-    }
-    return acc / fmaxf(wsum, 1e-5f);
-}
 
+/* Folding must be an identity: the single bilinear fetch at w1/(w0+w1),
+ * scaled by w0+w1, has to equal the two separate taps. This is the property
+ * the shader relies on, and it is checkable per pass without modelling the
+ * intermediate. */
 static void compare(const char *name, Kernel k, float support, float st, float tolerance)
 {
     float worst = 0.0f;
@@ -159,13 +89,55 @@ static void compare(const char *name, Kernel k, float support, float st, float t
         for (int x = 4; x < WIDTH - 4; x += 7) {
             const float u = ((float)x + 0.37f) / (float)WIDTH;
             const float v = ((float)y + 0.61f) / (float)HEIGHT;
-            const float a = plain(k, support, u, v, st);
-            const float b = paired(k, support, u, v, st);
-            const float d = fabsf(a - b);
-            if (d > worst) worst = d;
+            for (int axis = 0; axis < 2; axis++) {
+                const float p = (axis ? v * HEIGHT : u * WIDTH) - 0.5f;
+                const float base = floorf(p);
+                const int n = (int)ceilf(support * st);
+                const float keepx = (floorf(u * WIDTH - 0.5f) + 0.5f) / WIDTH;
+                const float keepy = (floorf(v * HEIGHT - 0.5f) + 0.5f) / HEIGHT;
+                float folded = 0.0f;
+                float plain = 0.0f;
+                float wsum = 0.0f;
+                for (int j = 0; j < n; j++) {
+                    const int i0 = 1 - n + 2 * j;
+                    const float w0 = k((p - (base + (float)i0)) / st);
+                    const float w1 = k((p - (base + (float)(i0 + 1))) / st);
+                    const float s = w0 + w1;
+                    const float a0 = base + (float)i0 + 0.5f;
+                    const float a1 = a0 + 1.0f;
+                    /* Unfolded: two taps at the texel centres. */
+                    if (axis) {
+                        plain += bilinear(keepx * WIDTH, a0) * w0;
+                        plain += bilinear(keepx * WIDTH, a1) * w1;
+                    } else {
+                        plain += bilinear(a0, keepy * HEIGHT) * w0;
+                        plain += bilinear(a1, keepy * HEIGHT) * w1;
+                    }
+                    /* Folded: one fetch, only where the hardware can place it. */
+                    if (w0 * w1 >= 0.0f && fabsf(s) > 1e-8f) {
+                        const float f = a0 + w1 / s;
+                        if (axis) {
+                            folded += bilinear(keepx * WIDTH, f) * s;
+                        } else {
+                            folded += bilinear(f, keepy * HEIGHT) * s;
+                        }
+                    } else {
+                        if (axis) {
+                            folded += bilinear(keepx * WIDTH, a0) * w0;
+                            folded += bilinear(keepx * WIDTH, a1) * w1;
+                        } else {
+                            folded += bilinear(a0, keepy * HEIGHT) * w0;
+                            folded += bilinear(a1, keepy * HEIGHT) * w1;
+                        }
+                    }
+                    wsum += s;
+                }
+                const float d = fabsf(folded - plain) / fmaxf(fabsf(wsum), 1e-5f);
+                if (d > worst) worst = d;
+            }
         }
     }
-    printf("%-10s st=%.2f  max |plain - paired| = %.6f\n", name, st, worst);
+    printf("%-10s st=%.2f  max |folded - plain| = %.6f\n", name, st, worst);
     assert(worst <= tolerance);
 }
 
@@ -190,6 +162,6 @@ int main(void)
         compare("lanczos2", lanczos2, 2.0f, st, 2e-6f);
         compare("lanczos3", lanczos3, 3.0f, st, 2e-6f);
     }
-    printf("paired loop matches the plain loop for every kernel\n");
+    printf("folding matches the plain taps for every kernel\n");
     return 0;
 }

@@ -15,6 +15,8 @@ KERNELS = {
     4: ('lanczos2', ('NP_SUPPORT 2.0f', 'NP_A 2.0f')),
     5: ('lanczos3', ('NP_SUPPORT 3.0f', 'NP_A 3.0f')),
     6: ('bspline', ('NP_SUPPORT 2.0f', 'NP_B 1.0f', 'NP_C 0.0f')),
+    7: ('spline36', ('NP_SUPPORT 3.0f', '453.0f / 209.0f')),
+    8: ('spline64', ('NP_SUPPORT 4.0f', '6387.0f / 2911.0f')),
 }
 
 

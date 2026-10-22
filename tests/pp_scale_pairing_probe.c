@@ -41,6 +41,46 @@ static float lanczos(float x, float a)
     return (a * sinf(px) * sinf(px / a)) / (px * px);
 }
 
+static float spline36(float x)
+{
+    const float ax = fabsf(x);
+    if (ax < 1.0f) {
+        return 1.0f + ax * ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f
+               + ax * (13.0f / 11.0f)));
+    }
+    if (ax < 2.0f) {
+        const float t = ax - 1.0f;
+        return t * (-156.0f / 209.0f + t * (270.0f / 209.0f + t * (-6.0f / 11.0f)));
+    }
+    if (ax < 3.0f) {
+        const float t = ax - 2.0f;
+        return t * (26.0f / 209.0f + t * (-45.0f / 209.0f + t * (1.0f / 11.0f)));
+    }
+    return 0.0f;
+}
+
+static float spline64(float x)
+{
+    const float ax = fabsf(x);
+    if (ax < 1.0f) {
+        return 1.0f + ax * ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f
+               + ax * (49.0f / 41.0f)));
+    }
+    if (ax < 2.0f) {
+        const float t = ax - 1.0f;
+        return t * (-2328.0f / 2911.0f + t * (4032.0f / 2911.0f + t * (-24.0f / 41.0f)));
+    }
+    if (ax < 3.0f) {
+        const float t = ax - 2.0f;
+        return t * (582.0f / 2911.0f + t * (-1008.0f / 2911.0f + t * (6.0f / 41.0f)));
+    }
+    if (ax < 4.0f) {
+        const float t = ax - 3.0f;
+        return t * (-97.0f / 2911.0f + t * (168.0f / 2911.0f + t * (-1.0f / 41.0f)));
+    }
+    return 0.0f;
+}
+
 static float lanczos2(float x) { return lanczos(x, 2.0f); }
 static float lanczos3(float x) { return lanczos(x, 3.0f); }
 
@@ -161,6 +201,8 @@ int main(void)
         compare("keys075", keys075, 2.0f, st, 2e-6f);
         compare("lanczos2", lanczos2, 2.0f, st, 2e-6f);
         compare("lanczos3", lanczos3, 3.0f, st, 2e-6f);
+        compare("spline36", spline36, 3.0f, st, 2e-6f);
+        compare("spline64", spline64, 4.0f, st, 2e-6f);
     }
     printf("folding matches the plain taps for every kernel\n");
     return 0;

@@ -59,6 +59,46 @@ static float catmull(float x) { return cubic(x, 0.0f, 0.5f); }
 static float bspline(float x) { return cubic(x, 1.0f, 0.0f); }
 static float mitchell(float x) { return cubic(x, 1.0f / 3.0f, 1.0f / 3.0f); }
 static float keys075(float x) { return cubic(x, 0.0f, 0.75f); }
+static float spline36(float x)
+{
+    const float ax = fabsf(x);
+    if (ax < 1.0f) {
+        return 1.0f + ax * ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f
+               + ax * (13.0f / 11.0f)));
+    }
+    if (ax < 2.0f) {
+        const float t = ax - 1.0f;
+        return t * (-156.0f / 209.0f + t * (270.0f / 209.0f + t * (-6.0f / 11.0f)));
+    }
+    if (ax < 3.0f) {
+        const float t = ax - 2.0f;
+        return t * (26.0f / 209.0f + t * (-45.0f / 209.0f + t * (1.0f / 11.0f)));
+    }
+    return 0.0f;
+}
+
+static float spline64(float x)
+{
+    const float ax = fabsf(x);
+    if (ax < 1.0f) {
+        return 1.0f + ax * ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f
+               + ax * (49.0f / 41.0f)));
+    }
+    if (ax < 2.0f) {
+        const float t = ax - 1.0f;
+        return t * (-2328.0f / 2911.0f + t * (4032.0f / 2911.0f + t * (-24.0f / 41.0f)));
+    }
+    if (ax < 3.0f) {
+        const float t = ax - 2.0f;
+        return t * (582.0f / 2911.0f + t * (-1008.0f / 2911.0f + t * (6.0f / 41.0f)));
+    }
+    if (ax < 4.0f) {
+        const float t = ax - 3.0f;
+        return t * (-97.0f / 2911.0f + t * (168.0f / 2911.0f + t * (-1.0f / 41.0f)));
+    }
+    return 0.0f;
+}
+
 static float lanczos2(float x) { return lanczos(x, 2.0f); }
 static float lanczos3(float x) { return lanczos(x, 3.0f); }
 
@@ -84,6 +124,18 @@ int main(void)
     check_support("keys075", keys075, 2.0f);
     check_support("lanczos2", lanczos2, 2.0f);
     check_support("lanczos3", lanczos3, 3.0f);
+    check_support("spline36", spline36, 3.0f);
+    check_support("spline64", spline64, 4.0f);
+    /* Both interpolate, and the segment boundaries must meet. A wrong
+     * coefficient usually shows up as a discontinuity at an integer. */
+    assert(fabsf(spline36(0.0f) - 1.0f) < 1e-6f);
+    assert(fabsf(spline64(0.0f) - 1.0f) < 1e-6f);
+    for (float x = 1.0f; x <= 3.0f; x += 1.0f) {
+        assert(fabsf(spline36(x) - spline36(x + 1e-4f)) < 1e-3f);
+    }
+    for (float x = 1.0f; x <= 4.0f; x += 1.0f) {
+        assert(fabsf(spline64(x) - spline64(x + 1e-4f)) < 1e-3f);
+    }
     assert(fabsf(catmull(0.0f) - 1.0f) < 1e-6f);
     assert(fabsf(lanczos3(0.0f) - 1.0f) < 1e-6f);
 

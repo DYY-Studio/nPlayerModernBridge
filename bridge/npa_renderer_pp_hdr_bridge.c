@@ -94,6 +94,52 @@ static const char NPA_WEIGHT_CUBIC[] =
     "  return 0.0f;\n"
     "}\n";
 
+/* Spline36 / Spline64: the piecewise cubics from Avisynth, as in zimg. Each
+ * segment is a cubic in the offset from its own left edge, and the segment
+ * index is the integer part of |x|. Both interpolate, so w(0) == 1. */
+static const char NPA_WEIGHT_SPLINE36[] =
+    "  const float ax = fabs(x);\n"
+    "  if (ax < 1.0f) {\n"
+    "    return 1.0f + ax * ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f\n"
+    "           + ax * (13.0f / 11.0f)));\n"
+    "  }\n"
+    "  if (ax < 2.0f) {\n"
+    "    const float t = ax - 1.0f;\n"
+    "    return t * (-156.0f / 209.0f + t * (270.0f / 209.0f\n"
+    "           + t * (-6.0f / 11.0f)));\n"
+    "  }\n"
+    "  if (ax < 3.0f) {\n"
+    "    const float t = ax - 2.0f;\n"
+    "    return t * (26.0f / 209.0f + t * (-45.0f / 209.0f\n"
+    "           + t * (1.0f / 11.0f)));\n"
+    "  }\n"
+    "  return 0.0f;\n"
+    "}\n";
+
+static const char NPA_WEIGHT_SPLINE64[] =
+    "  const float ax = fabs(x);\n"
+    "  if (ax < 1.0f) {\n"
+    "    return 1.0f + ax * ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f\n"
+    "           + ax * (49.0f / 41.0f)));\n"
+    "  }\n"
+    "  if (ax < 2.0f) {\n"
+    "    const float t = ax - 1.0f;\n"
+    "    return t * (-2328.0f / 2911.0f + t * (4032.0f / 2911.0f\n"
+    "           + t * (-24.0f / 41.0f)));\n"
+    "  }\n"
+    "  if (ax < 3.0f) {\n"
+    "    const float t = ax - 2.0f;\n"
+    "    return t * (582.0f / 2911.0f + t * (-1008.0f / 2911.0f\n"
+    "           + t * (6.0f / 41.0f)));\n"
+    "  }\n"
+    "  if (ax < 4.0f) {\n"
+    "    const float t = ax - 3.0f;\n"
+    "    return t * (-97.0f / 2911.0f + t * (168.0f / 2911.0f\n"
+    "           + t * (-1.0f / 41.0f)));\n"
+    "  }\n"
+    "  return 0.0f;\n"
+    "}\n";
+
 /* Lanczos: sinc(x) * sinc(x / a), normalised so w(0) == 1. */
 static const char NPA_WEIGHT_LANCZOS[] =
     "  const float ax = fabs(x);\n"
@@ -229,6 +275,8 @@ static const NPAKernelSpec NPA_KERNELS[] = {
     {"#define NP_A 2.0f\n", NPA_WEIGHT_LANCZOS, 2.0f},
     {"#define NP_A 3.0f\n", NPA_WEIGHT_LANCZOS, 3.0f},
     {"#define NP_B 1.0f\n#define NP_C 0.0f\n", NPA_WEIGHT_CUBIC, 2.0f},
+    {"", NPA_WEIGHT_SPLINE36, 3.0f},
+    {"", NPA_WEIGHT_SPLINE64, 4.0f},
 };
 
 #define NPA_KERNEL_COUNT (sizeof(NPA_KERNELS) / sizeof(NPA_KERNELS[0]))

@@ -885,6 +885,7 @@ typedef struct {
 } NPAPrepass;
 
 static NPAPrepass npa_prepass;
+static id npa_prepass_saved[4];
 
 static int npa_prepass_active(void)
 {
@@ -1005,7 +1006,11 @@ static id npa_prepass_texture(id device, uint64_t format, int width, int height)
 }
 
 /* Returns 0 when the pre-pass could not run; the caller then falls back to the
- * host draw and logs, because the fragment shader is already vertical-only. */
+ * host draw and logs, because the fragment shader is already vertical-only.
+ * On success the renderer's texture slots point at the intermediates, and the
+ * caller must restore them: the host writes the next frame into those slots
+ * with replaceRegion at the source size, which would land inside a
+ * differently sized intermediate. */
 static int npa_prepass_run(void *renderer)
 {
     NPAPrepass *state = &npa_prepass;
@@ -1155,12 +1160,19 @@ static int npa_prepass_run(void *renderer)
         );
         ((void (*)(id, SEL))objc_msgSend)(encoder, npa_sel("endEncoding"));
     }
+    /* Nothing waits on this buffer. Metal holds a committed buffer until its
+     * work completes, and the queue runs buffers in submission order, so the
+     * host draw that follows is already ordered after this one. Blocking here
+     * would serialise the GPU with the CPU every frame. */
     ((void (*)(id, SEL))objc_msgSend)(command_buffer, npa_sel("commit"));
 
-    /* The second pass samples the intermediates. The host never releases these
-     * slots, it overwrites them on the next upload, so assigning without a
-     * retain mirrors that and keeps the refcount where the host left it. The
-     * intermediates stay alive in the cache. */
+    /* The second pass samples the intermediates. The host overwrites these
+     * slots on the next upload and never releases them, so they are swapped
+     * without a retain and restored by the caller before returning. */
+    npa_prepass_saved[0] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y);
+    npa_prepass_saved[1] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR);
+    npa_prepass_saved[2] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB);
+    npa_prepass_saved[3] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR);
     *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y) = state->plane[0];
     *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR) =
         plane_count == 2 ? state->plane[1] : NULL;
@@ -1169,6 +1181,14 @@ static int npa_prepass_run(void *renderer)
     *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR) =
         plane_count == 3 ? state->plane[2] : NULL;
     return 1;
+}
+
+static void npa_prepass_restore(void *renderer)
+{
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y) = npa_prepass_saved[0];
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR) = npa_prepass_saved[1];
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB) = npa_prepass_saved[2];
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR) = npa_prepass_saved[3];
 }
 
 /* Draw wrapper. The separable variant needs its horizontal pass to land in the
@@ -1184,15 +1204,20 @@ NPA_EXPORT __attribute__((noinline)) void npa_renderer_pp_hdr_draw(void *rendere
     if (!draw) {
         return;
     }
-    if (renderer && npa_prepass_active()) {
-        /* A failed pre-pass leaves the source planes in place; the fragment
-         * shader is vertical-only by then, so say so rather than shipping a
-         * silently under-filtered frame. */
-        if (!npa_prepass_run(renderer)) {
-            npa_hdr_log("separable pre-pass did not run; frame is vertical-only", -1);
-        }
+    if (!renderer || !npa_prepass_active()) {
+        draw(renderer);
+        return;
+    }
+    /* A failed pre-pass leaves the source planes in place; the fragment shader
+     * is vertical-only by then, so say so rather than shipping a silently
+     * under-filtered frame. */
+    if (!npa_prepass_run(renderer)) {
+        npa_hdr_log("separable pre-pass did not run; frame is vertical-only", -1);
+        draw(renderer);
+        return;
     }
     draw(renderer);
+    npa_prepass_restore(renderer);
 }
 
 NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(

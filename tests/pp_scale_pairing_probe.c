@@ -45,7 +45,7 @@ static float spline36(float x)
 {
     const float ax = fabsf(x);
     if (ax < 1.0f) {
-        return 1.0f + ax * ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f
+        return 1.0f + ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f
                + ax * (13.0f / 11.0f)));
     }
     if (ax < 2.0f) {
@@ -63,7 +63,7 @@ static float spline64(float x)
 {
     const float ax = fabsf(x);
     if (ax < 1.0f) {
-        return 1.0f + ax * ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f
+        return 1.0f + ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f
                + ax * (49.0f / 41.0f)));
     }
     if (ax < 2.0f) {
@@ -133,8 +133,8 @@ static void compare(const char *name, Kernel k, float support, float st, float t
                 const float p = (axis ? v * HEIGHT : u * WIDTH) - 0.5f;
                 const float base = floorf(p);
                 const int n = (int)ceilf(support * st);
-                const float keepx = (floorf(u * WIDTH - 0.5f) + 0.5f) / WIDTH;
-                const float keepy = (floorf(v * HEIGHT - 0.5f) + 0.5f) / HEIGHT;
+                const float keepx = (floorf(u * WIDTH) + 0.5f) / WIDTH;
+                const float keepy = (floorf(v * HEIGHT) + 0.5f) / HEIGHT;
                 float folded = 0.0f;
                 float plain = 0.0f;
                 float wsum = 0.0f;
@@ -190,7 +190,7 @@ static float filter_axis(Kernel k, float support, float st, int down, int antiri
                          float u, float v, int *clamped)
 {
     const float p = u * WIDTH - 0.5f;
-    const float keepy = (floorf(v * HEIGHT - 0.5f) + 0.5f) / HEIGHT;
+    const float keepy = (floorf(v * HEIGHT) + 0.5f) / HEIGHT;
     const float base = floorf(p);
     const int n = (int)ceilf(support * st);
     float acc = 0.0f;

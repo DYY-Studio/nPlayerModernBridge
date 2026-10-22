@@ -122,7 +122,7 @@ static const char NPA_WEIGHT_CUBIC[] =
 static const char NPA_WEIGHT_SPLINE36[] =
     "  const float ax = fabs(x);\n"
     "  if (ax < 1.0f) {\n"
-    "    return 1.0f + ax * ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f\n"
+    "    return 1.0f + ax * (-3.0f / 209.0f + ax * (-453.0f / 209.0f\n"
     "           + ax * (13.0f / 11.0f)));\n"
     "  }\n"
     "  if (ax < 2.0f) {\n"
@@ -141,7 +141,7 @@ static const char NPA_WEIGHT_SPLINE36[] =
 static const char NPA_WEIGHT_SPLINE64[] =
     "  const float ax = fabs(x);\n"
     "  if (ax < 1.0f) {\n"
-    "    return 1.0f + ax * ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f\n"
+    "    return 1.0f + ax * (-3.0f / 2911.0f + ax * (-6387.0f / 2911.0f\n"
     "           + ax * (49.0f / 41.0f)));\n"
     "  }\n"
     "  if (ax < 2.0f) {\n"
@@ -237,7 +237,7 @@ static const char NPA_SCALE_AXIS[] =
     "                             float2 uv, float2 dudx, float2 dudy) {\n"
     "  const NpaAxis a = npa_axis(t, uv, dudx, dudy);\n"
     /* The unfiltered axis stays on a texel centre so bilinear cannot blur it. */
-    "  const float2 keep = (floor(uv * a.size - 0.5f) + 0.5f) / a.size;\n"
+    "  const float2 keep = (floor(uv * a.size) + 0.5f) / a.size;\n"
     "  float4 acc = float4(0.0f);\n"
     "  float wsum = 0.0f;\n"
     "  for (int j = 0; j < a.k; ++j) {\n"
@@ -268,10 +268,10 @@ static const char NPA_SCALE_AXIS[] =
      * is: the loop pairs texels at even offsets, so an odd k straddles the
      * boundary between two pairs and no single pair brackets the point. */
     "  if (a.antiring) {\n"
-    "    const float2 c0 = NP_HORIZONTAL ? float2(a.base / a.size.x, keep.y)\n"
-    "                                    : float2(keep.x, a.base / a.size.y);\n"
-    "    const float2 c1 = NP_HORIZONTAL ? float2((a.base + 1.0f) / a.size.x, keep.y)\n"
-    "                                    : float2(keep.x, (a.base + 1.0f) / a.size.y);\n"
+    "    const float2 c0 = NP_HORIZONTAL ? float2((a.base + 0.5f) / a.size.x, keep.y)\n"
+    "                                    : float2(keep.x, (a.base + 0.5f) / a.size.y);\n"
+    "    const float2 c1 = NP_HORIZONTAL ? float2((a.base + 1.5f) / a.size.x, keep.y)\n"
+    "                                    : float2(keep.x, (a.base + 1.5f) / a.size.y);\n"
     "    const float4 t0 = t.sample(sn, c0);\n"
     "    const float4 t1 = t.sample(sn, c1);\n"
     "    result = clamp(result, min(t0, t1), max(t0, t1));\n"
@@ -320,7 +320,7 @@ typedef struct {
 static const NPAKernelSpec NPA_KERNELS[] = {
     {NULL, NULL, 0.0f, 0},
     {"#define NP_B 0.0f\n#define NP_C 0.5f\n", NPA_WEIGHT_CUBIC, 2.0f, 1},
-    {"#define NP_B 0.33333334f\n#define NP_C 0.33333334f\n", NPA_WEIGHT_CUBIC, 2.0f, 0},
+    {"#define NP_B 0.33333334f\n#define NP_C 0.33333334f\n", NPA_WEIGHT_CUBIC, 2.0f, 1},
     {"#define NP_B 0.0f\n#define NP_C 0.75f\n", NPA_WEIGHT_CUBIC, 2.0f, 1},
     {"#define NP_A 2.0f\n", NPA_WEIGHT_LANCZOS, 2.0f, 1},
     {"#define NP_A 3.0f\n", NPA_WEIGHT_LANCZOS, 3.0f, 1},
@@ -921,7 +921,8 @@ static void npa_configure_layer_async(void *renderer, int transfer, int hdr)
  * A separable kernel filters one axis into an intermediate and the other axis
  * into the drawable. The intermediate keeps the source plane layout (Y plus
  * one chroma plane) and the source pixel format, so the second pass is the
- * same shader with NP_MODE 1 and the intermediate is lossless.
+ * same sampling shader. UNorm intermediates retain the source precision and
+ * clamp out-of-range values; they are not lossless for negative-lobe filters.
  *
  * The pre-pass runs as its own command buffer on the renderer's queue, which
  * Metal executes in submission order, so the draw that follows sees a finished
@@ -1126,18 +1127,10 @@ static int npa_prepass_run(void *renderer)
         return 0;
     }
 
-    /* Luma keeps the source height and takes the drawable width; chroma keeps
-     * its own subsampling, so the second pass sees an exactly 1:1 horizontal
-     * footprint on both planes. */
+    /* Every plane takes the drawable width, completing chroma reconstruction
+     * horizontally here. Source heights are kept for the vertical pass. */
     uint64_t formats[3] = {0, 0, 0};
     int sizes[3][2] = {{0, 0}, {0, 0}, {0, 0}};
-    const int luma_width = (int)((unsigned long (*)(id, SEL))objc_msgSend)(
-        sources[0], npa_sel("width")
-    );
-    if (luma_width < 1) {
-        npa_hdr_log("separable pre-pass luma plane is empty", -1);
-        return 0;
-    }
     for (int index = 0; index < plane_count; index++) {
         formats[index] = ((unsigned long (*)(id, SEL))objc_msgSend)(
             sources[index], npa_sel("pixelFormat")
@@ -1152,11 +1145,7 @@ static int npa_prepass_run(void *renderer)
             npa_hdr_log("separable pre-pass source plane is empty", index);
             return 0;
         }
-        /* The intermediate must keep the plane's own subsampling so the second
-         * pass sees a 1:1 footprint. Deriving it from the ratio rather than
-         * assuming 4:2:0 also covers 4:4:4 and any other ratio. */
-        sizes[index][0] = (int)((double)source_width / (double)luma_width
-                                * drawable.width + 0.5);
+        sizes[index][0] = (int)(drawable.width + 0.5);
         sizes[index][1] = source_height;
         if (sizes[index][0] < 1) {
             sizes[index][0] = 1;

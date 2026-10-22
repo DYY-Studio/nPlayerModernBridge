@@ -2,6 +2,8 @@
 
 日期：2026-10-23。检查基于 `1038ebd`，仅检查源码与生成的 MSL，未修改实现或 IDA 数据库。
 
+后续修复见文末“修复与验证”。下述问题描述保留检查时的状态及行号。
+
 ## 结论
 
 当前两阶段缩放没有正确实现水平滤波。水平预处理必定提前退出，最终 fragment 却仍按水平处理已完成来吸附横坐标。相较原始 bilinear，这直接丢失水平方向的插值和缩小低通，足以解释明显增加的锯齿与摩尔纹。即使单独修复提前退出，水平入口仍调用垂直函数，问题会继续存在。
@@ -84,3 +86,31 @@ actual npa_prepass_run result=0
 3. 使用同一 PP 路径的 bilinear 与修复后路径，验证高频竖线、斜线及色度边缘。恢复正确管线后再决定中间格式与 AA 默认值。
 
 尚未验证旋转、裁剪或非满屏情况下复用宿主顶点缓冲两次是否重复应用几何变换，不能将其列为已确认根因。
+
+## 修复与验证
+
+2026-10-23，用户授权修复后：
+
+- `7ad938e` 恢复水平预处理：接收 drawableSize，正确调用带下标的 attachment API，水平入口改用 npa_h_tap。实际执行还发现 `setLabel:nil` 触发 Metal 断言，已删除这次无必要调用。预处理失败时明确记录并跳过该帧，避免继续使用垂直 Shader 绘制未滤波输入。
+- 所有平面在水平 pass 重建到 drawable 宽度，保留各自源高度供垂直 pass 处理。修正未滤波轴的 texel 中心吸附，以及 Anti-ringing 的半 texel 偏移。
+- 修正 Spline36/64 首段，同时更新已有 CPU 探针。逐一对照 libplacebo 的 cubic、sinc/window 和 spline 实现，确认其余核的公式及 support。Cubic 的 `/6` 与上游 `/p0` 只差常数，最终权重归一化后等价。另发现 Mitchell 具有负瓣却被标记为不振铃，已修正该标记。
+
+新增 `tests/pp_scale_render_probe.m`，直接运行生产代码的 `npa_prepass_run`、纹理替换/恢复及生成后的最终 fragment。只用一个 macOS view 适配对象提供真实 CAMetalLayer，其余使用实际 Metal device、queue、library、pipeline 和纹理；不依赖 `/tmp` 的捕获 Shader。
+
+回归验证先观察到预处理提前退出、防振铃把细节改成灰色，以及色度 ramp 偏移。修复后 Apple M4 的 GPU 读回结果：
+
+| 场景 | 修复后最大误差 |
+| --- | ---: |
+| Lanczos3、AA Quality、256→128 黑白竖线 | 0 |
+| Lanczos3、防振铃开启、128→128 黑白竖线 | 0 |
+| Catmull-Rom、半宽色度 ramp 重建 | 0 |
+
+GPU 另读取全部八个实际生成核在 `0.5、1.5、2.5、3.5` 的权重，以独立的上游参考值验证，归一化后容差 `2e-6`，并检查负权重核的振铃标记。对照来源：[libplacebo filters.c](https://github.com/haasn/libplacebo/blob/master/src/filters.c)、[sampling.c](https://github.com/haasn/libplacebo/blob/master/src/shaders/sampling.c)。新增探针由现有 `test_pp_scale_kernels.py` 调用。
+
+重新构建 iOS arm64 `build/LibRendererPPHDRBridge.dylib`，普通版及 Plus 的绑定、导出、依赖和初始化约束校验通过。
+
+最终运行 `.venv/bin/python -m pytest -q tests/test_pp_scale_kernels.py tests/test_pp_hdr_manifest.py`：13 passed。包含实际 GPU 读回、全部八核的 iOS Metal 编译及新构建 dylib 的校验。
+
+性能与删减检查：沿用现有两阶段实现和缓存，没有新增依赖、CPU/GPU 同步等待或额外 pass。4:2:0 色度改为全宽后，中间纹理容量由约 `1.5×W×H` 增为 `2×W×H` 个单通道等价元素，增加约三分之一；这是完成水平色度重建的存储成本。删除了冗余的 luma 宽度读取与无效 label 设置。未改动 AA 默认值或中间像素格式。
+
+验证范围为原生 Metal 回归探针及桥接 dylib 构建，未部署到 nPlayer 做影片、旋转或裁剪场景验收。

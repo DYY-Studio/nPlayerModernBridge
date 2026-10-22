@@ -1057,23 +1057,25 @@ static int npa_prepass_run(void *renderer)
     /* Plane 0 is luma, plane 1 is either interleaved chroma or Cb, plane 2 is
      * Cr. The host clears all four slots on a format change, so an empty slot
      * means that layout is not in use. */
-    id sources[3] = {
-        *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y),
-        *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR),
-        *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR),
-    };
-    if (!sources[1]) {
+    /* Two layouts share these slots: NV12/P010 put chroma in one interleaved
+     * texture, planar 4:4:4 / 4:2:0 use separate Cb and Cr. The host clears
+     * every slot on a format change, so the populated ones identify the
+     * layout: interleaved fills CbCr and leaves Cb/Cr empty. */
+    id sources[3];
+    int plane_count;
+    const id luma = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y);
+    const id chroma = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR);
+    if (chroma) {
+        sources[0] = luma;
+        sources[1] = chroma;
+        plane_count = 2;
+    } else {
+        sources[0] = luma;
         sources[1] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB);
+        sources[2] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR);
+        plane_count = 3;
     }
-    int plane_count = 0;
-    for (int index = 0; index < 3; index++) {
-        if (sources[index]) {
-            plane_count++;
-        } else {
-            break;
-        }
-    }
-    if (plane_count < 2) {
+    if (!sources[0] || !sources[1] || (plane_count == 3 && !sources[2])) {
         npa_hdr_log("separable pre-pass found no source planes", -1);
         return 0;
     }
@@ -1096,6 +1098,10 @@ static int npa_prepass_run(void *renderer)
     const int luma_width = (int)((unsigned long (*)(id, SEL))objc_msgSend)(
         sources[0], npa_sel("width")
     );
+    if (luma_width < 1) {
+        npa_hdr_log("separable pre-pass luma plane is empty", -1);
+        return 0;
+    }
     for (int index = 0; index < plane_count; index++) {
         formats[index] = ((unsigned long (*)(id, SEL))objc_msgSend)(
             sources[index], npa_sel("pixelFormat")
@@ -1110,8 +1116,11 @@ static int npa_prepass_run(void *renderer)
             npa_hdr_log("separable pre-pass source plane is empty", index);
             return 0;
         }
-        const int scale = source_width == luma_width ? 1 : 2;
-        sizes[index][0] = (int)(drawable.width / scale);
+        /* The intermediate must keep the plane's own subsampling so the second
+         * pass sees a 1:1 footprint. Deriving it from the ratio rather than
+         * assuming 4:2:0 also covers 4:4:4 and any other ratio. */
+        sizes[index][0] = (int)((double)source_width / (double)luma_width
+                                * drawable.width + 0.5);
         sizes[index][1] = source_height;
         if (sizes[index][0] < 1) {
             sizes[index][0] = 1;

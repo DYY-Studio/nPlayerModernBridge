@@ -191,10 +191,10 @@ static const char NPA_SCALE_FOOTPRINT[] =
  * one-dimensional: the other axis is not filtered here at all.
  *
  * That is only sound because the intermediate keeps the source height and the
- * source plane's pixel format, while its width matches the drawable. Both
- * passes therefore land on a texel centre along the axis they do not filter,
- * where bilinear returns that texel exactly. Snapping is explicit so a rounding
- * difference cannot smear the untouched axis.
+ * source plane's pixel format, while its width matches the effective video
+ * width, including the host's fit/crop geometry. Both
+ * passes normally land on a texel centre along the axis they do not filter.
+ * The final pass keeps horizontal interpolation for fractional viewport edges.
  *
  * Folding: a tap pair folds into one bilinear fetch at w1/(w0+w1) scaled by
  * w0+w1, which is algebraically the same two taps. The hardware clamps that
@@ -236,8 +236,9 @@ static const char NPA_SCALE_AXIS[] =
     "static inline float4 npa_tap(texture2d<float, access::sample> t, sampler sn,\n"
     "                             float2 uv, float2 dudx, float2 dudy) {\n"
     "  const NpaAxis a = npa_axis(t, uv, dudx, dudy);\n"
-    /* The unfiltered axis stays on a texel centre so bilinear cannot blur it. */
-    "  const float2 keep = (floor(uv * a.size) + 0.5f) / a.size;\n"
+    /* Snap rows in the pre-pass; preserve horizontal subpixel placement in
+     * the final pass when the fitted video width rounds to an integer. */
+    "  const float2 keep = NP_HORIZONTAL ? (floor(uv * a.size) + 0.5f) / a.size : uv;\n"
     "  float4 acc = float4(0.0f);\n"
     "  float wsum = 0.0f;\n"
     "  for (int j = 0; j < a.k; ++j) {\n"
@@ -295,6 +296,14 @@ static const char NPA_SCALE_WRAPPERS[] =
     "}\n";
 
 static const char NPA_SCALE_HORIZONTAL[] =
+    "\n"
+    "vertex Varyings npaHorizontalVertex(uint vid [[vertex_id]]) {\n"
+    "  const float2 p = float2((vid << 1) & 2, vid & 2);\n"
+    "  Varyings out;\n"
+    "  out.position = float4(p * 2.0f - 1.0f, 0.0f, 1.0f);\n"
+    "  out.texcoord = float2(p.x, 1.0f - p.y);\n"
+    "  return out;\n"
+    "}\n"
     "\n"
     "fragment float4 npaHorizontal(Varyings in [[ stage_in ]],\n"
     "                              texture2d<float, access::sample> src [[ texture(0) ]]) {\n"
@@ -946,8 +955,9 @@ typedef struct {
 static NPAPrepass npa_prepass;
 static id npa_prepass_saved[4];
 
-static int npa_prepass_active(void)
+static int npa_prepass_active(void *renderer)
 {
+    (void)renderer;
     return npa_scale_kernel_preference() > 0;
 }
 
@@ -1000,7 +1010,7 @@ static id npa_prepass_pipeline(NPAPrepass *state, id device, uint64_t format)
         state->library, npa_sel("newFunctionWithName:"),
         ((id (*)(id, SEL, const char *))objc_msgSend)(
             (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"),
-            "vertexPassthrough"
+            "npaHorizontalVertex"
         )
     );
     id descriptor = npa_msg_id((id)objc_getClass("MTLRenderPipelineDescriptor"), "alloc");
@@ -1061,6 +1071,29 @@ static id npa_prepass_texture(id device, uint64_t format, int width, int height)
     /* The pre-pass renders into it and the draw samples it. */
     ((void (*)(id, SEL, unsigned long))objc_msgSend)(descriptor, npa_sel("setUsage:"), 5);
     return ((id (*)(id, SEL, id))objc_msgSend)(device, npa_sel("newTextureWithDescriptor:"), descriptor);
+}
+
+/* Recover pixels per source-u from the host's affine triangle. This includes
+ * aspect-fit and zoom without applying that geometry to the intermediate. */
+static int npa_prepass_width(id vertex_buffer, CGSize drawable)
+{
+    const unsigned long length = ((unsigned long (*)(id, SEL))objc_msgSend)(
+        vertex_buffer, npa_sel("length"));
+    const float (*v)[4] = ((const void *(*)(id, SEL))objc_msgSend)(
+        vertex_buffer, npa_sel("contents"));
+    if (!v || length < 3 * 4 * sizeof(float)) return 0;
+    const double x1 = v[1][0] - v[0][0], y1 = v[1][1] - v[0][1];
+    const double x2 = v[2][0] - v[0][0], y2 = v[2][1] - v[0][1];
+    const double u1 = v[1][2] - v[0][2], u2 = v[2][2] - v[0][2];
+    const double det = x1 * y2 - x2 * y1;
+    if (det == 0.0) return 0;
+    const double dx = (u1 * y2 - u2 * y1) / det * 2.0 / drawable.width;
+    const double dy = (x1 * u2 - x2 * u1) / det * 2.0 / drawable.height;
+    const double width = 1.0 / hypot(dx, dy);
+    /* Metal's maximum 2D extent on supported Apple GPUs. Fail before passing
+     * invalid dimensions into a texture descriptor. */
+    if (!isfinite(width) || width < 0.5 || width > 16384.0) return 0;
+    return (int)lround(width);
 }
 
 /* Returns 0 when the pre-pass could not run; the caller skips the frame and
@@ -1127,8 +1160,13 @@ static int npa_prepass_run(void *renderer)
         return 0;
     }
 
-    /* Every plane takes the drawable width, completing chroma reconstruction
-     * horizontally here. Source heights are kept for the vertical pass. */
+    const int intermediate_width = npa_prepass_width(vertex_buffer, drawable);
+    if (!intermediate_width) {
+        npa_hdr_log("separable pre-pass has invalid horizontal geometry", -1);
+        return 0;
+    }
+    /* Complete horizontal reconstruction at the host's effective density;
+     * the final draw alone applies its aspect-fit, crop and zoom geometry. */
     uint64_t formats[3] = {0, 0, 0};
     int sizes[3][2] = {{0, 0}, {0, 0}, {0, 0}};
     for (int index = 0; index < plane_count; index++) {
@@ -1145,7 +1183,7 @@ static int npa_prepass_run(void *renderer)
             npa_hdr_log("separable pre-pass source plane is empty", index);
             return 0;
         }
-        sizes[index][0] = (int)(drawable.width + 0.5);
+        sizes[index][0] = intermediate_width;
         sizes[index][1] = source_height;
         if (sizes[index][0] < 1) {
             sizes[index][0] = 1;
@@ -1177,8 +1215,6 @@ static int npa_prepass_run(void *renderer)
         npa_hdr_log("separable pre-pass could not get a command buffer", -1);
         return 0;
     }
-    const unsigned long vertex_count =
-        ((unsigned long (*)(id, SEL))objc_msgSend)(vertex_buffer, npa_sel("length")) >> 4;
 
     for (int index = 0; index < plane_count; index++) {
         id pipeline = npa_prepass_pipeline(state, device, formats[index]);
@@ -1208,12 +1244,9 @@ static int npa_prepass_run(void *renderer)
         ((void (*)(id, SEL, id, unsigned long))objc_msgSend)(
             encoder, npa_sel("setFragmentTexture:atIndex:"), sources[index], 0
         );
-        ((void (*)(id, SEL, id, unsigned long, unsigned long))objc_msgSend)(
-            encoder, npa_sel("setVertexBuffer:offset:atIndex:"), vertex_buffer, 0, 0
-        );
         ((void (*)(id, SEL, unsigned long, unsigned long, unsigned long, unsigned long))objc_msgSend)(
             encoder, npa_sel("drawPrimitives:vertexStart:vertexCount:instanceCount:"),
-            3, 0, vertex_count, 1
+            3, 0, 3, 1
         );
         ((void (*)(id, SEL))objc_msgSend)(encoder, npa_sel("endEncoding"));
     }
@@ -1261,7 +1294,7 @@ NPA_EXPORT __attribute__((noinline)) void npa_renderer_pp_hdr_draw(void *rendere
     if (!draw) {
         return;
     }
-    if (!renderer || !npa_prepass_active()) {
+    if (!renderer || !npa_prepass_active(renderer)) {
         draw(renderer);
         return;
     }

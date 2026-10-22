@@ -99,7 +99,8 @@ static int check_weights(id<MTLDevice> device)
 }
 
 static int check_render(id<MTLDevice> device, int kernel, int antiring,
-                        int source_width, int output_width, int ramp)
+                        int source_width, int output_width, int ramp,
+                        float scale_x, float scale_y)
 {
     char *source = strdup(SOURCE);
     assert(npa_apply_scale(&source, kernel, kernel, antiring, antiring, NPA_AA_QUALITY));
@@ -132,10 +133,14 @@ static int check_render(id<MTLDevice> device, int kernel, int antiring,
             withBytes:pixels bytesPerRow:source_width * sizeof(float)];
     free(pixels);
 
-    const float vertices[][4] = {
+    float vertices[][4] = {
         {-1,-1,0,1}, {1,-1,1,1}, {-1,1,0,0},
         {-1,1,0,0}, {1,-1,1,1}, {1,1,1,0}
     };
+    for (int i = 0; i < 6; i++) {
+        vertices[i][0] *= scale_x;
+        vertices[i][1] *= scale_y;
+    }
     id<MTLBuffer> vb = [device newBufferWithBytes:vertices length:sizeof(vertices)
                                        options:MTLResourceStorageModeShared];
     id<MTLCommandQueue> queue = [device newCommandQueue];
@@ -192,7 +197,10 @@ static int check_render(id<MTLDevice> device, int kernel, int antiring,
     float max_error = 0;
     for (int row = 2; row < height - 2; row++)
         for (int x = 16; x < output_width - 16; x++) {
-            float expected = ramp ? ((x + 0.5f) * source_width / (2 * output_width) - 0.5f)
+            float u = ((x + 0.5f) / output_width - 0.5f) / scale_x + 0.5f;
+            float v = ((row + 0.5f) / height - 0.5f) / scale_y + 0.5f;
+            if (u < 0.1f || u > 0.9f || v < 0.1f || v > 0.9f) continue;
+            float expected = ramp ? (u * source_width / 2 - 0.5f)
                                       / (source_width / 2)
                                   : source_width == output_width ? x % 2 : 0.5f;
             float actual = result[(row * output_width + x) * 4 + (ramp ? 1 : 0)];
@@ -200,8 +208,8 @@ static int check_render(id<MTLDevice> device, int kernel, int antiring,
             max_error = fmaxf(max_error, fabsf(actual - expected));
         }
     free(result);
-    printf("kernel=%d ar=%d %d->%d %s max_error=%g\n", kernel, antiring,
-           source_width, output_width, ramp ? "chroma ramp" : "luma stripes", max_error);
+    printf("kernel=%d ar=%d %d->%d %s geometry=%g/%g max_error=%g\n", kernel, antiring,
+           source_width, output_width, ramp ? "chroma ramp" : "luma stripes", scale_x, scale_y, max_error);
     npa_prepass_reset(&npa_prepass);
     [pd.vertexFunction release];
     [pd.fragmentFunction release];
@@ -216,9 +224,13 @@ int main(void)
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         if (!device) { fprintf(stderr, "Metal device required\n"); return 2; }
-        int failed = check_render(device, 5, 0, 256, 128, 0);
-        failed |= check_render(device, 5, 1, 128, 128, 0);
-        failed |= check_render(device, 1, 0, 256, 256, 1);
+        int failed = check_render(device, 5, 0, 256, 128, 0, 1, 1);
+        failed |= check_render(device, 5, 1, 128, 128, 0, 1, 1);
+        failed |= check_render(device, 1, 0, 256, 256, 1, 1, 1);
+        failed |= check_render(device, 1, 0, 256, 256, 1, 0.75f, 1);
+        failed |= check_render(device, 1, 0, 256, 256, 1, 0.77f, 1);
+        failed |= check_render(device, 1, 0, 256, 256, 1, 1, 0.5f);
+        failed |= check_render(device, 1, 0, 256, 256, 1, 1.25f, 1.25f);
         failed |= check_weights(device);
         if (!failed) puts("Metal scaling checks passed (including all eight kernels)");
         return failed;

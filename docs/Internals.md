@@ -180,8 +180,11 @@ The same API can bake a scaling kernel into the MSL, chosen by the shared
 `PPVideoScaleKernel` preference: Catmull-Rom, Mitchell, Keys a=-0.75, Lanczos2,
 Lanczos3, B-Spline and Spline36/64, with zero (the default) keeping the host's
 bilinear sampling. Catmull-Rom, Mitchell, Keys and B-Spline share one (B,C)
-cubic function. A horizontal pre-pass reconstructs every plane to drawable
-width while retaining its source height, then the fragment filters vertically.
+cubic function. A full-screen horizontal pre-pass reconstructs every plane at
+the effective video width derived from the host vertices, retaining its source
+height. The final fragment filters vertically and applies the host geometry
+once, including fit and crop. Fractional fitted widths keep horizontal
+interpolation in the final pass.
 Each adjacent same-sign tap pair folds into one bilinear fetch. B-Spline is the
 only fully non-negative kernel. Optional anti-ringing clamps to the two centre
 texels, and anti-aliasing widens the downscale kernel according to its footprint.

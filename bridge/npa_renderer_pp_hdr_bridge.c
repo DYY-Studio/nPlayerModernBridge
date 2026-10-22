@@ -66,6 +66,8 @@ static const char NPA_HLG_SCALE[] = "  rgb1 *= float3(trc_nom_peak);\n";
  * host's bilinear sampling; the selection is baked into the generated MSL so
  * the tap loops stay compile-time constants. */
 #define NPA_PREF_SCALE_KERNEL "PPVideoScaleKernel"
+#define NPA_PREF_SCALE_KERNEL_UP "PPVideoScaleKernelUpscale"
+#define NPA_PREF_ANTIRING "PPVideoAntiRinging"
 
 #define NPA_SAMPLER_ANCHOR \
     "  constexpr sampler s(address::clamp_to_edge, filter::linear);\n"
@@ -188,13 +190,16 @@ static const char NPA_SCALE_AXIS[] =
     "  int k;\n"
     "};\n"
     "\n"
+    /* The footprint is per-pixel but the whole quad shares it, so choosing the
+     * kernel here is a uniform branch. st > 1 means the source is larger than
+     * the drawable, which is the only case that can ring. */
     "static inline NpaAxis npa_axis(texture2d<float, access::sample> t,\n"
     "                               float2 uv, float2 dudx, float2 dudy) {\n"
     "  NpaAxis a;\n"
     "  a.size = float2(t.get_width(), t.get_height());\n"
     "  const float2 footprint = npa_footprint(dudx, dudy, a.size);\n"
     "  a.st = clamp(NP_HORIZONTAL ? footprint.x : footprint.y, 1.0f, NP_ST_MAX);\n"
-    "  a.k = int(ceil(NP_SUPPORT * a.st));\n"
+    "  a.k = int(ceil(npa_support(a.st) * a.st));\n"
     "  const float at = NP_HORIZONTAL ? uv.x * a.size.x : uv.y * a.size.y;\n"
     "  a.pos = at - 0.5f;\n"
     "  a.base = floor(a.pos);\n"
@@ -208,29 +213,47 @@ static const char NPA_SCALE_AXIS[] =
     "  const float2 keep = (floor(uv * a.size - 0.5f) + 0.5f) / a.size;\n"
     "  float4 acc = float4(0.0f);\n"
     "  float wsum = 0.0f;\n"
+    /* Anti-ringing clamps the result to the two texels that straddle the
+     * sample point, the same two libplacebo uses. Ringing lives at edges, and
+     * those texels bracket every edge inside the footprint. */
+    "  float4 lo = float4(0.0f);\n"
+    "  float4 hi = float4(0.0f);\n"
+    "  const int centre = a.k / 2 - 1;\n"
     "  for (int j = 0; j < a.k; ++j) {\n"
     "    const int i0 = 1 - a.k + 2 * j;\n"
-    "    const float w0 = npa_kernel_w((a.pos - (a.base + float(i0))) / a.st);\n"
-    "    const float w1 = npa_kernel_w((a.pos - (a.base + float(i0 + 1))) / a.st);\n"
+    "    const float w0 = npa_kernel_w((a.pos - (a.base + float(i0))) / a.st, a.st);\n"
+    "    const float w1 = npa_kernel_w((a.pos - (a.base + float(i0 + 1))) / a.st, a.st);\n"
     "    const float s = w0 + w1;\n"
+    "    const float first = a.base + float(i0) + 0.5f;\n"
+    "    const float2 at0 = NP_HORIZONTAL ? float2(first / a.size.x, keep.y)\n"
+    "                                     : float2(keep.x, first / a.size.y);\n"
     "    if (w0 * w1 >= 0.0f && fabs(s) > 1e-8f) {\n"
-    "      const float folded = a.base + float(i0) + w1 / s + 0.5f;\n"
+    "      const float folded = first + w1 / s;\n"
     "      const float2 at = NP_HORIZONTAL ? float2(folded / a.size.x, keep.y)\n"
     "                                      : float2(keep.x, folded / a.size.y);\n"
     "      acc += t.sample(sn, at) * s;\n"
     "    } else {\n"
-    "      const float first = a.base + float(i0) + 0.5f;\n"
     "      const float second = first + 1.0f;\n"
-    "      const float2 a0 = NP_HORIZONTAL ? float2(first / a.size.x, keep.y)\n"
-    "                                      : float2(keep.x, first / a.size.y);\n"
-    "      const float2 a1 = NP_HORIZONTAL ? float2(second / a.size.x, keep.y)\n"
-    "                                      : float2(keep.x, second / a.size.y);\n"
-    "      acc += t.sample(sn, a0) * w0;\n"
-    "      acc += t.sample(sn, a1) * w1;\n"
+    "      const float2 at1 = NP_HORIZONTAL ? float2(second / a.size.x, keep.y)\n"
+    "                                       : float2(keep.x, second / a.size.y);\n"
+    "      acc += t.sample(sn, at0) * w0;\n"
+    "      acc += t.sample(sn, at1) * w1;\n"
+    "    }\n"
+    "    if (NP_ANTIRING && j == centre) {\n"
+    "      const float2 at1 = NP_HORIZONTAL ? float2((first + 1.0f) / a.size.x, keep.y)\n"
+    "                                       : float2(keep.x, (first + 1.0f) / a.size.y);\n"
+    "      const float4 c0 = t.sample(sn, at0);\n"
+    "      const float4 c1 = t.sample(sn, at1);\n"
+    "      lo = min(c0, c1);\n"
+    "      hi = max(c0, c1);\n"
     "    }\n"
     "    wsum += s;\n"
     "  }\n"
-    "  return acc / max(wsum, 1e-5f);\n"
+    "  float4 result = acc / max(wsum, 1e-5f);\n"
+    "  if (NP_ANTIRING) {\n"
+    "    result = clamp(result, lo, hi);\n"
+    "  }\n"
+    "  return result;\n"
     "}\n";
 
 /* The fragment shader only ever filters vertically; the pre-pass filters
@@ -261,6 +284,10 @@ typedef struct {
     const char *parameters;
     const char *weight;
     float support;
+    /* Anti-ringing clamps to the two centre texels. That only removes anything
+     * for a kernel with negative lobes; an all-positive kernel cannot ring, so
+     * the clamp would cost fetches and change nothing. */
+    int rings;
 } NPAKernelSpec;
 
 /* Every kernel runs as two passes: one axis into an intermediate, the other
@@ -268,15 +295,15 @@ typedef struct {
  * cost k per pass, so the separable form is never slower and wins quickly as
  * the footprint grows. */
 static const NPAKernelSpec NPA_KERNELS[] = {
-    {NULL, NULL, 0.0f},
-    {"#define NP_B 0.0f\n#define NP_C 0.5f\n", NPA_WEIGHT_CUBIC, 2.0f},
-    {"#define NP_B 0.33333334f\n#define NP_C 0.33333334f\n", NPA_WEIGHT_CUBIC, 2.0f},
-    {"#define NP_B 0.0f\n#define NP_C 0.75f\n", NPA_WEIGHT_CUBIC, 2.0f},
-    {"#define NP_A 2.0f\n", NPA_WEIGHT_LANCZOS, 2.0f},
-    {"#define NP_A 3.0f\n", NPA_WEIGHT_LANCZOS, 3.0f},
-    {"#define NP_B 1.0f\n#define NP_C 0.0f\n", NPA_WEIGHT_CUBIC, 2.0f},
-    {"", NPA_WEIGHT_SPLINE36, 3.0f},
-    {"", NPA_WEIGHT_SPLINE64, 4.0f},
+    {NULL, NULL, 0.0f, 0},
+    {"#define NP_B 0.0f\n#define NP_C 0.5f\n", NPA_WEIGHT_CUBIC, 2.0f, 1},
+    {"#define NP_B 0.33333334f\n#define NP_C 0.33333334f\n", NPA_WEIGHT_CUBIC, 2.0f, 0},
+    {"#define NP_B 0.0f\n#define NP_C 0.75f\n", NPA_WEIGHT_CUBIC, 2.0f, 1},
+    {"#define NP_A 2.0f\n", NPA_WEIGHT_LANCZOS, 2.0f, 1},
+    {"#define NP_A 3.0f\n", NPA_WEIGHT_LANCZOS, 3.0f, 1},
+    {"#define NP_B 1.0f\n#define NP_C 0.0f\n", NPA_WEIGHT_CUBIC, 2.0f, 0},
+    {"", NPA_WEIGHT_SPLINE36, 3.0f, 1},
+    {"", NPA_WEIGHT_SPLINE64, 4.0f, 1},
 };
 
 #define NPA_KERNEL_COUNT (sizeof(NPA_KERNELS) / sizeof(NPA_KERNELS[0]))
@@ -310,10 +337,12 @@ static void npa_hdr_log(const char *message, int status)
 
 /* One line per generated shader, so the active kernel is observable without a
  * debugger: the choice is otherwise only visible in the MSL text. */
-static void npa_hdr_log_kernel(int kernel, int transfer, int hdr, int edr)
+static void npa_hdr_log_kernel(int kernel, int kernel_up, int antiring,
+                               int transfer, int hdr, int edr)
 {
-    fprintf(stderr, "[npa-pp-hdr] shader kernel=%d transfer=%d hdr=%d edr=%d\n",
-            kernel, transfer, hdr, edr);
+    fprintf(stderr,
+            "[npa-pp-hdr] shader down=%d up=%d antiring=%d transfer=%d hdr=%d edr=%d\n",
+            kernel, kernel_up, antiring, transfer, hdr, edr);
 }
 
 /* The original shader generator is reached through the frozen table; the
@@ -531,12 +560,13 @@ static char *npa_scale_samples(const char *source)
 /* Bake one kernel into the shader. Selection happens once per generation, so
  * the tap bounds become compile-time constants and the GPU pays nothing for
  * the choice. */
-static int npa_apply_scale(char **stage, int kernel)
+static int npa_apply_scale(char **stage, int kernel, int kernel_up, int antiring)
 {
     if (kernel <= 0 || (size_t)kernel >= NPA_KERNEL_COUNT) {
         return 0;
     }
     const NPAKernelSpec *spec = &NPA_KERNELS[kernel];
+    const NPAKernelSpec *spec_up = &NPA_KERNELS[kernel_up];
 
     char *samples = npa_scale_samples(*stage);
     if (!samples) {
@@ -562,17 +592,45 @@ static int npa_apply_scale(char **stage, int kernel)
     }
 
     NPABuffer helper = {0};
-    char constants[128];
+    char constants[192];
+    /* Both kernels are baked, because the drawable can be resized while the
+     * shader stays: the choice has to happen at sample time. The support is
+     * the larger of the two so the tap loop covers whichever is picked. */
+    const float support = spec->support > spec_up->support ? spec->support : spec_up->support;
     snprintf(constants, sizeof(constants),
-             "#define NP_SUPPORT %.1ff\n#define NP_ST_MAX %s\n"
-             "#define NP_HORIZONTAL 0\n",
-             spec->support, NPA_SCALE_ST_MAX);
-    const char prologue[] = "\nstatic inline float npa_kernel_w(float x) {\n";
-    int ok = npa_append(&helper, constants, strlen(constants))
-             && npa_append(&helper, spec->parameters, strlen(spec->parameters))
-             && npa_append(&helper, prologue, strlen(prologue))
-             && npa_append(&helper, spec->weight, strlen(spec->weight))
+             "#define NP_ST_MAX %s\n"
+             "#define NP_SUPPORT_DOWN %.1ff\n#define NP_SUPPORT_UP %.1ff\n"
+             "#define NP_ANTIRING %d\n#define NP_HORIZONTAL 0\n",
+             NPA_SCALE_ST_MAX, spec->support, spec_up->support,
+             antiring && spec->rings ? 1 : 0);
+    int ok = npa_append(&helper, constants, strlen(constants));
+
+    /* One weight function per kernel under its own name, plus the dispatcher
+     * the tap loop calls. A disabled side still compiles; it is never taken. */
+    static const char names[2][12] = {"npa_w_down", "npa_w_up"};
+    const NPAKernelSpec *specs[2] = {spec, spec_up};
+    for (int side = 0; ok && side < 2; side++) {
+        char open[96];
+        snprintf(open, sizeof(open), "\nstatic inline float %s(float x) {\n", names[side]);
+        ok = npa_append(&helper, open, strlen(open))
+             && npa_append(&helper, specs[side]->parameters, strlen(specs[side]->parameters))
+             && npa_append(&helper, specs[side]->weight, strlen(specs[side]->weight));
+    }
+    /* st > 1 is a downscale: the source is larger than the drawable. */
+    static const char dispatch[] =
+        "\n/* st is the footprint this pass actually uses, so it is the only\n"
+        " * input needed to pick the kernel. */\n"
+        "static inline float npa_kernel_w(float x, float st) {\n"
+        "  return st > 1.0f ? npa_w_down(x) : npa_w_up(x);\n"
+        "}\n"
+        "\nstatic inline float npa_support(float st) {\n"
+        "  return st > 1.0f ? NP_SUPPORT_DOWN : NP_SUPPORT_UP;\n"
+        "}\n";
+    if (ok) {
+        ok = npa_append(&helper, dispatch, strlen(dispatch))
              && npa_append(&helper, NPA_SCALE_FOOTPRINT, strlen(NPA_SCALE_FOOTPRINT));
+    }
+    (void)support;
     if (ok) {
         /* The pre-pass filters the other axis, so the loop is emitted twice
          * with NP_HORIZONTAL flipped and the second copy renamed. */
@@ -629,7 +687,9 @@ static int npa_apply_scale(char **stage, int kernel)
     return applied;
 }
 
-static int npa_scale_kernel_preference(void)
+/* Reads one integer preference. A missing key yields 0, which every caller
+ * treats as "off" or "keep the host behaviour". */
+static int npa_int_preference(const char *key)
 {
     id defaults = ((id (*)(id, SEL))objc_msgSend)(
         (id)objc_getClass("NSUserDefaults"), npa_sel("standardUserDefaults")
@@ -640,18 +700,32 @@ static int npa_scale_kernel_preference(void)
     id value = ((id (*)(id, SEL, id))objc_msgSend)(
         defaults, npa_sel("objectForKey:"),
         ((id (*)(id, SEL, const char *))objc_msgSend)(
-            (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"),
-            NPA_PREF_SCALE_KERNEL
+            (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"), key
         )
     );
     if (!value) {
         return 0;
     }
-    const long kernel = ((long (*)(id, SEL))objc_msgSend)(value, npa_sel("integerValue"));
-    if (kernel <= 0 || (size_t)kernel >= NPA_KERNEL_COUNT) {
-        return 0;
-    }
-    return (int)kernel;
+    return (int)((long (*)(id, SEL))objc_msgSend)(value, npa_sel("integerValue"));
+}
+
+/* Zero means the host's bilinear sampling; anything else indexes NPA_KERNELS. */
+static int npa_kernel_or_zero(int kernel)
+{
+    return (kernel > 0 && (size_t)kernel < NPA_KERNEL_COUNT) ? kernel : 0;
+}
+
+static int npa_scale_kernel_preference(void)
+{
+    return npa_kernel_or_zero(npa_int_preference(NPA_PREF_SCALE_KERNEL));
+}
+
+/* The upscaling kernel falls back to the downscaling choice, so a single
+ * setting still governs both directions until the two are set apart. */
+static int npa_scale_kernel_up_preference(void)
+{
+    const int up = npa_kernel_or_zero(npa_int_preference(NPA_PREF_SCALE_KERNEL_UP));
+    return up ? up : npa_scale_kernel_preference();
 }
 
 /* Produce linear-light MSL for a floating-point extended-range drawable.
@@ -661,7 +735,9 @@ static char *npa_rewrite_shader(
     int transfer,
     int hdr,
     int edr,
-    int kernel
+    int kernel,
+    int kernel_up,
+    int antiring
 )
 {
     char *stage = strdup(source);
@@ -691,7 +767,7 @@ static char *npa_rewrite_shader(
             goto fail;
         }
     }
-    if (kernel > 0 && !npa_apply_scale(&stage, kernel)) {
+    if (kernel > 0 && !npa_apply_scale(&stage, kernel, kernel_up, antiring)) {
         goto fail;
     }
     return stage;
@@ -1184,8 +1260,10 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
     /* The scaling kernel is independent of the EDR fix: it is a sampling
      * choice, so it applies whether or not the layer can go extended-range. */
     const int kernel = npa_scale_kernel_preference();
+    const int kernel_up = npa_scale_kernel_up_preference();
+    const int antiring = npa_int_preference(NPA_PREF_ANTIRING) != 0;
     const int edr = npa_edr_available();
-    if (!edr && kernel == 0) {
+    if (!edr && kernel == 0 && kernel_up == 0) {
         /* Nothing to change: without CAEDRMetadata the layer stays SDR and the
          * host's tone-mapped shader is what that layer expects. */
         return source;
@@ -1201,8 +1279,8 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
         return source;
     }
 
-    npa_hdr_log_kernel(kernel, transfer, hdr, edr);
-    char *rewritten = npa_rewrite_shader(utf8, transfer, hdr, edr, kernel);
+    npa_hdr_log_kernel(kernel, kernel_up, antiring, transfer, hdr, edr);
+    char *rewritten = npa_rewrite_shader(utf8, transfer, hdr, edr, kernel, kernel_up, antiring);
     if (!rewritten) {
         npa_hdr_log("shader was not rewritten; keeping the host shader", transfer);
         if (edr && hdr) {

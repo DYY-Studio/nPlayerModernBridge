@@ -14,7 +14,12 @@ static int probe_dladdr(const void *a, Dl_info *i){(void)a;i->dli_fbase=probe_ba
 static char *slurp(const char *p){FILE*f=fopen(p,"rb");if(!f)return NULL;fseek(f,0,SEEK_END);long n=ftell(f);rewind(f);char*b=malloc(n+1);fread(b,1,n,f);b[n]=0;fclose(f);return b;}
 int main(int argc,char**argv){
   char *s=slurp(argv[1]); if(!s){fprintf(stderr,"read %s\n",argv[1]);return 2;}
-  char *r=npa_rewrite_shader(s,atoi(argv[3]),atoi(argv[4]),1,atoi(argv[5]));
+  /* argv[5] = downscale kernel, argv[6] = upscale kernel (defaults to 5),
+   * argv[7] = anti-ringing flag. */
+  int down=atoi(argv[5]);
+  int up=argc>6?atoi(argv[6]):down;
+  int ar=argc>7?atoi(argv[7]):0;
+  char *r=npa_rewrite_shader(s,atoi(argv[3]),atoi(argv[4]),1,down,up,ar);
   if(!r){fprintf(stderr,"REWRITE FAILED\n");return 3;}
   FILE*f=fopen(argv[2],"wb");fputs(r,f);fclose(f);
   free(r);free(s);return 0;

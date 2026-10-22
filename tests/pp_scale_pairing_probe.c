@@ -181,6 +181,98 @@ static void compare(const char *name, Kernel k, float support, float st, float t
     assert(worst <= tolerance);
 }
 
+/* Anti-ringing clamps the result to the two texels straddling the sample
+ * point. Two properties matter: it must remove the overshoot a negative lobe
+ * produces at a step edge, and it must leave a smooth ramp alone. */
+static float filter_axis(Kernel k, float support, float st, float u, float v,
+                         int antiring, int *clamped)
+{
+    const float p = u * WIDTH - 0.5f;
+    const float keepy = (floorf(v * HEIGHT - 0.5f) + 0.5f) / HEIGHT;
+    const float base = floorf(p);
+    const int n = (int)ceilf(support * st);
+    float acc = 0.0f;
+    float wsum = 0.0f;
+    float lo = 0.0f;
+    float hi = 0.0f;
+    const int centre = n / 2 - 1;
+    for (int j = 0; j < n; j++) {
+        const int i0 = 1 - n + 2 * j;
+        const float w0 = k((p - (base + (float)i0)) / st);
+        const float w1 = k((p - (base + (float)(i0 + 1))) / st);
+        const float first = base + (float)i0 + 0.5f;
+        acc += bilinear(first, keepy * HEIGHT) * w0;
+        acc += bilinear(first + 1.0f, keepy * HEIGHT) * w1;
+        if (j == centre) {
+            const float c0 = bilinear(first, keepy * HEIGHT);
+            const float c1 = bilinear(first + 1.0f, keepy * HEIGHT);
+            lo = fminf(c0, c1);
+            hi = fmaxf(c0, c1);
+        }
+        wsum += w0 + w1;
+    }
+    const float result = acc / fmaxf(wsum, 1e-5f);
+    if (!antiring) {
+        return result;
+    }
+    const float clampedResult = fminf(fmaxf(result, lo), hi);
+    if (clamped) {
+        *clamped = fabsf(clampedResult - result) > 1e-7f;
+    }
+    return clampedResult;
+}
+
+static void check_antiring(Kernel k, float support, float st)
+{
+    /* A hard step: Lanczos overshoots on both sides of it. */
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            image[y][x] = (x < WIDTH / 2) ? 0.0f : 1.0f;
+        }
+    }
+    float worst = 0.0f;
+    float stepChange = 0.0f;
+    int fired = 0;
+    for (int x = WIDTH / 2 - 6; x <= WIDTH / 2 + 6; x++) {
+        const float u = ((float)x + 0.5f) / (float)WIDTH;
+        const float plain = filter_axis(k, support, st, u, 0.5f, 0, NULL);
+        int clamped = 0;
+        const float guarded = filter_axis(k, support, st, u, 0.5f, 1, &clamped);
+        if (clamped) fired++;
+        stepChange = fmaxf(stepChange, fabsf(guarded - plain));
+        /* The clamp can only pull the value towards [0,1]. */
+        assert(guarded >= -1e-6f && guarded <= 1.0f + 1e-6f);
+        const float overshoot = fmaxf(0.0f, fmaxf(-plain, plain - 1.0f));
+        if (overshoot > 1e-4f) {
+            assert(fabsf(guarded - plain) >= 0.0f);
+            worst = fmaxf(worst, overshoot);
+        }
+    }
+    printf("antiring   overshoot=%.4f clamped_pixels=%d\n", worst, fired);
+    /* The kernel must actually ring on a step, or this test proves nothing. */
+    assert(worst > 1e-3f);
+    assert(fired > 0);
+
+    /* A smooth ramp barely rings, so the clamp must move far less there than
+     * at the step. That is the property worth asserting; requiring zero change
+     * would fail on the ramp's own edge pixels, where a long kernel still
+     * overshoots slightly. */
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            image[y][x] = (float)x / (float)WIDTH;
+        }
+    }
+    float rampChange = 0.0f;
+    for (int x = 8; x < WIDTH - 8; x += 3) {
+        const float u = ((float)x + 0.5f) / (float)WIDTH;
+        const float plain = filter_axis(k, support, st, u, 0.5f, 0, NULL);
+        const float guarded = filter_axis(k, support, st, u, 0.5f, 1, NULL);
+        rampChange = fmaxf(rampChange, fabsf(guarded - plain));
+    }
+    printf("antiring   step=%.4f ramp=%.4f\n", stepChange, rampChange);
+    assert(stepChange > 10.0f * rampChange);
+}
+
 int main(void)
 {
     for (int y = 0; y < HEIGHT; y++) {
@@ -204,6 +296,7 @@ int main(void)
         compare("spline36", spline36, 3.0f, st, 2e-6f);
         compare("spline64", spline64, 4.0f, st, 2e-6f);
     }
+    check_antiring(lanczos3, 3.0f, 1.5f);
     printf("folding matches the plain taps for every kernel\n");
     return 0;
 }

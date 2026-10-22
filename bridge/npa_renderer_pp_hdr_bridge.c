@@ -324,8 +324,7 @@ typedef struct {
 
 /* Every kernel runs as two passes: one axis into an intermediate, the other
  * into the drawable. A single 2D pass costs k^2 tap blocks while two passes
- * cost k per pass, so the separable form is never slower and wins quickly as
- * the footprint grows. */
+ * cost k per pass, at the cost of intermediate texture reads and writes. */
 static const NPAKernelSpec NPA_KERNELS[] = {
     {NULL, NULL, 0.0f, 0},
     {"#define NP_B 0.0f\n#define NP_C 0.5f\n", NPA_WEIGHT_CUBIC, 2.0f, 1},
@@ -630,8 +629,7 @@ static int npa_apply_scale(char **stage, int kernel, int kernel_up,
     NPABuffer helper = {0};
     char constants[256];
     /* Both kernels are baked, because the drawable can be resized while the
-     * shader stays: the choice has to happen at sample time. The support is
-     * the larger of the two so the tap loop covers whichever is picked.
+     * shader stays: direction and tap count are selected at sample time.
      *
      * NP_ST_CAP is the anti-aliasing strength, not a kernel property: 1 keeps
      * the filter at its base width, 2 is the historical cap, and the quality
@@ -944,6 +942,7 @@ static void npa_configure_layer_async(void *renderer, int transfer, int hdr)
 typedef struct {
     void *renderer;
     id library;
+    int active;
     id pipeline[3];
     uint64_t pipeline_format[3];
     id plane[3];
@@ -954,12 +953,6 @@ typedef struct {
 
 static NPAPrepass npa_prepass;
 static id npa_prepass_saved[4];
-
-static int npa_prepass_active(void *renderer)
-{
-    (void)renderer;
-    return npa_scale_kernel_preference() > 0;
-}
 
 static id npa_msg_id(id object, const char *selector)
 {
@@ -984,6 +977,28 @@ static void npa_prepass_reset(NPAPrepass *state)
     state->plane_count = 0;
     state->width = 0;
     state->height = 0;
+}
+
+/* Preferences are baked when the host compiles its library, not per frame.
+ * Retaining this one library also prevents pointer reuse from hitting the
+ * cache after the host rebuilds it. A host-only library needs no pre-pass. */
+static int npa_prepass_active(void *renderer)
+{
+    if (!renderer) return 0;
+    NPAPrepass *state = &npa_prepass;
+    id library = *(id *)((char *)renderer + NPA_RENDERER_LIBRARY);
+    if (state->renderer == renderer && state->library == library) return state->active;
+    npa_prepass_reset(state);
+    npa_release(state->library);
+    state->renderer = renderer;
+    state->library = library ? npa_msg_id(library, "retain") : NULL;
+    id function = ((id (*)(id, SEL, id))objc_msgSend)(
+        library, npa_sel("newFunctionWithName:"),
+        ((id (*)(id, SEL, const char *))objc_msgSend)(
+            (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"), "npaHorizontal"));
+    state->active = function != NULL;
+    npa_release(function);
+    return state->active;
 }
 
 /* One pipeline per pixel format: the attachment format is part of the pipeline
@@ -1105,23 +1120,18 @@ static int npa_prepass_width(id vertex_buffer, CGSize drawable)
 static int npa_prepass_run(void *renderer)
 {
     NPAPrepass *state = &npa_prepass;
-    if (state->renderer != renderer) {
-        npa_prepass_reset(state);
-        state->renderer = renderer;
+    if (!npa_prepass_active(renderer)) {
+        npa_hdr_log("separable pre-pass requires a scaling library", -1);
+        return 0;
     }
 
     id device = *(id *)((char *)renderer + NPA_RENDERER_DEVICE);
     id queue = *(id *)((char *)renderer + NPA_RENDERER_QUEUE);
-    id library = *(id *)((char *)renderer + NPA_RENDERER_LIBRARY);
     id vertex_buffer = *(id *)((char *)renderer + NPA_RENDERER_VERTEX_BUFFER);
     id view = *(id *)((char *)renderer + NPA_RENDERER_VIEW);
-    if (!device || !queue || !library || !vertex_buffer || !view) {
+    if (!device || !queue || !vertex_buffer || !view) {
         npa_hdr_log("separable pre-pass is missing renderer state", -1);
         return 0;
-    }
-    if (state->library != library) {
-        npa_prepass_reset(state);
-        state->library = library;
     }
 
     /* Plane 0 is luma, plane 1 is either interleaved chroma or Cb, plane 2 is
@@ -1193,7 +1203,6 @@ static int npa_prepass_run(void *renderer)
     if (state->plane_count != plane_count || state->width != sizes[0][0]
         || state->height != sizes[0][1]) {
         npa_prepass_reset(state);
-        state->library = library;
         state->plane_count = plane_count;
         state->width = sizes[0][0];
         state->height = sizes[0][1];
@@ -1204,7 +1213,6 @@ static int npa_prepass_run(void *renderer)
             if (!state->plane[index]) {
                 npa_hdr_log("separable pre-pass texture allocation failed", index);
                 npa_prepass_reset(state);
-                state->library = library;
                 return 0;
             }
         }

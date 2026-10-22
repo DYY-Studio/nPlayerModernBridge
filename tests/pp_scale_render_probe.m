@@ -36,6 +36,33 @@ static id<MTLTexture> texture(id<MTLDevice> device, MTLPixelFormat format,
     return [device newTextureWithDescriptor:desc];
 }
 
+static int check_activation(id<MTLDevice> device)
+{
+    char *source = strdup(SOURCE);
+    assert(npa_apply_scale(&source, 5, 5, 0, 0, NPA_AA_QUALITY));
+    NSError *error = nil;
+    id<MTLLibrary> on = [device newLibraryWithSource:[NSString stringWithUTF8String:source]
+                                           options:nil error:&error];
+    free(source);
+    id<MTLLibrary> off = [device newLibraryWithSource:[NSString stringWithUTF8String:SOURCE]
+                                            options:nil error:&error];
+    if (!on || !off) { fprintf(stderr, "%s\n", error.description.UTF8String); return 1; }
+    union { void *alignment; unsigned char bytes[0x240]; } renderer = {0};
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSString *key = @NPA_PREF_SCALE_KERNEL;
+    id old = [[defaults objectForKey:key] retain];
+    *(id *)(renderer.bytes + NPA_RENDERER_LIBRARY) = on;
+    [defaults setInteger:0 forKey:key];
+    int stays_on = npa_prepass_active(renderer.bytes);
+    *(id *)(renderer.bytes + NPA_RENDERER_LIBRARY) = off;
+    [defaults setInteger:5 forKey:key];
+    int stays_off = !npa_prepass_active(renderer.bytes);
+    if (old) [defaults setObject:old forKey:key]; else [defaults removeObjectForKey:key];
+    [old release]; [on release]; [off release];
+    printf("library activation ignores pending preferences: on=%d off=%d\n", stays_on, stays_off);
+    return !stays_on || !stays_off;
+}
+
 static int check_weights(id<MTLDevice> device)
 {
     /* libplacebo filters.c, sampled at 0.5, 1.5, 2.5, 3.5 and divided by w(0).
@@ -232,6 +259,7 @@ int main(void)
         failed |= check_render(device, 1, 0, 256, 256, 1, 1, 0.5f);
         failed |= check_render(device, 1, 0, 256, 256, 1, 1.25f, 1.25f);
         failed |= check_weights(device);
+        failed |= check_activation(device);
         if (!failed) puts("Metal scaling checks passed (including all eight kernels)");
         return failed;
     }

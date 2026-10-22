@@ -190,6 +190,8 @@ only fully non-negative kernel. Optional anti-ringing clamps to the two centre
 texels, and anti-aliasing widens the downscale kernel according to its footprint.
 The kernel is read once per generated shader, so a change takes effect on the
 next video. A failed pre-pass logs an error and skips the frame.
+Pre-pass activation follows the compiled library, so changing preferences
+during playback cannot mismatch the two stages.
 
 Because the rewrite happens in the shader, the feature requires Post Processing
 to be on. With Post Processing off the app renders through

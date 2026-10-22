@@ -110,82 +110,160 @@ static const char NPA_SCALE_FOOTPRINT[] =
     "  return sqrt(a * a + b * b);\n"
     "}\n";
 
-/* The wrappers must follow npa_tap, so they are appended last. */
+/* The wrappers must follow the tap loops, so they are appended last. */
 static const char NPA_SCALE_WRAPPERS[] =
     "\n"
     "static inline float npa_scale1(texture2d<float, access::sample> t, sampler sn,\n"
     "                              float2 uv, float2 dudx, float2 dudy) {\n"
-    "  return npa_tap(t, sn, uv, dudx, dudy).r;\n"
+    "  return npa_tap1(t, sn, uv, dudx, dudy);\n"
     "}\n"
     "\n"
     "static inline float2 npa_scale2(texture2d<float, access::sample> t, sampler sn,\n"
     "                               float2 uv, float2 dudx, float2 dudy) {\n"
-    "  return npa_tap(t, sn, uv, dudx, dudy).rg;\n"
+    "  return npa_tap2(t, sn, uv, dudx, dudy);\n"
+    "}\n";
+
+/* Shared geometry for both tap loops: footprint, tap count and texel origin.
+ * Keeping it in one place means the scalar and the two-channel loop cannot
+ * drift apart. */
+static const char NPA_SCALE_AXIS[] =
+    "\n"
+    "struct NpaAxis {\n"
+    "  float2 size;\n"
+    "  float2 st;\n"
+    "  float2 pos;\n"
+    "  float2 base;\n"
+    "  int2 k;\n"
+    "};\n"
+    "\n"
+    "static inline NpaAxis npa_axis(texture2d<float, access::sample> t,\n"
+    "                               float2 uv, float2 dudx, float2 dudy) {\n"
+    "  NpaAxis a;\n"
+    "  a.size = float2(t.get_width(), t.get_height());\n"
+    "  a.st = clamp(npa_footprint(dudx, dudy, a.size), 1.0f, NP_ST_MAX);\n"
+    "  a.k = int2(ceil(NP_SUPPORT * a.st));\n"
+    "  a.pos = uv * a.size - 0.5f;\n"
+    "  a.base = floor(a.pos);\n"
+    "  return a;\n"
     "}\n";
 
 /* Tap pairing: fold each 2x2 block of taps into one bilinear fetch. The fold
  * places the fetch at w1/(w0+w1) and scales by w0+w1, which is algebraically
  * identical to the two separate taps. The hardware clamps that fraction to
  * [0,1], so a block whose weights change sign cannot be folded; it falls back
- * to four fetches. The test is per block, not per kernel: Catmull-Rom pairs at
+ * to four texels. The test is per block, not per kernel: Catmull-Rom pairs at
  * some footprints and not others.
  *
+ * The horizontal weights do not depend on the vertical tap, so the whole row is
+ * evaluated once instead of once per block.
+ *
  * Sampling uses a linear sampler. At a texel centre it returns that texel
- * exactly, so the unfolded path is unaffected. */
-static const char NPA_SCALE_TAP_PAIR[] =
+ * exactly, so the unfolded path is unaffected.
+ *
+ * The scalar loop reads the four unfolded texels with one gather instead of
+ * four fetches. gather ignores the filter mode and returns the same 2x2 block
+ * bilinear would have interpolated, in x, y, z, w order. A two-channel texture
+ * cannot use it: gather only returns the first component, so that loop keeps
+ * four fetches. */
+static const char NPA_SCALE_TAP_R[] =
     "\n"
-    "static inline float4 npa_tap(texture2d<float, access::sample> t, sampler sn,\n"
+    "static inline float npa_tap1(texture2d<float, access::sample> t, sampler sn,\n"
     "                             float2 uv, float2 dudx, float2 dudy) {\n"
-    "  const float2 size = float2(t.get_width(), t.get_height());\n"
-    "  const float2 st = clamp(npa_footprint(dudx, dudy, size), 1.0f, NP_ST_MAX);\n"
-    "  const int2 k = int2(ceil(NP_SUPPORT * st));\n"
-    "  const float2 pos = uv * size - 0.5f;\n"
-    "  const float2 base = floor(pos);\n"
-    /* The horizontal weights do not depend on the vertical tap, so the whole
-     * row is evaluated once instead of once per 2x2 block. That is the
-     * difference between 4k and 2k^2+2k kernel evaluations per pixel, which
-     * matters because Lanczos spends two sin() calls on each. */
+    "  const NpaAxis a = npa_axis(t, uv, dudx, dudy);\n"
     "  float wx[2 * NP_MAX_K];\n"
-    "  for (int i = 0; i < 2 * k.x; ++i) {\n"
-    "    wx[i] = npa_kernel_w((pos.x - (base.x + float(1 - k.x + i))) / st.x);\n"
+    "  for (int i = 0; i < 2 * a.k.x; ++i) {\n"
+    "    wx[i] = npa_kernel_w((a.pos.x - (a.base.x + float(1 - a.k.x + i))) / a.st.x);\n"
     "  }\n"
-    "  float4 acc = float4(0.0f);\n"
+    "  float acc = 0.0f;\n"
     "  float wsum = 0.0f;\n"
-    "  for (int j = 0; j < k.y; ++j) {\n"
-    "    const int iy = 1 - k.y + 2 * j;\n"
-    "    const float wy0 = npa_kernel_w((pos.y - (base.y + float(iy))) / st.y);\n"
-    "    const float wy1 = npa_kernel_w((pos.y - (base.y + float(iy + 1))) / st.y);\n"
+    "  for (int j = 0; j < a.k.y; ++j) {\n"
+    "    const int iy = 1 - a.k.y + 2 * j;\n"
+    "    const float wy0 = npa_kernel_w((a.pos.y - (a.base.y + float(iy))) / a.st.y);\n"
+    "    const float wy1 = npa_kernel_w((a.pos.y - (a.base.y + float(iy + 1))) / a.st.y);\n"
     "    const float sy = wy0 + wy1;\n"
     "    const bool foldY = wy0 * wy1 >= 0.0f && fabs(sy) > 1e-8f;\n"
     "    const float fy = foldY ? wy1 / sy : 0.0f;\n"
-    "    const float2 corner = base + float2(0.0f, float(iy)) + 0.5f;\n"
-    "    for (int i = 0; i < k.x; ++i) {\n"
+    "    const float2 row = a.base + float2(0.0f, float(iy)) + 0.5f;\n"
+    "    for (int i = 0; i < a.k.x; ++i) {\n"
     "      const float wx0 = wx[2 * i];\n"
     "      const float wx1 = wx[2 * i + 1];\n"
     "      const float sx = wx0 + wx1;\n"
     "      const bool foldX = wx0 * wx1 >= 0.0f && fabs(sx) > 1e-8f;\n"
-    "      const float2 at = corner + float2(float(1 - k.x + 2 * i), 0.0f);\n"
-    /* One fetch when both axes fold, two when only one does, four otherwise.
-     * The middle case is common: a kernel with mixed-sign lobes along one
-     * axis often still folds along the other. */
+    "      const float2 at = row + float2(float(1 - a.k.x + 2 * i), 0.0f);\n"
     "      if (foldX) {\n"
     "        const float2 x0 = at + float2(wx1 / sx, 0.0f);\n"
     "        if (foldY) {\n"
-    "          acc += t.sample(sn, (x0 + float2(0.0f, fy)) / size) * (sx * sy);\n"
+    "          acc += t.sample(sn, (x0 + float2(0.0f, fy)) / a.size).r * (sx * sy);\n"
     "        } else {\n"
-    "          acc += t.sample(sn, x0 / size) * (sx * wy0);\n"
-    "          acc += t.sample(sn, (x0 + float2(0.0f, 1.0f)) / size) * (sx * wy1);\n"
+    "          acc += t.sample(sn, x0 / a.size).r * (sx * wy0);\n"
+    "          acc += t.sample(sn, (x0 + float2(0.0f, 1.0f)) / a.size).r * (sx * wy1);\n"
     "        }\n"
     "      } else if (foldY) {\n"
     "        const float2 y0 = at + float2(0.0f, fy);\n"
-    "        acc += t.sample(sn, y0 / size) * (wx0 * sy);\n"
-    "        acc += t.sample(sn, (y0 + float2(1.0f, 0.0f)) / size) * (wx1 * sy);\n"
+    "        acc += t.sample(sn, y0 / a.size).r * (wx0 * sy);\n"
+    "        acc += t.sample(sn, (y0 + float2(1.0f, 0.0f)) / a.size).r * (wx1 * sy);\n"
     "      } else {\n"
-    "        const float2 step = float2(1.0f) / size;\n"
-    "        acc += t.sample(sn, at / size) * (wx0 * wy0);\n"
-    "        acc += t.sample(sn, at / size + float2(step.x, 0.0f)) * (wx1 * wy0);\n"
-    "        acc += t.sample(sn, at / size + float2(0.0f, step.y)) * (wx0 * wy1);\n"
-    "        acc += t.sample(sn, at / size + step) * (wx1 * wy1);\n"
+    /* MSL puts the four gathered texels counter-clockwise from the lower-left
+     * of the queried location: (-,+) (+,-) ... i.e. x is the top-left texel of
+     * the 2x2 block in a top-left origin texture, y top-right, z bottom-right,
+     * w bottom-left. Ordering these wrong is a silent one-texel swap. */
+    /* Gather picks the quad by frac(uv * size - 0.5), so querying at a texel
+     * centre lands exactly on a quad boundary and the hardware may return the
+     * neighbouring block. Half a texel further puts the query at the block
+     * centre, where the choice is unambiguous. */
+    "        const float4 g = t.gather(sn, (at + 0.5f) / a.size);\n"
+    "        acc += g.x * (wx0 * wy1) + g.y * (wx1 * wy1)\n"
+    "             + g.z * (wx1 * wy0) + g.w * (wx0 * wy0);\n"
+    "      }\n"
+    "      wsum += sx * sy;\n"
+    "    }\n"
+    "  }\n"
+    "  return acc / max(wsum, 1e-5f);\n"
+    "}\n";
+
+static const char NPA_SCALE_TAP_RG[] =
+    "\n"
+    "static inline float2 npa_tap2(texture2d<float, access::sample> t, sampler sn,\n"
+    "                              float2 uv, float2 dudx, float2 dudy) {\n"
+    "  const NpaAxis a = npa_axis(t, uv, dudx, dudy);\n"
+    "  float wx[2 * NP_MAX_K];\n"
+    "  for (int i = 0; i < 2 * a.k.x; ++i) {\n"
+    "    wx[i] = npa_kernel_w((a.pos.x - (a.base.x + float(1 - a.k.x + i))) / a.st.x);\n"
+    "  }\n"
+    "  float2 acc = float2(0.0f);\n"
+    "  float wsum = 0.0f;\n"
+    "  for (int j = 0; j < a.k.y; ++j) {\n"
+    "    const int iy = 1 - a.k.y + 2 * j;\n"
+    "    const float wy0 = npa_kernel_w((a.pos.y - (a.base.y + float(iy))) / a.st.y);\n"
+    "    const float wy1 = npa_kernel_w((a.pos.y - (a.base.y + float(iy + 1))) / a.st.y);\n"
+    "    const float sy = wy0 + wy1;\n"
+    "    const bool foldY = wy0 * wy1 >= 0.0f && fabs(sy) > 1e-8f;\n"
+    "    const float fy = foldY ? wy1 / sy : 0.0f;\n"
+    "    const float2 row = a.base + float2(0.0f, float(iy)) + 0.5f;\n"
+    "    for (int i = 0; i < a.k.x; ++i) {\n"
+    "      const float wx0 = wx[2 * i];\n"
+    "      const float wx1 = wx[2 * i + 1];\n"
+    "      const float sx = wx0 + wx1;\n"
+    "      const bool foldX = wx0 * wx1 >= 0.0f && fabs(sx) > 1e-8f;\n"
+    "      const float2 at = row + float2(float(1 - a.k.x + 2 * i), 0.0f);\n"
+    "      if (foldX) {\n"
+    "        const float2 x0 = at + float2(wx1 / sx, 0.0f);\n"
+    "        if (foldY) {\n"
+    "          acc += t.sample(sn, (x0 + float2(0.0f, fy)) / a.size).rg * (sx * sy);\n"
+    "        } else {\n"
+    "          acc += t.sample(sn, x0 / a.size).rg * (sx * wy0);\n"
+    "          acc += t.sample(sn, (x0 + float2(0.0f, 1.0f)) / a.size).rg * (sx * wy1);\n"
+    "        }\n"
+    "      } else if (foldY) {\n"
+    "        const float2 y0 = at + float2(0.0f, fy);\n"
+    "        acc += t.sample(sn, y0 / a.size).rg * (wx0 * sy);\n"
+    "        acc += t.sample(sn, (y0 + float2(1.0f, 0.0f)) / a.size).rg * (wx1 * sy);\n"
+    "      } else {\n"
+    "        const float2 step = float2(1.0f) / a.size;\n"
+    "        acc += t.sample(sn, at / a.size).rg * (wx0 * wy0);\n"
+    "        acc += t.sample(sn, at / a.size + float2(step.x, 0.0f)).rg * (wx1 * wy0);\n"
+    "        acc += t.sample(sn, at / a.size + float2(0.0f, step.y)).rg * (wx0 * wy1);\n"
+    "        acc += t.sample(sn, at / a.size + step).rg * (wx1 * wy1);\n"
     "      }\n"
     "      wsum += sx * sy;\n"
     "    }\n"
@@ -502,7 +580,9 @@ static int npa_apply_scale(char **stage, int kernel)
              && npa_append(&helper, spec->weight, strlen(spec->weight))
              && npa_append(&helper, NPA_SCALE_FOOTPRINT, strlen(NPA_SCALE_FOOTPRINT));
     if (ok) {
-        ok = npa_append(&helper, NPA_SCALE_TAP_PAIR, strlen(NPA_SCALE_TAP_PAIR))
+        ok = npa_append(&helper, NPA_SCALE_AXIS, strlen(NPA_SCALE_AXIS))
+             && npa_append(&helper, NPA_SCALE_TAP_R, strlen(NPA_SCALE_TAP_R))
+             && npa_append(&helper, NPA_SCALE_TAP_RG, strlen(NPA_SCALE_TAP_RG))
              && npa_append(&helper, NPA_SCALE_WRAPPERS, strlen(NPA_SCALE_WRAPPERS));
     }
     if (!ok) {

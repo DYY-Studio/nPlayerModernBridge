@@ -139,10 +139,12 @@ static float paired(Kernel k, float support, float u, float v, float st)
                 acc += bilinear(ax, y0) * (wx0 * sy);
                 acc += bilinear(ax + 1.0f, y0) * (wx1 * sy);
             } else {
-                acc += bilinear(ax, ay) * (wx0 * wy0);
-                acc += bilinear(ax + 1.0f, ay) * (wx1 * wy0);
-                acc += bilinear(ax, ay + 1.0f) * (wx0 * wy1);
-                acc += bilinear(ax + 1.0f, ay + 1.0f) * (wx1 * wy1);
+                const int ix = (int)floorf(ax);
+                const int iy0 = (int)floorf(ay);
+                acc += texel(ix, iy0) * (wx0 * wy0);
+                acc += texel(ix + 1, iy0) * (wx1 * wy0);
+                acc += texel(ix, iy0 + 1) * (wx0 * wy1);
+                acc += texel(ix + 1, iy0 + 1) * (wx1 * wy1);
             }
             wsum += sx * sy;
         }

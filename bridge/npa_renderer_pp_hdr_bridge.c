@@ -300,7 +300,7 @@ static const char NPA_SCALE_HORIZONTAL[] =
     "                              texture2d<float, access::sample> src [[ texture(0) ]]) {\n"
     "  constexpr sampler sn(address::clamp_to_edge, filter::linear);\n"
     "  const float2 uv = in.texcoord;\n"
-    "  return npa_tap(src, sn, uv, dfdx(uv), dfdy(uv));\n"
+    "  return npa_h_tap(src, sn, uv, dfdx(uv), dfdy(uv));\n"
     "}\n";
 
 typedef struct {
@@ -1011,11 +1011,12 @@ static id npa_prepass_pipeline(NPAPrepass *state, id device, uint64_t format)
         npa_release(descriptor);
         return NULL;
     }
-    ((void (*)(id, SEL, id))objc_msgSend)(descriptor, npa_sel("setLabel:"), NULL);
     ((void (*)(id, SEL, id))objc_msgSend)(descriptor, npa_sel("setVertexFunction:"), vertex);
     ((void (*)(id, SEL, id))objc_msgSend)(descriptor, npa_sel("setFragmentFunction:"), function);
     ((void (*)(id, SEL, unsigned long))objc_msgSend)(descriptor, npa_sel("setSampleCount:"), 1);
-    id attachment = npa_msg_id(npa_msg_id(descriptor, "colorAttachments"), "objectAtIndexedSubscript:");
+    id attachment = ((id (*)(id, SEL, unsigned long))objc_msgSend)(
+        npa_msg_id(descriptor, "colorAttachments"), npa_sel("objectAtIndexedSubscript:"), 0UL
+    );
     if (attachment) {
         ((void (*)(id, SEL, unsigned long))objc_msgSend)(
             attachment, npa_sel("setPixelFormat:"), (unsigned long)format
@@ -1061,8 +1062,8 @@ static id npa_prepass_texture(id device, uint64_t format, int width, int height)
     return ((id (*)(id, SEL, id))objc_msgSend)(device, npa_sel("newTextureWithDescriptor:"), descriptor);
 }
 
-/* Returns 0 when the pre-pass could not run; the caller then falls back to the
- * host draw and logs, because the fragment shader is already vertical-only.
+/* Returns 0 when the pre-pass could not run; the caller skips the frame and
+ * logs, because the fragment shader is already vertical-only.
  * On success the renderer's texture slots point at the intermediates, and the
  * caller must restore them: the host writes the next frame into those slots
  * with replaceRegion at the source size, which would land inside a
@@ -1118,7 +1119,7 @@ static int npa_prepass_run(void *renderer)
     id layer = npa_msg_id(view, "metalLayer");
     CGSize drawable = {0, 0};
     if (layer) {
-        ((CGSize (*)(id, SEL))objc_msgSend)(layer, npa_sel("drawableSize"));
+        drawable = ((CGSize (*)(id, SEL))objc_msgSend)(layer, npa_sel("drawableSize"));
     }
     if (drawable.width < 1.0 || drawable.height < 1.0) {
         npa_hdr_log("separable pre-pass has no drawable size", -1);
@@ -1200,7 +1201,9 @@ static int npa_prepass_run(void *renderer)
             npa_hdr_log("separable pre-pass could not get a pass descriptor", -1);
             return 0;
         }
-        id attachment = npa_msg_id(npa_msg_id(descriptor, "colorAttachments"), "objectAtIndexedSubscript:");
+        id attachment = ((id (*)(id, SEL, unsigned long))objc_msgSend)(
+            npa_msg_id(descriptor, "colorAttachments"), npa_sel("objectAtIndexedSubscript:"), 0UL
+        );
         ((void (*)(id, SEL, id))objc_msgSend)(attachment, npa_sel("setTexture:"), state->plane[index]);
         ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setLoadAction:"), 2);
         ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setStoreAction:"), 1);
@@ -1273,12 +1276,9 @@ NPA_EXPORT __attribute__((noinline)) void npa_renderer_pp_hdr_draw(void *rendere
         draw(renderer);
         return;
     }
-    /* A failed pre-pass leaves the source planes in place; the fragment shader
-     * is vertical-only by then, so say so rather than shipping a silently
-     * under-filtered frame. */
+    /* A vertical-only shader cannot safely draw the unfiltered source planes. */
     if (!npa_prepass_run(renderer)) {
-        npa_hdr_log("separable pre-pass did not run; frame is vertical-only", -1);
-        draw(renderer);
+        npa_hdr_log("separable pre-pass failed; frame skipped", -1);
         return;
     }
     draw(renderer);

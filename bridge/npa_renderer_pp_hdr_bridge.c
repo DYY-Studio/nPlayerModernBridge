@@ -947,8 +947,6 @@ typedef struct {
     uint64_t pipeline_format[3];
     id plane[3];
     int plane_count;
-    int width;
-    int height;
 } NPAPrepass;
 
 static NPAPrepass npa_prepass;
@@ -975,8 +973,6 @@ static void npa_prepass_reset(NPAPrepass *state)
         state->plane[index] = NULL;
     }
     state->plane_count = 0;
-    state->width = 0;
-    state->height = 0;
 }
 
 /* Preferences are baked when the host compiles its library, not per frame.
@@ -1200,12 +1196,17 @@ static int npa_prepass_run(void *renderer)
         }
     }
 
-    if (state->plane_count != plane_count || state->width != sizes[0][0]
-        || state->height != sizes[0][1]) {
+    int rebuild = state->plane_count != plane_count;
+    for (int index = 0; !rebuild && index < plane_count; index++) {
+        id plane = state->plane[index];
+        rebuild = !plane
+            || ((unsigned long (*)(id, SEL))objc_msgSend)(plane, npa_sel("width")) != (unsigned long)sizes[index][0]
+            || ((unsigned long (*)(id, SEL))objc_msgSend)(plane, npa_sel("height")) != (unsigned long)sizes[index][1]
+            || ((unsigned long (*)(id, SEL))objc_msgSend)(plane, npa_sel("pixelFormat")) != formats[index];
+    }
+    if (rebuild) {
         npa_prepass_reset(state);
         state->plane_count = plane_count;
-        state->width = sizes[0][0];
-        state->height = sizes[0][1];
         for (int index = 0; index < plane_count; index++) {
             state->plane[index] = npa_prepass_texture(
                 device, formats[index], sizes[index][0], sizes[index][1]

@@ -125,6 +125,33 @@ static int check_weights(id<MTLDevice> device)
     return failed;
 }
 
+/* Keep one compiled library and drawable while switching chroma layout/format. */
+static int check_plane_changes(id<MTLDevice> device, void *renderer)
+{
+    id *slot = (id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR);
+    id original = *slot;
+    int failed = 0;
+    const MTLPixelFormat formats[] = {MTLPixelFormatRG32Float, MTLPixelFormatRG16Float};
+    for (int i = 0; i < 2; i++) {
+        id<MTLTexture> changed = texture(device, formats[i], 128, 8, MTLTextureUsageShaderRead);
+        *slot = changed;
+        if (!npa_prepass_run(renderer)) return 1;
+        id<MTLTexture> intermediate = *slot;
+        if (intermediate.height != 8 || intermediate.pixelFormat != formats[i]) {
+            fprintf(stderr, "FAIL: plane change %d cached height=%lu format=%lu\n", i,
+                    (unsigned long)intermediate.height, (unsigned long)intermediate.pixelFormat);
+            failed = 1;
+        }
+        npa_prepass_restore(renderer);
+        *slot = original;
+        [changed release];
+    }
+    id<MTLCommandQueue> queue = *(id *)((char *)renderer + NPA_RENDERER_QUEUE);
+    id<MTLCommandBuffer> completion = [queue commandBuffer];
+    [completion commit]; [completion waitUntilCompleted];
+    return failed || completion.error != nil;
+}
+
 static int check_render(id<MTLDevice> device, int kernel, int antiring,
                         int source_width, int output_width, int ramp,
                         float scale_x, float scale_y)
@@ -237,13 +264,16 @@ static int check_render(id<MTLDevice> device, int kernel, int antiring,
     free(result);
     printf("kernel=%d ar=%d %d->%d %s geometry=%g/%g max_error=%g\n", kernel, antiring,
            source_width, output_width, ramp ? "chroma ramp" : "luma stripes", scale_x, scale_y, max_error);
+    int cache_failed = 0;
+    if (source_width == 256 && output_width == 128 && !ramp)
+        cache_failed = check_plane_changes(device, renderer.bytes);
     npa_prepass_reset(&npa_prepass);
     [pd.vertexFunction release];
     [pd.fragmentFunction release];
     [pd release]; [pipeline release]; [output release];
     [view->layer release]; [view release];
     [y release]; [uv release]; [vb release]; [queue release]; [library release];
-    return max_error > 2e-4f;
+    return cache_failed || max_error > 2e-4f;
 }
 
 int main(void)

@@ -46,6 +46,7 @@ env:
     build/LibFFmpegCore902Bridge.dylib
     build/LibFFmpegOut448Bridge.dylib
     build/LibRendererHighBitBridge.dylib
+    build/LibRendererPPHDRBridge.dylib
     libkeystone.dylib
 
 jobs:

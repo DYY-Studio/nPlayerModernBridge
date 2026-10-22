@@ -151,7 +151,9 @@ Experimental `renderer-highbit` output applies
 to software decoding and is disabled by default. Experimental `renderer-pp-hdr`
 is the high-bit-depth and HDR output fix for the Post Processing Metal path: it
 only applies while the app's Post Processing is enabled and needs iOS 16 or
-later for extended-range output; it is also disabled by default.
+later for extended-range output; it is also disabled by default. With the
+companion UI it can also replace the renderer's bilinear scaling with a
+selectable kernel (Catmull-Rom, Mitchell, Keys, Lanczos2/3, B-Spline).
 
 For higher ASS/SSA animation frame rates, **[nPlayerEnhance](https://github.com/DYY-Studio/nPlayerEnhance)** can be used
 alongside this project.

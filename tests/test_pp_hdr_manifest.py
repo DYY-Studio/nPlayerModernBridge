@@ -34,7 +34,9 @@ def test_hdr_is_a_renderer_dylib():
         dylib = manifest.dylib('renderer-pp-hdr')
         assert dylib.basename == 'LibRendererPPHDRBridge.dylib'
         assert [api.symbol for domain in dylib.domains for api in domain.apis] == [
-            'npa_renderer_pp_hdr_shader_source']
+            'npa_renderer_pp_hdr_shader_source',
+            'npa_renderer_pp_hdr_draw',
+        ]
         assert dylib.conflicts == ()
 
 
@@ -90,4 +92,7 @@ def test_hdr_bridge_verification():
         pytest.skip('renderer-pp-hdr bridge has not been built')
     for manifest in MANIFESTS:
         verify.verify_bridge(path, manifest.dylib('renderer-pp-hdr'), manifest).require()
-    assert macho.exported_symbols(macho.parse(path)) == ['_npa_renderer_pp_hdr_shader_source']
+    assert macho.exported_symbols(macho.parse(path)) == [
+        '_npa_renderer_pp_hdr_draw',
+        '_npa_renderer_pp_hdr_shader_source',
+    ]

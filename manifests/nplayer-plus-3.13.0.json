@@ -46,6 +46,13 @@
             "0x10018ECE8"
           ],
           "old_target": "0x100190660"
+        },
+        {
+          "symbol": "npa_renderer_pp_hdr_draw",
+          "call_sites": [
+            "0x10018FB38"
+          ],
+          "old_target": "0x10018FB54"
         }
       ]
     },

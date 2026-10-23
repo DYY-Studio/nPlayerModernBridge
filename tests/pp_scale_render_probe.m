@@ -40,6 +40,7 @@ static int check_activation(id<MTLDevice> device)
 {
     char *source = strdup(SOURCE);
     assert(npa_apply_scale(&source, 5, 5, 0, 0, NPA_AA_QUALITY));
+    assert(npa_apply_deband(&source, 1));
     NSError *error = nil;
     id<MTLLibrary> on = [device newLibraryWithSource:[NSString stringWithUTF8String:source]
                                            options:nil error:&error];
@@ -51,14 +52,19 @@ static int check_activation(id<MTLDevice> device)
     NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
     NSString *key = @NPA_PREF_SCALE_KERNEL;
     id old = [[defaults objectForKey:key] retain];
+    NSString *deband_key = @NPA_PREF_DEBAND;
+    id old_deband = [[defaults objectForKey:deband_key] retain];
     *(id *)(renderer.bytes + NPA_RENDERER_LIBRARY) = on;
     [defaults setInteger:0 forKey:key];
-    int stays_on = npa_prepass_active(renderer.bytes);
+    [defaults setInteger:0 forKey:deband_key];
+    int stays_on = npa_prepass_active(renderer.bytes) == 3;
     *(id *)(renderer.bytes + NPA_RENDERER_LIBRARY) = off;
     [defaults setInteger:5 forKey:key];
+    [defaults setInteger:1 forKey:deband_key];
     int stays_off = !npa_prepass_active(renderer.bytes);
     if (old) [defaults setObject:old forKey:key]; else [defaults removeObjectForKey:key];
-    [old release]; [on release]; [off release];
+    if (old_deband) [defaults setObject:old_deband forKey:deband_key]; else [defaults removeObjectForKey:deband_key];
+    [old_deband release]; [old release]; [on release]; [off release];
     printf("library activation ignores pending preferences: on=%d off=%d\n", stays_on, stays_off);
     return !stays_on || !stays_off;
 }

@@ -113,18 +113,19 @@ def test_antialiasing_and_antiringing_bake(tmp_path):
     ], check=True)
 
     cases = [
-        (5, 5, 0, 0, 0),
-        (5, 5, 1, 1, 1),
-        (5, 5, 1, 1, 2),
-        (5, 6, 1, 0, 2),
-        (6, 5, 1, 1, 1),
+        (5, 5, 0, 0, 0, 0),
+        (5, 5, 1, 1, 1, 0),
+        (5, 5, 1, 1, 2, 0),
+        (5, 6, 1, 0, 2, 0),
+        (6, 5, 1, 1, 1, 0),
     ]
-    for down, up, ar_down, ar_up, aa in cases:
-        name = f'aa{aa}-{down}-{up}-{ar_down}{ar_up}'
+    cases += [(0, 0, 0, 0, 2, 1), (5, 5, 0, 0, 2, 1), (8, 8, 0, 0, 2, 1)]
+    for down, up, ar_down, ar_up, aa, deband in cases:
+        name = f'aa{aa}-{down}-{up}-{ar_down}{ar_up}-deband{deband}'
         shader = tmp_path / f'{name}.metal'
         subprocess.run([
             str(driver), str(HOST_MSL), str(shader), '16', '1',
-            str(down), str(up), str(ar_down), str(ar_up), str(aa),
+            str(down), str(up), str(ar_down), str(ar_up), str(aa), str(deband),
         ], check=True)
         subprocess.run([
             'xcrun', '-sdk', 'iphoneos', 'metal', '-c', str(shader),

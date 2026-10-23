@@ -12,6 +12,7 @@
 #include <objc/message.h>
 #include <objc/objc.h>
 #include <objc/runtime.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1009,6 +1010,9 @@ typedef struct {
     int plane_count;
 } NPAPrepass;
 
+/* The scratch cache and saved host slots form one draw transaction. Separate
+ * renderer display-link threads can overlap during startup/video handoff. */
+static pthread_mutex_t npa_prepass_mutex = PTHREAD_MUTEX_INITIALIZER;
 static NPAPrepass npa_prepass;
 static id npa_prepass_saved[4];
 
@@ -1378,17 +1382,20 @@ NPA_EXPORT __attribute__((noinline)) void npa_renderer_pp_hdr_draw(void *rendere
     if (!draw) {
         return;
     }
+    pthread_mutex_lock(&npa_prepass_mutex);
     if (!renderer || !npa_prepass_active(renderer)) {
         draw(renderer);
-        return;
+        goto done;
     }
     /* A vertical-only shader cannot safely draw the unfiltered source planes. */
     if (!npa_prepass_run(renderer)) {
         npa_hdr_log("pre-pass failed; frame skipped", -1);
-        return;
+        goto done;
     }
     draw(renderer);
     npa_prepass_restore(renderer);
+done:
+    pthread_mutex_unlock(&npa_prepass_mutex);
 }
 
 NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(

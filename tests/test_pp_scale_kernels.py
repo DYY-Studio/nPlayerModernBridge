@@ -20,14 +20,15 @@ KERNELS = {
 }
 
 
-def test_scaling_on_metal(tmp_path):
+@pytest.mark.parametrize("probe", ["pp_scale_render_probe.m", "pp_draw_concurrency_probe.m"])
+def test_scaling_on_metal(tmp_path, probe):
     """Read back the production two-pass output and each generated kernel."""
     generate_header(
         ROOT / 'manifests', tmp_path / 'renderer-pp-hdr-bindings.h', 'renderer-pp-hdr')
     output = tmp_path / 'render-probe'
     subprocess.run([
         'xcrun', 'clang', '-O1', '-I' + str(tmp_path),
-        str(ROOT / 'tests/pp_scale_render_probe.m'),
+        str(ROOT / 'tests' / probe),
         '-framework', 'Foundation', '-framework', 'QuartzCore',
         '-framework', 'CoreGraphics', '-framework', 'Metal', '-o', str(output),
     ], check=True)

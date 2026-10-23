@@ -194,6 +194,55 @@ static int check_deband_pipeline(id<MTLDevice> device, int kernel, int planar)
     return failed;
 }
 
+static int check_srgb_decode(id<MTLDevice> device)
+{
+    NSString *prefix = [[NSString stringWithUTF8String:SOURCE] componentsSeparatedByString:@"fragment float4"][0];
+    NSString *template = [prefix stringByAppendingString:
+        @"fragment half4 fragmentShader(Varyings in [[stage_in]]) {\n"
+         "const float values[8] = {-0.01f,0.0f,0.003f,0.01f,0.04045f,0.04046f,0.5f,1.0f};\n"
+         "const float3 ycbcr1 = float3(values[uint(in.position.x)]);\n"
+         "struct Conversion { float3x3 matrix; }; const Conversion colorConversion = {float3x3(1.0f)};\n"
+         "  float3 rgb1 = colorConversion.matrix * ycbcr1;\n"
+         "return half4(half3(rgb1),1.0); }\n"];
+    char *source = npa_rewrite_shader(template.UTF8String, 0, 0, 1, 0, 0, 0, 0, 0, 0);
+    assert(source);
+    NSError *error = nil;
+    id<MTLLibrary> library = [device newLibraryWithSource:[NSString stringWithUTF8String:source]
+                                                options:nil error:&error];
+    free(source);
+    if (!library) { fprintf(stderr,"%s\n",error.description.UTF8String); return 1; }
+    MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
+    pd.vertexFunction = [library newFunctionWithName:@"vertexPassthrough"];
+    pd.fragmentFunction = [library newFunctionWithName:@"fragmentShader"];
+    pd.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA32Float;
+    id<MTLRenderPipelineState> pipeline = [device newRenderPipelineStateWithDescriptor:pd error:&error];
+    assert(pipeline);
+    const float vertices[][4] = {{-1,-1,0,1},{3,-1,2,1},{-1,3,0,-1}};
+    id<MTLBuffer> vb = [device newBufferWithBytes:vertices length:sizeof(vertices) options:MTLResourceStorageModeShared];
+    id<MTLTexture> out = texture(device, MTLPixelFormatRGBA32Float, 8, 1, MTLTextureUsageRenderTarget);
+    MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture = out; pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+    id<MTLCommandQueue> queue = [device newCommandQueue];
+    id<MTLCommandBuffer> cb = [queue commandBuffer];
+    id<MTLRenderCommandEncoder> encoder = [cb renderCommandEncoderWithDescriptor:pass];
+    [encoder setRenderPipelineState:pipeline]; [encoder setVertexBuffer:vb offset:0 atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [encoder endEncoding]; [cb commit]; [cb waitUntilCompleted];
+    float actual[32];
+    [out getBytes:actual bytesPerRow:sizeof(actual) fromRegion:MTLRegionMake2D(0,0,8,1) mipmapLevel:0];
+    // Apple MSL specification, sRGB conversion. Values calculated independently.
+    const float expected[] = {0,0,0.00023219814f,0.00077399381f,0.0031308050f,0.0031315946f,0.21404114f,1};
+    int failed = cb.error != nil;
+    for (int i = 0; i < 8; i++) for (int c = 0; c < 3; c++)
+        if (!isfinite(actual[i*4+c]) || fabsf(actual[i*4+c]-expected[i]) > 1e-7f) {
+            fprintf(stderr,"FAIL: sRGB input index=%d got=%g expected=%g\n",i,actual[i*4+c],expected[i]);
+            failed = 1;
+        }
+    [pd.vertexFunction release]; [pd.fragmentFunction release]; [pd release];
+    [pipeline release]; [vb release]; [out release]; [queue release]; [library release];
+    return failed;
+}
+
 static int check_weights(id<MTLDevice> device)
 {
     /* libplacebo filters.c, sampled at 0.5, 1.5, 2.5, 3.5 and divided by w(0).
@@ -423,6 +472,7 @@ int main(void)
         failed |= check_deband_pipeline(device, 0, 0);
         failed |= check_deband_pipeline(device, 5, 0);
         failed |= check_deband_pipeline(device, 8, 1);
+        failed |= check_srgb_decode(device);
         failed |= check_weights(device);
         failed |= check_activation(device);
         if (!failed) puts("Metal scaling checks passed (including all eight kernels)");

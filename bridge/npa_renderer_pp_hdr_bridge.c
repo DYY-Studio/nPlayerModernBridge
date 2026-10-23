@@ -50,15 +50,18 @@ static const char NPA_MATRIX_RGB1[] =
     "  float3 rgb1 = colorConversion.matrix * ycbcr1;\n";
 static const char NPA_MATRIX_RGB2[] =
     "  float3 rgb2 = colorConversion.matrix * ycbcr2;\n";
-/* The SDR branch carries BT.709 encoded values; the layer expects linear. */
+/* SDR output is interpreted as sRGB, as in the host. The layer expects linear.
+ * Apple MSL specification, sRGB conversion: toe c/12.92 for c <= 0.04045. */
 static const char NPA_LINEAR_RGB1[] =
     "  float3 rgb1 = colorConversion.matrix * ycbcr1;\n"
     "  rgb1 = max(rgb1, float3(0.0));\n"
-    "  rgb1 = pow((rgb1 + float3(0.055)) / float3(1.055), float3(2.4));\n";
+    "  rgb1 = select(pow((rgb1 + float3(0.055)) / float3(1.055), float3(2.4)),\n"
+    "                rgb1 / float3(12.92), rgb1 <= float3(0.04045));\n";
 static const char NPA_LINEAR_RGB2[] =
     "  float3 rgb2 = colorConversion.matrix * ycbcr2;\n"
     "  rgb2 = max(rgb2, float3(0.0));\n"
-    "  rgb2 = pow((rgb2 + float3(0.055)) / float3(1.055), float3(2.4));\n";
+    "  rgb2 = select(pow((rgb2 + float3(0.055)) / float3(1.055), float3(2.4)),\n"
+    "                rgb2 / float3(12.92), rgb2 <= float3(0.04045));\n";
 /* HLG keeps its nominal [0, 12] range; PQ already yields nits / 100. */
 static const char NPA_HLG_SCALE[] = "  rgb1 *= float3(trc_nom_peak);\n";
 

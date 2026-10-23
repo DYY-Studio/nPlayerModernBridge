@@ -267,3 +267,8 @@ its own implementation for every call site of that unit, and its state word read
 a call site: removing one dylib turns off every unit it carries and nothing else.
 `dev/acceptance.json` records the whole-dylib A/B for each accepted selection, and
 `docs/Verification.md` states what the device runs proved.
+
+SDR sRGB decoding uses Apple's piecewise transfer function: values at or below
+0.04045 use `c / 12.92`; higher values use `((c + 0.055) / 1.055)^2.4`.
+This preserves zero and low-light values when writing linear output. See
+[Apple Metal Shading Language specification, sRGB texture conversions](https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf).

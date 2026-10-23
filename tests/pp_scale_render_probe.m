@@ -63,6 +63,62 @@ static int check_activation(id<MTLDevice> device)
     return !stays_on || !stays_off;
 }
 
+static int check_deband(id<MTLDevice> device)
+{
+    char *source = strdup(SOURCE);
+    assert(npa_apply_deband(&source, 0));
+    NSError *error = nil;
+    id<MTLLibrary> library = [device newLibraryWithSource:[NSString stringWithUTF8String:source]
+                                                options:nil error:&error];
+    free(source);
+    if (!library) { fprintf(stderr, "%s\n", error.description.UTF8String); return 1; }
+    MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
+    pd.vertexFunction = [library newFunctionWithName:@"npaHorizontalVertex"];
+    pd.fragmentFunction = [library newFunctionWithName:@"npaDeband"];
+    pd.colorAttachments[0].pixelFormat = MTLPixelFormatR16Unorm;
+    id<MTLRenderPipelineState> pipeline = [device newRenderPipelineStateWithDescriptor:pd error:&error];
+    if (!pipeline) { fprintf(stderr, "%s\n", error.description.UTF8String); return 1; }
+    enum { width = 256, height = 64 };
+    uint8_t input[width * height];
+    for (int row = 0; row < height; row++)
+        for (int x = 0; x < width; x++)
+            input[row*width+x] = row < 32 ? 64 + x/16 : x < 128 ? 0 : 255;
+    id<MTLTexture> src = texture(device, MTLPixelFormatR8Unorm, width, height, MTLTextureUsageShaderRead);
+    [src replaceRegion:MTLRegionMake2D(0,0,width,height) mipmapLevel:0 withBytes:input bytesPerRow:width];
+    id<MTLTexture> out = texture(device, MTLPixelFormatR16Unorm, width, height, MTLTextureUsageRenderTarget);
+    MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture = out;
+    pass.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+    id<MTLCommandQueue> queue = [device newCommandQueue];
+    id<MTLCommandBuffer> cb = [queue commandBuffer];
+    id<MTLRenderCommandEncoder> encoder = [cb renderCommandEncoderWithDescriptor:pass];
+    uint32_t frame = 7;
+    [encoder setRenderPipelineState:pipeline];
+    [encoder setFragmentTexture:src atIndex:0];
+    [encoder setFragmentBytes:&frame length:sizeof(frame) atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [encoder endEncoding]; [cb commit]; [cb waitUntilCompleted];
+    if (cb.error) { fprintf(stderr, "%s\n", cb.error.description.UTF8String); return 1; }
+    uint16_t result[width * height];
+    [out getBytes:result bytesPerRow:width*2 fromRegion:MTLRegionMake2D(0,0,width,height) mipmapLevel:0];
+    int fractional = 0, failed = 0;
+    for (int row = 0; row < height; row++)
+        for (int x = 0; x < width; x++) {
+            int i = row*width+x;
+            if (row < 16) {
+                fractional += result[i] % 257 != 0;
+                if (abs((int)result[i] - input[i]*257) > 197) failed = 1;
+            }
+            if (row >= 48 && result[i] != input[i]*257) failed = 1;
+        }
+    printf("Debanding: fractional gradient samples=%d, edge/black/white=%s\n",
+           fractional, failed ? "FAIL" : "preserved");
+    [pd.vertexFunction release]; [pd.fragmentFunction release]; [pd release];
+    [pipeline release]; [library release]; [src release]; [out release]; [queue release];
+    return failed || fractional < 100;
+}
+
 static int check_weights(id<MTLDevice> device)
 {
     /* libplacebo filters.c, sampled at 0.5, 1.5, 2.5, 3.5 and divided by w(0).
@@ -288,6 +344,7 @@ int main(void)
         failed |= check_render(device, 1, 0, 256, 256, 1, 0.77f, 1);
         failed |= check_render(device, 1, 0, 256, 256, 1, 1, 0.5f);
         failed |= check_render(device, 1, 0, 256, 256, 1, 1.25f, 1.25f);
+        failed |= check_deband(device);
         failed |= check_weights(device);
         failed |= check_activation(device);
         if (!failed) puts("Metal scaling checks passed (including all eight kernels)");

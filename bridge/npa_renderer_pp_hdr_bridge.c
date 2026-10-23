@@ -65,6 +65,7 @@ static const char NPA_HLG_SCALE[] = "  rgb1 *= float3(trc_nom_peak);\n";
 /* Optional scaling kernel, chosen by a shared preference. Zero keeps the
  * host's bilinear sampling; the selection is baked into the generated MSL so
  * the tap loops stay compile-time constants. */
+#define NPA_PREF_DEBAND "PPVideoDebanding"
 #define NPA_PREF_SCALE_KERNEL "PPVideoScaleKernel"
 #define NPA_PREF_SCALE_KERNEL_UP "PPVideoScaleKernelUpscale"
 /* Downscaling anti-ringing keeps its original key so the existing switch
@@ -295,7 +296,7 @@ static const char NPA_SCALE_WRAPPERS[] =
     "  return npa_tap(t, sn, uv, dudx, dudy).rg;\n"
     "}\n";
 
-static const char NPA_SCALE_HORIZONTAL[] =
+static const char NPA_PREPASS_VERTEX[] =
     "\n"
     "vertex Varyings npaHorizontalVertex(uint vid [[vertex_id]]) {\n"
     "  const float2 p = float2((vid << 1) & 2, vid & 2);\n"
@@ -305,6 +306,9 @@ static const char NPA_SCALE_HORIZONTAL[] =
     "  return out;\n"
     "}\n"
     "\n"
+    "";
+
+static const char NPA_SCALE_HORIZONTAL[] =
     "fragment float4 npaHorizontal(Varyings in [[ stage_in ]],\n"
     "                              texture2d<float, access::sample> src [[ texture(0) ]]) {\n"
     "  constexpr sampler sn(address::clamp_to_edge, filter::linear);\n"
@@ -714,7 +718,8 @@ static int npa_apply_scale(char **stage, int kernel, int kernel_up,
         static const char anchor[] = "fragment ";
         static const char replacement[] = "fragment ";
         NPABuffer spliced = {0};
-        applied = npa_append(&spliced, NPA_SCALE_HORIZONTAL, strlen(NPA_SCALE_HORIZONTAL))
+        applied = npa_append(&spliced, NPA_PREPASS_VERTEX, strlen(NPA_PREPASS_VERTEX))
+                  && npa_append(&spliced, NPA_SCALE_HORIZONTAL, strlen(NPA_SCALE_HORIZONTAL))
                   && npa_append(&spliced, replacement, strlen(replacement));
         if (applied) {
             spliced.data[spliced.length] = '\0';
@@ -723,6 +728,49 @@ static int npa_apply_scale(char **stage, int kernel, int kernel_up,
         free(spliced.data);
     }
     return applied;
+}
+
+/* This MSL fragment is derived from libplacebo under LGPL-2.1-or-later.
+ * See THIRD-PARTY.md and LICENSES/libplacebo-LGPL-2.1.txt. */
+static const char NPA_DEBAND_SHADER[] =
+    "// Debanding / PCG adapted from libplacebo bb4d5a48980458e65d44b3a98674a5cddeb85597,\n"
+    "// src/shaders/sampling.c and src/shaders.c, LGPL-2.1-or-later.\n"
+    "// This port fixes iterations=1, threshold=3, radius=16, grain=0.\n"
+    "static inline float3 npaDebandRandom(thread uint3 &s) {\n"
+    "  s = 1664525u * s + uint3(1013904223u);\n"
+    "  s.x += s.y * s.z; s.y += s.z * s.x; s.z += s.x * s.y;\n"
+    "  s ^= s >> 16u;\n"
+    "  s.x += s.y * s.z; s.y += s.z * s.x; s.z += s.x * s.y;\n"
+    "  return float3(s) * (1.0f / float(0xFFFFFFFFu));\n"
+    "}\n"
+    "fragment float4 npaDeband(Varyings in [[stage_in]],\n"
+    "                          texture2d<float> src [[texture(0)]],\n"
+    "                          constant uint &frame [[buffer(0)]]) {\n"
+    "  constexpr sampler sn(address::clamp_to_edge, filter::nearest);\n"
+    "  const float2 uv = in.texcoord;\n"
+    "  const float2 pt = 1.0f / float2(src.get_width(), src.get_height());\n"
+    "  uint3 state = uint3(uint2(in.position.xy), frame);\n"
+    "  const float2 random = npaDebandRandom(state).xy;\n"
+    "  const float angle = random.y * (2.0f * M_PI_F);\n"
+    "  const float2 d = (16.0f * random.x) * float2(cos(angle), sin(angle)) * pt;\n"
+    "  const float4 value = src.sample(sn, uv, level(0.0f));\n"
+    "  const float4 avg = 0.25f * (src.sample(sn, uv + d, level(0.0f))\n"
+    "      + src.sample(sn, uv + float2(-d.x, d.y), level(0.0f))\n"
+    "      + src.sample(sn, uv - d, level(0.0f))\n"
+    "      + src.sample(sn, uv + float2(d.x, -d.y), level(0.0f)));\n"
+    "  return select(avg, value, abs(value - avg) > float4(0.003f));\n"
+    "}\n"
+    ;
+
+static int npa_apply_deband(char **stage, int scaling)
+{
+    NPABuffer shader = {0};
+    int ok = (scaling || npa_append(&shader, NPA_PREPASS_VERTEX, strlen(NPA_PREPASS_VERTEX)))
+        && npa_append(&shader, NPA_DEBAND_SHADER, strlen(NPA_DEBAND_SHADER))
+        && npa_append(&shader, "fragment ", strlen("fragment "));
+    if (ok) ok = npa_sub(stage, "fragment ", shader.data, 1);
+    free(shader.data);
+    return ok;
 }
 
 /* Reads one integer preference. A missing key yields 0, which every caller

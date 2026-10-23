@@ -193,6 +193,16 @@ next video. A failed pre-pass logs an error and skips the frame.
 Pre-pass activation follows the compiled library, so changing preferences
 during playback cannot mismatch the two stages.
 
+`PPVideoDebanding` independently enables one libplacebo-style source-plane
+iteration before scaling and color conversion (threshold 3/1000, radius 16,
+no added grain). The default is off. Debanding works with the default bilinear
+sampler as well as the custom kernels. Its source-sized results and any
+horizontal intermediates use R16Unorm/RG16Unorm, retaining fractional 8-bit
+levels. A PCG seed combines each plane's pixel coordinate with one frame index
+shared across the planes. Both preprocessing stages use one command buffer;
+textures and pipelines are reused until their library, dimensions or format
+change. Dithering is not applied to the RGBA16Float output.
+
 Because the rewrite happens in the shader, the feature requires Post Processing
 to be on. With Post Processing off the app renders through
 `AVSampleBufferRenderer` and this dylib is never called. Without

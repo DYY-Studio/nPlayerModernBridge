@@ -119,6 +119,81 @@ static int check_deband(id<MTLDevice> device)
     return failed || fractional < 100;
 }
 
+static int check_deband_pipeline(id<MTLDevice> device, int kernel, int planar)
+{
+    char *source = strdup(SOURCE);
+    if (kernel) assert(npa_apply_scale(&source, kernel, kernel, 0, 0, NPA_AA_QUALITY));
+    assert(npa_apply_deband(&source, kernel != 0));
+    NSError *error = nil;
+    id<MTLLibrary> library = [device newLibraryWithSource:[NSString stringWithUTF8String:source]
+                                                options:nil error:&error];
+    free(source);
+    if (!library) { fprintf(stderr, "%s\n", error.description.UTF8String); return 1; }
+    enum { width = 256, height = 64 };
+    uint8_t pixels[width*height];
+    for (int i = 0; i < width*height; i++) pixels[i] = 64+(i%width)/16;
+    const int highbit = planar;
+    uint16_t packed[width*height];
+    for (int i = 0; i < width*height; i++) packed[i] = (uint16_t)pixels[i] << 8;
+    id<MTLTexture> y = texture(device, highbit ? MTLPixelFormatR16Unorm : MTLPixelFormatR8Unorm,
+                             width, height, MTLTextureUsageShaderRead);
+    [y replaceRegion:MTLRegionMake2D(0,0,width,height) mipmapLevel:0
+          withBytes:highbit ? (void *)packed : (void *)pixels bytesPerRow:width*(highbit ? 2 : 1)];
+    const int divisor = planar ? 1 : 2;
+    id<MTLTexture> c = texture(device, planar ? MTLPixelFormatR16Unorm : MTLPixelFormatRG8Unorm,
+                             width/divisor, height/divisor, MTLTextureUsageShaderRead);
+    memset(pixels, 128, sizeof(pixels));
+    for (int i = 0; i < width*height; i++) packed[i] = 32768;
+    [c replaceRegion:MTLRegionMake2D(0,0,width/divisor,height/divisor) mipmapLevel:0
+          withBytes:planar ? (void *)packed : (void *)pixels bytesPerRow:planar ? width*2 : width];
+    const float vertices[][4] = {{-1,-1,0,1},{1,-1,1,1},{-1,1,0,0}};
+    id<MTLBuffer> vb = [device newBufferWithBytes:vertices length:sizeof(vertices) options:MTLResourceStorageModeShared];
+    id<MTLCommandQueue> queue = [device newCommandQueue];
+    ScaleProbeView *view = [ScaleProbeView new];
+    view->layer = [CAMetalLayer new]; view->layer.drawableSize = CGSizeMake(128,32);
+    union { void *alignment; unsigned char bytes[0x240]; } renderer = {0};
+    *(id *)(renderer.bytes+NPA_RENDERER_DEVICE) = device;
+    *(id *)(renderer.bytes+NPA_RENDERER_QUEUE) = queue;
+    *(id *)(renderer.bytes+NPA_RENDERER_LIBRARY) = library;
+    *(id *)(renderer.bytes+NPA_RENDERER_VERTEX_BUFFER) = vb;
+    *(id *)(renderer.bytes+NPA_RENDERER_VIEW) = view;
+    *(id *)(renderer.bytes+NPA_RENDERER_TEXTURE_Y) = y;
+    *(id *)(renderer.bytes+(planar ? NPA_RENDERER_TEXTURE_CB : NPA_RENDERER_TEXTURE_CBCR)) = c;
+    if (planar) *(id *)(renderer.bytes+NPA_RENDERER_TEXTURE_CR) = c;
+    if (!npa_prepass_run(renderer.bytes)) {
+        fprintf(stderr, "FAIL: Debanding pre-pass kernel=%d planar=%d did not run\n",kernel,planar);
+        return 1;
+    }
+    id<MTLTexture> result_y = *(id *)(renderer.bytes+NPA_RENDERER_TEXTURE_Y);
+    id<MTLTexture> result_c = *(id *)(renderer.bytes+(planar ? NPA_RENDERER_TEXTURE_CB : NPA_RENDERER_TEXTURE_CBCR));
+    int failed = result_y.pixelFormat != MTLPixelFormatR16Unorm
+        || result_c.pixelFormat != (planar ? MTLPixelFormatR16Unorm : MTLPixelFormatRG16Unorm)
+        || result_y.width != (kernel ? 128 : width) || result_y.height != height
+        || result_c.width != (kernel ? 128 : width/divisor) || result_c.height != height/divisor;
+    id<MTLCommandBuffer> completion = [queue commandBuffer];
+    [completion commit]; [completion waitUntilCompleted];
+    if (completion.error) failed = 1;
+    uint16_t result[width*height];
+    [result_y getBytes:result bytesPerRow:result_y.width*2
+            fromRegion:MTLRegionMake2D(0,0,result_y.width,height) mipmapLevel:0];
+    int fractional = 0;
+    for (NSUInteger i = 0; i < result_y.width*height; i++) fractional += result[i]%(highbit ? 256 : 257) != 0;
+    if (fractional < 100) failed = 1;
+    npa_prepass_restore(renderer.bytes);
+    failed |= *(id *)(renderer.bytes+NPA_RENDERER_TEXTURE_Y) != y;
+    failed |= *(id *)(renderer.bytes+(planar ? NPA_RENDERER_TEXTURE_CB : NPA_RENDERER_TEXTURE_CBCR)) != c;
+    printf("Debanding pipeline: kernel=%d planar=%d fractional=%d %s\n",kernel,planar,fractional,failed ? "FAIL" : "passed");
+    if (!npa_prepass_run(renderer.bytes)) return 1;
+    failed |= *(id *)(renderer.bytes+NPA_RENDERER_TEXTURE_Y) != result_y;
+    npa_prepass_restore(renderer.bytes);
+    completion = [queue commandBuffer]; [completion commit]; [completion waitUntilCompleted];
+    failed |= completion.error != nil;
+    npa_prepass_reset(&npa_prepass);
+    [view->layer release]; [view release]; [y release]; [c release];
+    [vb release]; [queue release]; [library release];
+    return failed;
+}
+
 static int check_weights(id<MTLDevice> device)
 {
     /* libplacebo filters.c, sampled at 0.5, 1.5, 2.5, 3.5 and divided by w(0).
@@ -345,6 +420,9 @@ int main(void)
         failed |= check_render(device, 1, 0, 256, 256, 1, 1, 0.5f);
         failed |= check_render(device, 1, 0, 256, 256, 1, 1.25f, 1.25f);
         failed |= check_deband(device);
+        failed |= check_deband_pipeline(device, 0, 0);
+        failed |= check_deband_pipeline(device, 5, 0);
+        failed |= check_deband_pipeline(device, 8, 1);
         failed |= check_weights(device);
         failed |= check_activation(device);
         if (!failed) puts("Metal scaling checks passed (including all eight kernels)");

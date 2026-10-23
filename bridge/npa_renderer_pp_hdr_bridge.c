@@ -764,13 +764,17 @@ static const char NPA_DEBAND_SHADER[] =
 
 static int npa_apply_deband(char **stage, int scaling)
 {
+    const char *fragment = strstr(*stage, "fragment ");
+    if (!fragment) return 0;
     NPABuffer shader = {0};
-    int ok = (scaling || npa_append(&shader, NPA_PREPASS_VERTEX, strlen(NPA_PREPASS_VERTEX)))
+    int ok = npa_append(&shader, *stage, (size_t)(fragment - *stage))
+        && (scaling || npa_append(&shader, NPA_PREPASS_VERTEX, strlen(NPA_PREPASS_VERTEX)))
         && npa_append(&shader, NPA_DEBAND_SHADER, strlen(NPA_DEBAND_SHADER))
-        && npa_append(&shader, "fragment ", strlen("fragment "));
-    if (ok) ok = npa_sub(stage, "fragment ", shader.data, 1);
-    free(shader.data);
-    return ok;
+        && npa_append(&shader, fragment, strlen(fragment));
+    if (!ok) { free(shader.data); return 0; }
+    free(*stage);
+    *stage = shader.data;
+    return 1;
 }
 
 /* Reads one integer preference. A missing key yields 0, which every caller
@@ -825,7 +829,8 @@ static char *npa_rewrite_shader(
     int kernel_up,
     int antiring_down,
     int antiring_up,
-    int antialiasing
+    int antialiasing,
+    int debanding
 )
 {
     char *stage = strdup(source);
@@ -860,6 +865,7 @@ static char *npa_rewrite_shader(
                             antiring_down, antiring_up, antialiasing)) {
         goto fail;
     }
+    if (debanding && !npa_apply_deband(&stage, kernel > 0)) goto fail;
     return stage;
 fail:
     free(stage);
@@ -975,8 +981,9 @@ static void npa_configure_layer_async(void *renderer, int transfer, int hdr)
  *
  * A separable kernel filters one axis into an intermediate and the other axis
  * into the drawable. The intermediate keeps the source plane layout (Y plus
- * one chroma plane) and the source pixel format, so the second pass is the
- * same sampling shader. UNorm intermediates retain the source precision and
+ * one chroma plane) and the source pixel format unless Debanding promotes it to 16-bit UNorm.
+ * An optional source-sized Debanding stage precedes horizontal scaling in the
+ * same command buffer. UNorm intermediates retain the source precision and
  * clamp out-of-range values; they are not lossless for negative-lobe filters.
  *
  * The pre-pass runs as its own command buffer on the renderer's queue, which
@@ -991,9 +998,11 @@ typedef struct {
     void *renderer;
     id library;
     int active;
-    id pipeline[3];
-    uint64_t pipeline_format[3];
+    id pipeline[2][3];
+    uint64_t pipeline_format[2][3];
     id plane[3];
+    id deband_plane[3];
+    uint32_t frame;
     int plane_count;
 } NPAPrepass;
 
@@ -1015,10 +1024,14 @@ static void npa_release(void *object)
 static void npa_prepass_reset(NPAPrepass *state)
 {
     for (int index = 0; index < 3; index++) {
-        npa_release(state->pipeline[index]);
+        for (int stage = 0; stage < 2; stage++) {
+            npa_release(state->pipeline[stage][index]);
+            state->pipeline[stage][index] = NULL;
+        }
         npa_release(state->plane[index]);
-        state->pipeline[index] = NULL;
+        npa_release(state->deband_plane[index]);
         state->plane[index] = NULL;
+        state->deband_plane[index] = NULL;
     }
     state->plane_count = 0;
 }
@@ -1036,29 +1049,34 @@ static int npa_prepass_active(void *renderer)
     npa_release(state->library);
     state->renderer = renderer;
     state->library = library ? npa_msg_id(library, "retain") : NULL;
-    id function = ((id (*)(id, SEL, id))objc_msgSend)(
-        library, npa_sel("newFunctionWithName:"),
-        ((id (*)(id, SEL, const char *))objc_msgSend)(
-            (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"), "npaHorizontal"));
-    state->active = function != NULL;
-    npa_release(function);
+    state->frame = 0;
+    state->active = 0;
+    const char *names[] = {"npaHorizontal", "npaDeband"};
+    for (int stage = 0; stage < 2; stage++) {
+        id function = ((id (*)(id, SEL, id))objc_msgSend)(
+            library, npa_sel("newFunctionWithName:"),
+            ((id (*)(id, SEL, const char *))objc_msgSend)(
+                (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"), names[stage]));
+        if (function) state->active |= 1 << stage;
+        npa_release(function);
+    }
     return state->active;
 }
 
 /* One pipeline per pixel format: the attachment format is part of the pipeline
  * descriptor, and the source planes differ between 8- and 10-bit content. */
-static id npa_prepass_pipeline(NPAPrepass *state, id device, uint64_t format)
+static id npa_prepass_pipeline(NPAPrepass *state, id device, uint64_t format, int stage)
 {
     for (int index = 0; index < state->plane_count; index++) {
-        if (state->pipeline[index] && state->pipeline_format[index] == format) {
-            return state->pipeline[index];
+        if (state->pipeline[stage][index] && state->pipeline_format[stage][index] == format) {
+            return state->pipeline[stage][index];
         }
     }
     id function = ((id (*)(id, SEL, id))objc_msgSend)(
         state->library, npa_sel("newFunctionWithName:"),
         ((id (*)(id, SEL, const char *))objc_msgSend)(
             (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"),
-            "npaHorizontal"
+            stage ? "npaDeband" : "npaHorizontal"
         )
     );
     if (!function) {
@@ -1106,9 +1124,9 @@ static id npa_prepass_pipeline(NPAPrepass *state, id device, uint64_t format)
     /* Reuse the first free slot; there is at most one format per frame in
      * practice, and the array is only a small cache. */
     for (int index = 0; index < 3; index++) {
-        if (!state->pipeline[index]) {
-            state->pipeline[index] = pipeline;
-            state->pipeline_format[index] = format;
+        if (!state->pipeline[stage][index]) {
+            state->pipeline[stage][index] = pipeline;
+            state->pipeline_format[stage][index] = format;
             return pipeline;
         }
     }
@@ -1165,7 +1183,7 @@ static int npa_prepass_run(void *renderer)
 {
     NPAPrepass *state = &npa_prepass;
     if (!npa_prepass_active(renderer)) {
-        npa_hdr_log("separable pre-pass requires a scaling library", -1);
+        npa_hdr_log("pre-pass requires a processing library", -1);
         return 0;
     }
 
@@ -1204,108 +1222,112 @@ static int npa_prepass_run(void *renderer)
         return 0;
     }
 
-    id layer = npa_msg_id(view, "metalLayer");
-    CGSize drawable = {0, 0};
-    if (layer) {
-        drawable = ((CGSize (*)(id, SEL))objc_msgSend)(layer, npa_sel("drawableSize"));
-    }
-    if (drawable.width < 1.0 || drawable.height < 1.0) {
-        npa_hdr_log("separable pre-pass has no drawable size", -1);
-        return 0;
-    }
-
-    const int intermediate_width = npa_prepass_width(vertex_buffer, drawable);
-    if (!intermediate_width) {
-        npa_hdr_log("separable pre-pass has invalid horizontal geometry", -1);
-        return 0;
-    }
-    /* Complete horizontal reconstruction at the host's effective density;
-     * the final draw alone applies its aspect-fit, crop and zoom geometry. */
-    uint64_t formats[3] = {0, 0, 0};
-    int sizes[3][2] = {{0, 0}, {0, 0}, {0, 0}};
-    for (int index = 0; index < plane_count; index++) {
-        formats[index] = ((unsigned long (*)(id, SEL))objc_msgSend)(
-            sources[index], npa_sel("pixelFormat")
-        );
-        const int source_width = (int)((unsigned long (*)(id, SEL))objc_msgSend)(
-            sources[index], npa_sel("width")
-        );
-        const int source_height = (int)((unsigned long (*)(id, SEL))objc_msgSend)(
-            sources[index], npa_sel("height")
-        );
-        if (source_width < 1 || source_height < 1) {
-            npa_hdr_log("separable pre-pass source plane is empty", index);
+    const int scaling = state->active & 1;
+    const int debanding = state->active & 2;
+    int intermediate_width = 0;
+    if (scaling) {
+        id layer = npa_msg_id(view, "metalLayer");
+        CGSize drawable = {0, 0};
+        if (layer) drawable = ((CGSize (*)(id, SEL))objc_msgSend)(layer, npa_sel("drawableSize"));
+        if (drawable.width < 1.0 || drawable.height < 1.0) {
+            npa_hdr_log("pre-pass has no drawable size", -1);
             return 0;
         }
-        sizes[index][0] = intermediate_width;
-        sizes[index][1] = source_height;
-        if (sizes[index][0] < 1) {
-            sizes[index][0] = 1;
+        intermediate_width = npa_prepass_width(vertex_buffer, drawable);
+        if (!intermediate_width) {
+            npa_hdr_log("pre-pass has invalid horizontal geometry", -1);
+            return 0;
         }
     }
-
+    uint64_t formats[3] = {0};
+    int sizes[3][2] = {{0}};
     int rebuild = state->plane_count != plane_count;
-    for (int index = 0; !rebuild && index < plane_count; index++) {
-        id plane = state->plane[index];
-        rebuild = !plane
-            || ((unsigned long (*)(id, SEL))objc_msgSend)(plane, npa_sel("width")) != (unsigned long)sizes[index][0]
-            || ((unsigned long (*)(id, SEL))objc_msgSend)(plane, npa_sel("height")) != (unsigned long)sizes[index][1]
-            || ((unsigned long (*)(id, SEL))objc_msgSend)(plane, npa_sel("pixelFormat")) != formats[index];
+    for (int index = 0; index < plane_count; index++) {
+        const unsigned long format = ((unsigned long (*)(id, SEL))objc_msgSend)(sources[index], npa_sel("pixelFormat"));
+        formats[index] = format;
+        if (debanding) {
+            /* R8/R16 and RG8/RG16 UNorm. The high-bit bridge packs MSBs into
+             * the same normalized signal domain (npa_highbit_copy.c). */
+            switch (format) {
+            case 10: case 20: formats[index] = 20; break;
+            case 30: case 60: formats[index] = 60; break;
+            default:
+                npa_hdr_log("Debanding source format is unsupported", (int)format);
+                return 0;
+            }
+        }
+        sizes[index][0] = (int)((unsigned long (*)(id, SEL))objc_msgSend)(sources[index], npa_sel("width"));
+        sizes[index][1] = (int)((unsigned long (*)(id, SEL))objc_msgSend)(sources[index], npa_sel("height"));
+        if (sizes[index][0] < 1 || sizes[index][1] < 1) {
+            npa_hdr_log("pre-pass source plane is empty", index);
+            return 0;
+        }
+        for (int stage = debanding ? 1 : 0; stage >= 0; stage--) {
+            if (!stage && !scaling) continue;
+            id target = stage ? state->deband_plane[index] : state->plane[index];
+            int width = stage ? sizes[index][0] : intermediate_width;
+            rebuild |= !target
+                || ((unsigned long (*)(id, SEL))objc_msgSend)(target, npa_sel("width")) != (unsigned long)width
+                || ((unsigned long (*)(id, SEL))objc_msgSend)(target, npa_sel("height")) != (unsigned long)sizes[index][1]
+                || ((unsigned long (*)(id, SEL))objc_msgSend)(target, npa_sel("pixelFormat")) != formats[index];
+        }
     }
     if (rebuild) {
         npa_prepass_reset(state);
         state->plane_count = plane_count;
-        for (int index = 0; index < plane_count; index++) {
-            state->plane[index] = npa_prepass_texture(
-                device, formats[index], sizes[index][0], sizes[index][1]
-            );
-            if (!state->plane[index]) {
-                npa_hdr_log("separable pre-pass texture allocation failed", index);
-                npa_prepass_reset(state);
-                return 0;
+        for (int stage = debanding ? 1 : 0; stage >= 0; stage--) {
+            if (!stage && !scaling) continue;
+            id *targets = stage ? state->deband_plane : state->plane;
+            for (int index = 0; index < plane_count; index++) {
+                targets[index] = npa_prepass_texture(device, formats[index],
+                    stage ? sizes[index][0] : intermediate_width, sizes[index][1]);
+                if (!targets[index]) {
+                    npa_hdr_log("pre-pass texture allocation failed", index);
+                    npa_prepass_reset(state);
+                    return 0;
+                }
             }
         }
     }
 
     id command_buffer = npa_msg_id(queue, "commandBuffer");
     if (!command_buffer) {
-        npa_hdr_log("separable pre-pass could not get a command buffer", -1);
+        npa_hdr_log("pre-pass could not get a command buffer", -1);
         return 0;
     }
-
-    for (int index = 0; index < plane_count; index++) {
-        id pipeline = npa_prepass_pipeline(state, device, formats[index]);
-        if (!pipeline) {
-            return 0;
+    id filtered[3] = {sources[0], sources[1], plane_count == 3 ? sources[2] : NULL};
+    for (int stage = debanding ? 1 : 0; stage >= 0; stage--) {
+        if (!stage && !scaling) continue;
+        id *targets = stage ? state->deband_plane : state->plane;
+        for (int index = 0; index < plane_count; index++) {
+            id pipeline = npa_prepass_pipeline(state, device, formats[index], stage);
+            if (!pipeline) return 0;
+            id descriptor = npa_msg_id((id)objc_getClass("MTLRenderPassDescriptor"), "renderPassDescriptor");
+            if (!descriptor) {
+                npa_hdr_log("pre-pass could not get a pass descriptor", -1);
+                return 0;
+            }
+            id attachment = ((id (*)(id, SEL, unsigned long))objc_msgSend)(
+                npa_msg_id(descriptor, "colorAttachments"), npa_sel("objectAtIndexedSubscript:"), 0UL);
+            ((void (*)(id, SEL, id))objc_msgSend)(attachment, npa_sel("setTexture:"), targets[index]);
+            ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setLoadAction:"), 2);
+            ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setStoreAction:"), 1);
+            id encoder = ((id (*)(id, SEL, id))objc_msgSend)(command_buffer,
+                npa_sel("renderCommandEncoderWithDescriptor:"), descriptor);
+            if (!encoder) {
+                npa_hdr_log("pre-pass could not get an encoder", -1);
+                return 0;
+            }
+            ((void (*)(id, SEL, id))objc_msgSend)(encoder, npa_sel("setRenderPipelineState:"), pipeline);
+            ((void (*)(id, SEL, id, unsigned long))objc_msgSend)(encoder,
+                npa_sel("setFragmentTexture:atIndex:"), filtered[index], 0);
+            if (stage) ((void (*)(id, SEL, const void *, unsigned long, unsigned long))objc_msgSend)(encoder,
+                npa_sel("setFragmentBytes:length:atIndex:"), &state->frame, sizeof(state->frame), 0);
+            ((void (*)(id, SEL, unsigned long, unsigned long, unsigned long, unsigned long))objc_msgSend)(encoder,
+                npa_sel("drawPrimitives:vertexStart:vertexCount:instanceCount:"), 3, 0, 3, 1);
+            ((void (*)(id, SEL))objc_msgSend)(encoder, npa_sel("endEncoding"));
+            filtered[index] = targets[index];
         }
-        id descriptor = npa_msg_id((id)objc_getClass("MTLRenderPassDescriptor"), "renderPassDescriptor");
-        if (!descriptor) {
-            npa_hdr_log("separable pre-pass could not get a pass descriptor", -1);
-            return 0;
-        }
-        id attachment = ((id (*)(id, SEL, unsigned long))objc_msgSend)(
-            npa_msg_id(descriptor, "colorAttachments"), npa_sel("objectAtIndexedSubscript:"), 0UL
-        );
-        ((void (*)(id, SEL, id))objc_msgSend)(attachment, npa_sel("setTexture:"), state->plane[index]);
-        ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setLoadAction:"), 2);
-        ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setStoreAction:"), 1);
-
-        id encoder = ((id (*)(id, SEL, id))objc_msgSend)(
-            command_buffer, npa_sel("renderCommandEncoderWithDescriptor:"), descriptor
-        );
-        if (!encoder) {
-            npa_hdr_log("separable pre-pass could not get an encoder", -1);
-            return 0;
-        }
-        ((void (*)(id, SEL, id))objc_msgSend)(encoder, npa_sel("setRenderPipelineState:"), pipeline);
-        ((void (*)(id, SEL, id, unsigned long))objc_msgSend)(
-            encoder, npa_sel("setFragmentTexture:atIndex:"), sources[index], 0
-        );
-        ((void (*)(id, SEL, unsigned long, unsigned long, unsigned long, unsigned long))objc_msgSend)(
-            encoder, npa_sel("drawPrimitives:vertexStart:vertexCount:instanceCount:"),
-            3, 0, 3, 1
-        );
-        ((void (*)(id, SEL))objc_msgSend)(encoder, npa_sel("endEncoding"));
     }
     /* Nothing waits on this buffer. Metal holds a committed buffer until its
      * work completes, and the queue runs buffers in submission order, so the
@@ -1313,20 +1335,22 @@ static int npa_prepass_run(void *renderer)
      * would serialise the GPU with the CPU every frame. */
     ((void (*)(id, SEL))objc_msgSend)(command_buffer, npa_sel("commit"));
 
-    /* The second pass samples the intermediates. The host overwrites these
+    if (debanding) state->frame++;
+
+    /* The final draw samples the intermediates. The host overwrites these
      * slots on the next upload and never releases them, so they are swapped
      * without a retain and restored by the caller before returning. */
     npa_prepass_saved[0] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y);
     npa_prepass_saved[1] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR);
     npa_prepass_saved[2] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB);
     npa_prepass_saved[3] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR);
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y) = state->plane[0];
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y) = filtered[0];
     *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR) =
-        plane_count == 2 ? state->plane[1] : NULL;
+        plane_count == 2 ? filtered[1] : NULL;
     *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB) =
-        plane_count == 3 ? state->plane[1] : NULL;
+        plane_count == 3 ? filtered[1] : NULL;
     *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR) =
-        plane_count == 3 ? state->plane[2] : NULL;
+        plane_count == 3 ? filtered[2] : NULL;
     return 1;
 }
 
@@ -1357,7 +1381,7 @@ NPA_EXPORT __attribute__((noinline)) void npa_renderer_pp_hdr_draw(void *rendere
     }
     /* A vertical-only shader cannot safely draw the unfiltered source planes. */
     if (!npa_prepass_run(renderer)) {
-        npa_hdr_log("separable pre-pass failed; frame skipped", -1);
+        npa_hdr_log("pre-pass failed; frame skipped", -1);
         return;
     }
     draw(renderer);
@@ -1382,6 +1406,7 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
 
     /* The scaling kernel is independent of the EDR fix: it is a sampling
      * choice, so it applies whether or not the layer can go extended-range. */
+    const int debanding = npa_int_preference(NPA_PREF_DEBAND) != 0;
     const int kernel = npa_scale_kernel_preference();
     const int kernel_up = npa_scale_kernel_up_preference();
     const int antiring_down = npa_int_preference(NPA_PREF_ANTIRING) != 0;
@@ -1390,7 +1415,7 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
      * value is passed through and the log shows what was actually stored. */
     const int antialiasing = npa_int_preference(NPA_PREF_ANTIALIASING);
     const int edr = npa_edr_available();
-    if (!edr && kernel == 0 && kernel_up == 0) {
+    if (!edr && kernel == 0 && kernel_up == 0 && !debanding) {
         /* Nothing to change: without CAEDRMetadata the layer stays SDR and the
          * host's tone-mapped shader is what that layer expects. */
         return source;
@@ -1408,9 +1433,10 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
 
     npa_hdr_log_kernel(kernel, kernel_up, antiring_down, antiring_up,
                        antialiasing, transfer, hdr, edr);
+    fprintf(stderr, "[npa-pp-hdr] debanding=%d\n", debanding);
     char *rewritten = npa_rewrite_shader(utf8, transfer, hdr, edr, kernel,
                                          kernel_up, antiring_down, antiring_up,
-                                         antialiasing);
+                                         antialiasing, debanding);
     if (!rewritten) {
         npa_hdr_log("shader was not rewritten; keeping the host shader", transfer);
         if (edr && hdr) {

@@ -12,6 +12,7 @@
 #include <objc/message.h>
 #include <objc/objc.h>
 #include <objc/runtime.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,7 @@
 #define NPA_RENDERER_LIBRARY 0x1F8
 #define NPA_RENDERER_QUEUE 0x1F0
 #define NPA_RENDERER_VERTEX_BUFFER 0x208
+#define NPA_RENDERER_COLOR_CONTROL 0x218
 #define NPA_RENDERER_TEXTURE_Y 0x220
 #define NPA_RENDERER_TEXTURE_CBCR 0x228
 #define NPA_RENDERER_TEXTURE_CB 0x230
@@ -50,21 +52,25 @@ static const char NPA_MATRIX_RGB1[] =
     "  float3 rgb1 = colorConversion.matrix * ycbcr1;\n";
 static const char NPA_MATRIX_RGB2[] =
     "  float3 rgb2 = colorConversion.matrix * ycbcr2;\n";
-/* The SDR branch carries BT.709 encoded values; the layer expects linear. */
+/* SDR output is interpreted as sRGB, as in the host. The layer expects linear.
+ * Apple MSL specification, sRGB conversion: toe c/12.92 for c <= 0.04045. */
 static const char NPA_LINEAR_RGB1[] =
     "  float3 rgb1 = colorConversion.matrix * ycbcr1;\n"
     "  rgb1 = max(rgb1, float3(0.0));\n"
-    "  rgb1 = pow((rgb1 + float3(0.055)) / float3(1.055), float3(2.4));\n";
+    "  rgb1 = select(pow((rgb1 + float3(0.055)) / float3(1.055), float3(2.4)),\n"
+    "                rgb1 / float3(12.92), rgb1 <= float3(0.04045));\n";
 static const char NPA_LINEAR_RGB2[] =
     "  float3 rgb2 = colorConversion.matrix * ycbcr2;\n"
     "  rgb2 = max(rgb2, float3(0.0));\n"
-    "  rgb2 = pow((rgb2 + float3(0.055)) / float3(1.055), float3(2.4));\n";
+    "  rgb2 = select(pow((rgb2 + float3(0.055)) / float3(1.055), float3(2.4)),\n"
+    "                rgb2 / float3(12.92), rgb2 <= float3(0.04045));\n";
 /* HLG keeps its nominal [0, 12] range; PQ already yields nits / 100. */
 static const char NPA_HLG_SCALE[] = "  rgb1 *= float3(trc_nom_peak);\n";
 
 /* Optional scaling kernel, chosen by a shared preference. Zero keeps the
  * host's bilinear sampling; the selection is baked into the generated MSL so
  * the tap loops stay compile-time constants. */
+#define NPA_PREF_DEBAND "PPVideoDebanding"
 #define NPA_PREF_SCALE_KERNEL "PPVideoScaleKernel"
 #define NPA_PREF_SCALE_KERNEL_UP "PPVideoScaleKernelUpscale"
 /* Downscaling anti-ringing keeps its original key so the existing switch
@@ -85,8 +91,8 @@ static const char NPA_HLG_SCALE[] = "  rgb1 *= float3(trc_nom_peak);\n";
 #define NPA_AA_SKIP 0
 #define NPA_AA_BALANCE 1
 #define NPA_AA_QUALITY 2
-/* Not a quality ceiling: the footprint comes from dfdx, and a degenerate
- * derivative would otherwise ask for thousands of taps. 16 covers 8K to 480p. */
+/* Bound tap growth for extreme source/destination ratios. 16 covers
+ * 8K to 480p and is independent of the chosen kernel. */
 #define NPA_AA_QUALITY_CAP 16.0f
 
 static float npa_st_cap(int antialiasing)
@@ -175,17 +181,6 @@ static const char NPA_WEIGHT_LANCZOS[] =
     "  return (NP_A * sin(px) * sin(px / NP_A)) / (px * px);\n"
     "}\n";
 
-/* One pass over the source texels around the sample point. `st` stretches the
- * kernel to the pixel footprint, which is what makes it a low-pass when the
- * video is larger than the drawable; at 1.0 it is a plain 4x4 or 6x6 tap. */
-static const char NPA_SCALE_FOOTPRINT[] =
-    "\n"
-    "static inline float2 npa_footprint(float2 dudx, float2 dudy, float2 size) {\n"
-    "  const float2 a = dudx * size;\n"
-    "  const float2 b = dudy * size;\n"
-    "  return sqrt(a * a + b * b);\n"
-    "}\n";
-
 /* One axis per pass. A separable kernel filters horizontally into an
  * intermediate, then vertically into the drawable, so the tap loop is
  * one-dimensional: the other axis is not filtered here at all.
@@ -212,17 +207,16 @@ static const char NPA_SCALE_AXIS[] =
     "  bool antiring;\n"
     "};\n"
     "\n"
-    /* Direction and widening are separate decisions. The footprint says which
+    /* Direction and widening are separate decisions. The geometry ratio says which
      * kernel applies, because that is a property of the geometry. Widening is
      * the anti-aliasing strength, and turning it off must not change which
      * kernel is chosen: with st pinned to 1 a footprint test on st would pick
      * the upscaling kernel for every downscale. */
     "static inline NpaAxis npa_axis(texture2d<float, access::sample> t,\n"
-    "                               float2 uv, float2 dudx, float2 dudy) {\n"
+    "                               float2 uv, float output_extent) {\n"
     "  NpaAxis a;\n"
     "  a.size = float2(t.get_width(), t.get_height());\n"
-    "  const float2 footprint = npa_footprint(dudx, dudy, a.size);\n"
-    "  const float f = NP_HORIZONTAL ? footprint.x : footprint.y;\n"
+    "  const float f = (NP_HORIZONTAL ? a.size.x : a.size.y) / output_extent;\n"
     "  a.down = f > 1.0f;\n"
     "  a.st = a.down ? min(f, NP_ST_CAP) : 1.0f;\n"
     "  a.k = int(ceil(npa_support(a.down) * a.st));\n"
@@ -234,8 +228,8 @@ static const char NPA_SCALE_AXIS[] =
     "}\n"
     "\n"
     "static inline float4 npa_tap(texture2d<float, access::sample> t, sampler sn,\n"
-    "                             float2 uv, float2 dudx, float2 dudy) {\n"
-    "  const NpaAxis a = npa_axis(t, uv, dudx, dudy);\n"
+    "                             float2 uv, float output_extent) {\n"
+    "  const NpaAxis a = npa_axis(t, uv, output_extent);\n"
     /* Snap rows in the pre-pass; preserve horizontal subpixel placement in
      * the final pass when the fitted video width rounds to an integer. */
     "  const float2 keep = NP_HORIZONTAL ? (floor(uv * a.size) + 0.5f) / a.size : uv;\n"
@@ -286,16 +280,16 @@ static const char NPA_SCALE_AXIS[] =
 static const char NPA_SCALE_WRAPPERS[] =
     "\n"
     "static inline float npa_scale1(texture2d<float, access::sample> t, sampler sn,\n"
-    "                              float2 uv, float2 dudx, float2 dudy) {\n"
-    "  return npa_tap(t, sn, uv, dudx, dudy).r;\n"
+    "                              float2 uv, float output_extent) {\n"
+    "  return npa_tap(t, sn, uv, output_extent).r;\n"
     "}\n"
     "\n"
     "static inline float2 npa_scale2(texture2d<float, access::sample> t, sampler sn,\n"
-    "                               float2 uv, float2 dudx, float2 dudy) {\n"
-    "  return npa_tap(t, sn, uv, dudx, dudy).rg;\n"
+    "                               float2 uv, float output_extent) {\n"
+    "  return npa_tap(t, sn, uv, output_extent).rg;\n"
     "}\n";
 
-static const char NPA_SCALE_HORIZONTAL[] =
+static const char NPA_PREPASS_VERTEX[] =
     "\n"
     "vertex Varyings npaHorizontalVertex(uint vid [[vertex_id]]) {\n"
     "  const float2 p = float2((vid << 1) & 2, vid & 2);\n"
@@ -305,11 +299,15 @@ static const char NPA_SCALE_HORIZONTAL[] =
     "  return out;\n"
     "}\n"
     "\n"
+    "";
+
+static const char NPA_SCALE_HORIZONTAL[] =
     "fragment float4 npaHorizontal(Varyings in [[ stage_in ]],\n"
-    "                              texture2d<float, access::sample> src [[ texture(0) ]]) {\n"
+    "                              texture2d<float, access::sample> src [[ texture(0) ]],\n"
+    "                              constant uint &width [[buffer(0)]]) {\n"
     "  constexpr sampler sn(address::clamp_to_edge, filter::linear);\n"
     "  const float2 uv = in.texcoord;\n"
-    "  return npa_h_tap(src, sn, uv, dfdx(uv), dfdy(uv));\n"
+    "  return npa_h_tap(src, sn, uv, float(width));\n"
     "}\n";
 
 typedef struct {
@@ -577,8 +575,8 @@ static char *npa_scale_samples(const char *source)
             || !npa_append(&out, name_start, name_length)
             || !npa_append(&out, ", sn, ", 6)
             || !npa_append(&out, arg, arg_length)
-            || !npa_append(&out, ", npa_dudx, npa_dudy)",
-                          strlen(", npa_dudx, npa_dudy)"))) {
+            || !npa_append(&out, ", npa_output_height)",
+                          strlen(", npa_output_height)"))) {
             free(out.data);
             return NULL;
         }
@@ -610,13 +608,12 @@ static int npa_apply_scale(char **stage, int kernel, int kernel_up,
     free(*stage);
     *stage = samples;
 
-    /* Derivatives are taken once, where control flow is still uniform: the 3D
-     * branch reassigns texcoord, and dfdx inside divergent control flow is
-     * undefined. */
-    if (!npa_sub(stage, NPA_TEXCOORD_ANCHOR,
-                 NPA_TEXCOORD_ANCHOR
-                 "  float2 npa_dudx = dfdx(texcoord);\n"
-                 "  float2 npa_dudy = dfdy(texcoord);\n", 1)) {
+    /* The host binds its color-control buffer at fragment index 1. The draw
+     * wrapper supplies an extended copy: xyz are unchanged, w is the stable
+     * effective video height. No per-quad derivative can change kernel choice. */
+    if (!npa_sub(stage, "constant float3 &colorControl", "constant float4 &colorControl", 1)
+        || !npa_sub(stage, NPA_TEXCOORD_ANCHOR,
+                    NPA_TEXCOORD_ANCHOR "  const float npa_output_height = colorControl.w;\n", 1)) {
         return 0;
     }
     if (!npa_sub(stage, NPA_SAMPLER_ANCHOR,
@@ -666,8 +663,7 @@ static int npa_apply_scale(char **stage, int kernel, int kernel_up,
         "  return down ? NP_SUPPORT_DOWN : NP_SUPPORT_UP;\n"
         "}\n";
     if (ok) {
-        ok = npa_append(&helper, dispatch, strlen(dispatch))
-             && npa_append(&helper, NPA_SCALE_FOOTPRINT, strlen(NPA_SCALE_FOOTPRINT));
+        ok = npa_append(&helper, dispatch, strlen(dispatch));
     }
     if (ok) {
         /* The pre-pass filters the other axis, so the loop is emitted twice
@@ -714,7 +710,8 @@ static int npa_apply_scale(char **stage, int kernel, int kernel_up,
         static const char anchor[] = "fragment ";
         static const char replacement[] = "fragment ";
         NPABuffer spliced = {0};
-        applied = npa_append(&spliced, NPA_SCALE_HORIZONTAL, strlen(NPA_SCALE_HORIZONTAL))
+        applied = npa_append(&spliced, NPA_PREPASS_VERTEX, strlen(NPA_PREPASS_VERTEX))
+                  && npa_append(&spliced, NPA_SCALE_HORIZONTAL, strlen(NPA_SCALE_HORIZONTAL))
                   && npa_append(&spliced, replacement, strlen(replacement));
         if (applied) {
             spliced.data[spliced.length] = '\0';
@@ -723,6 +720,53 @@ static int npa_apply_scale(char **stage, int kernel, int kernel_up,
         free(spliced.data);
     }
     return applied;
+}
+
+/* This MSL fragment is derived from libplacebo under LGPL-2.1-or-later.
+ * See THIRD-PARTY.md and LICENSES/libplacebo-LGPL-2.1.txt. */
+static const char NPA_DEBAND_SHADER[] =
+    "// Debanding / PCG adapted from libplacebo bb4d5a48980458e65d44b3a98674a5cddeb85597,\n"
+    "// src/shaders/sampling.c and src/shaders.c, LGPL-2.1-or-later.\n"
+    "// This port fixes iterations=1, threshold=3, radius=16, grain=0.\n"
+    "static inline float3 npaDebandRandom(thread uint3 &s) {\n"
+    "  s = 1664525u * s + uint3(1013904223u);\n"
+    "  s.x += s.y * s.z; s.y += s.z * s.x; s.z += s.x * s.y;\n"
+    "  s ^= s >> 16u;\n"
+    "  s.x += s.y * s.z; s.y += s.z * s.x; s.z += s.x * s.y;\n"
+    "  return float3(s) * (1.0f / float(0xFFFFFFFFu));\n"
+    "}\n"
+    "fragment float4 npaDeband(Varyings in [[stage_in]],\n"
+    "                          texture2d<float> src [[texture(0)]],\n"
+    "                          constant uint &frame [[buffer(0)]]) {\n"
+    "  constexpr sampler sn(address::clamp_to_edge, filter::nearest);\n"
+    "  const float2 uv = in.texcoord;\n"
+    "  const float2 pt = 1.0f / float2(src.get_width(), src.get_height());\n"
+    "  uint3 state = uint3(uint2(in.position.xy), frame);\n"
+    "  const float2 random = npaDebandRandom(state).xy;\n"
+    "  const float angle = random.y * (2.0f * M_PI_F);\n"
+    "  const float2 d = (16.0f * random.x) * float2(cos(angle), sin(angle)) * pt;\n"
+    "  const float4 value = src.sample(sn, uv, level(0.0f));\n"
+    "  const float4 avg = 0.25f * (src.sample(sn, uv + d, level(0.0f))\n"
+    "      + src.sample(sn, uv + float2(-d.x, d.y), level(0.0f))\n"
+    "      + src.sample(sn, uv - d, level(0.0f))\n"
+    "      + src.sample(sn, uv + float2(d.x, -d.y), level(0.0f)));\n"
+    "  return select(avg, value, abs(value - avg) > float4(0.003f));\n"
+    "}\n"
+    ;
+
+static int npa_apply_deband(char **stage, int scaling)
+{
+    const char *fragment = strstr(*stage, "fragment ");
+    if (!fragment) return 0;
+    NPABuffer shader = {0};
+    int ok = npa_append(&shader, *stage, (size_t)(fragment - *stage))
+        && (scaling || npa_append(&shader, NPA_PREPASS_VERTEX, strlen(NPA_PREPASS_VERTEX)))
+        && npa_append(&shader, NPA_DEBAND_SHADER, strlen(NPA_DEBAND_SHADER))
+        && npa_append(&shader, fragment, strlen(fragment));
+    if (!ok) { free(shader.data); return 0; }
+    free(*stage);
+    *stage = shader.data;
+    return 1;
 }
 
 /* Reads one integer preference. A missing key yields 0, which every caller
@@ -777,7 +821,8 @@ static char *npa_rewrite_shader(
     int kernel_up,
     int antiring_down,
     int antiring_up,
-    int antialiasing
+    int antialiasing,
+    int debanding
 )
 {
     char *stage = strdup(source);
@@ -812,6 +857,7 @@ static char *npa_rewrite_shader(
                             antiring_down, antiring_up, antialiasing)) {
         goto fail;
     }
+    if (debanding && !npa_apply_deband(&stage, kernel > 0)) goto fail;
     return stage;
 fail:
     free(stage);
@@ -927,8 +973,9 @@ static void npa_configure_layer_async(void *renderer, int transfer, int hdr)
  *
  * A separable kernel filters one axis into an intermediate and the other axis
  * into the drawable. The intermediate keeps the source plane layout (Y plus
- * one chroma plane) and the source pixel format, so the second pass is the
- * same sampling shader. UNorm intermediates retain the source precision and
+ * one chroma plane) and the source pixel format unless Debanding promotes it to 16-bit UNorm.
+ * An optional source-sized Debanding stage precedes horizontal scaling in the
+ * same command buffer. UNorm intermediates retain the source precision and
  * clamp out-of-range values; they are not lossless for negative-lobe filters.
  *
  * The pre-pass runs as its own command buffer on the renderer's queue, which
@@ -943,14 +990,19 @@ typedef struct {
     void *renderer;
     id library;
     int active;
-    id pipeline[3];
-    uint64_t pipeline_format[3];
+    id pipeline[2][3];
+    uint64_t pipeline_format[2][3];
     id plane[3];
+    id deband_plane[3];
+    id color_control;
+    uint32_t frame;
     int plane_count;
 } NPAPrepass;
 
+/* The scratch cache and private snapshot form one draw transaction. Separate
+ * renderer display-link threads can overlap during startup/video handoff. */
+static pthread_mutex_t npa_prepass_mutex = PTHREAD_MUTEX_INITIALIZER;
 static NPAPrepass npa_prepass;
-static id npa_prepass_saved[4];
 
 static id npa_msg_id(id object, const char *selector)
 {
@@ -967,50 +1019,133 @@ static void npa_release(void *object)
 static void npa_prepass_reset(NPAPrepass *state)
 {
     for (int index = 0; index < 3; index++) {
-        npa_release(state->pipeline[index]);
+        for (int stage = 0; stage < 2; stage++) {
+            npa_release(state->pipeline[stage][index]);
+            state->pipeline[stage][index] = NULL;
+        }
         npa_release(state->plane[index]);
-        state->pipeline[index] = NULL;
+        npa_release(state->deband_plane[index]);
         state->plane[index] = NULL;
+        state->deband_plane[index] = NULL;
     }
+    npa_release(state->color_control);
+    state->color_control = NULL;
     state->plane_count = 0;
 }
 
 /* Preferences are baked when the host compiles its library, not per frame.
  * Retaining this one library also prevents pointer reuse from hitting the
  * cache after the host rebuilds it. A host-only library needs no pre-pass. */
-static int npa_prepass_active(void *renderer)
+static int npa_prepass_active_for(void *renderer, void *owner)
 {
     if (!renderer) return 0;
     NPAPrepass *state = &npa_prepass;
     id library = *(id *)((char *)renderer + NPA_RENDERER_LIBRARY);
-    if (state->renderer == renderer && state->library == library) return state->active;
+    if (state->renderer == owner && state->library == library) return state->active;
     npa_prepass_reset(state);
     npa_release(state->library);
-    state->renderer = renderer;
+    state->renderer = owner;
     state->library = library ? npa_msg_id(library, "retain") : NULL;
-    id function = ((id (*)(id, SEL, id))objc_msgSend)(
-        library, npa_sel("newFunctionWithName:"),
-        ((id (*)(id, SEL, const char *))objc_msgSend)(
-            (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"), "npaHorizontal"));
-    state->active = function != NULL;
-    npa_release(function);
+    state->frame = 0;
+    state->active = 0;
+    const char *names[] = {"npaHorizontal", "npaDeband"};
+    for (int stage = 0; stage < 2; stage++) {
+        id function = ((id (*)(id, SEL, id))objc_msgSend)(
+            library, npa_sel("newFunctionWithName:"),
+            ((id (*)(id, SEL, const char *))objc_msgSend)(
+                (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"), names[stage]));
+        if (function) state->active |= 1 << stage;
+        npa_release(function);
+    }
     return state->active;
+}
+
+static int npa_prepass_active(void *renderer)
+{
+    return npa_prepass_active_for(renderer, renderer);
+}
+
+/* The frozen host draw only reads this 0x280-byte prefix and writes shared
+ * Metal objects. Its upload and library rebuild own the real texture slots
+ * through ARC. Never expose our scratch textures to those strong stores. */
+typedef struct {
+    uint64_t words[0x280 / sizeof(uint64_t)];
+    id held[14];
+    void *mutex;
+} NPADrawSnapshot;
+
+static const unsigned npa_draw_objects[] = {
+    NPA_RENDERER_VIEW, NPA_RENDERER_DEVICE, NPA_RENDERER_QUEUE,
+    NPA_RENDERER_LIBRARY, 0x200, NPA_RENDERER_VERTEX_BUFFER,
+    0x210, NPA_RENDERER_COLOR_CONTROL, NPA_RENDERER_TEXTURE_Y,
+    NPA_RENDERER_TEXTURE_CBCR, NPA_RENDERER_TEXTURE_CB,
+    NPA_RENDERER_TEXTURE_CR, 0x248, 0x278
+};
+
+static void npa_host_mutex_call(void *mutex, unsigned slot)
+{
+    void (**vtable)(void *) = *(void (***)(void *))mutex;
+    vtable[slot](mutex);
+}
+
+/* The real non-recursive upload mutex stays locked through pre-pass and host
+ * draw. The frozen draw's guard uses only retain/release/lock/unlock, so its
+ * private guard represents that already-held scope rather than locking twice. */
+static void npa_already_locked(void *guard) { (void)guard; }
+static void (*const npa_locked_guard_vtable[11])(void *) = {
+    [0] = npa_already_locked, [1] = npa_already_locked,
+    [7] = npa_already_locked, [10] = npa_already_locked
+};
+static void (*const *const npa_locked_guard)(void *) = npa_locked_guard_vtable;
+
+/* 1 = retained processing snapshot, -1 = host-only library, 0 = error. */
+static int npa_draw_snapshot(void *renderer, NPADrawSnapshot *snapshot)
+{
+    void *mutex = *(void **)((char *)renderer + 0x270);
+    if (!mutex) {
+        npa_hdr_log("draw snapshot has no host mutex", -1);
+        return 0;
+    }
+    npa_host_mutex_call(mutex, 0); /* core::RefCount::retain */
+    npa_host_mutex_call(mutex, 7); /* lock, vtable +0x38 */
+    const int active = npa_prepass_active(renderer);
+    if (active) {
+        memcpy(snapshot->words, renderer, sizeof(snapshot->words));
+        snapshot->mutex = mutex;
+        *(const void **)((char *)snapshot->words + 0x270) = &npa_locked_guard;
+        for (unsigned index = 0; index < 14; index++) {
+            id object = *(id *)((char *)snapshot->words + npa_draw_objects[index]);
+            snapshot->held[index] = npa_msg_id(object, "retain");
+        }
+    }
+    if (!active) {
+        npa_host_mutex_call(mutex, 10); /* unlock, vtable +0x50 */
+        npa_host_mutex_call(mutex, 1);
+    }
+    return active ? 1 : -1;
+}
+
+static void npa_draw_snapshot_release(NPADrawSnapshot *snapshot)
+{
+    for (unsigned index = 0; index < 14; index++) npa_release(snapshot->held[index]);
+    npa_host_mutex_call(snapshot->mutex, 10);
+    npa_host_mutex_call(snapshot->mutex, 1);
 }
 
 /* One pipeline per pixel format: the attachment format is part of the pipeline
  * descriptor, and the source planes differ between 8- and 10-bit content. */
-static id npa_prepass_pipeline(NPAPrepass *state, id device, uint64_t format)
+static id npa_prepass_pipeline(NPAPrepass *state, id device, uint64_t format, int stage)
 {
     for (int index = 0; index < state->plane_count; index++) {
-        if (state->pipeline[index] && state->pipeline_format[index] == format) {
-            return state->pipeline[index];
+        if (state->pipeline[stage][index] && state->pipeline_format[stage][index] == format) {
+            return state->pipeline[stage][index];
         }
     }
     id function = ((id (*)(id, SEL, id))objc_msgSend)(
         state->library, npa_sel("newFunctionWithName:"),
         ((id (*)(id, SEL, const char *))objc_msgSend)(
             (id)objc_getClass("NSString"), npa_sel("stringWithUTF8String:"),
-            "npaHorizontal"
+            stage ? "npaDeband" : "npaHorizontal"
         )
     );
     if (!function) {
@@ -1058,9 +1193,9 @@ static id npa_prepass_pipeline(NPAPrepass *state, id device, uint64_t format)
     /* Reuse the first free slot; there is at most one format per frame in
      * practice, and the array is only a small cache. */
     for (int index = 0; index < 3; index++) {
-        if (!state->pipeline[index]) {
-            state->pipeline[index] = pipeline;
-            state->pipeline_format[index] = format;
+        if (!state->pipeline[stage][index]) {
+            state->pipeline[stage][index] = pipeline;
+            state->pipeline_format[stage][index] = format;
             return pipeline;
         }
     }
@@ -1084,40 +1219,41 @@ static id npa_prepass_texture(id device, uint64_t format, int width, int height)
     return ((id (*)(id, SEL, id))objc_msgSend)(device, npa_sel("newTextureWithDescriptor:"), descriptor);
 }
 
-/* Recover pixels per source-u from the host's affine triangle. This includes
- * aspect-fit and zoom without applying that geometry to the intermediate. */
-static int npa_prepass_width(id vertex_buffer, CGSize drawable)
+/* Recover pixels per source u/v from the affine host triangle. Compute in
+ * double precision once per draw; preserve fractional fit/crop extents. */
+static CGSize npa_prepass_geometry(id vertex_buffer, CGSize drawable)
 {
-    const unsigned long length = ((unsigned long (*)(id, SEL))objc_msgSend)(
-        vertex_buffer, npa_sel("length"));
-    const float (*v)[4] = ((const void *(*)(id, SEL))objc_msgSend)(
-        vertex_buffer, npa_sel("contents"));
-    if (!v || length < 3 * 4 * sizeof(float)) return 0;
+    const unsigned long length = ((unsigned long (*)(id, SEL))objc_msgSend)(vertex_buffer, npa_sel("length"));
+    const float (*v)[4] = ((const void *(*)(id, SEL))objc_msgSend)(vertex_buffer, npa_sel("contents"));
+    CGSize extent = {0, 0};
+    if (!v || length < 3 * 4 * sizeof(float)) return extent;
     const double x1 = v[1][0] - v[0][0], y1 = v[1][1] - v[0][1];
     const double x2 = v[2][0] - v[0][0], y2 = v[2][1] - v[0][1];
-    const double u1 = v[1][2] - v[0][2], u2 = v[2][2] - v[0][2];
     const double det = x1 * y2 - x2 * y1;
-    if (det == 0.0) return 0;
-    const double dx = (u1 * y2 - u2 * y1) / det * 2.0 / drawable.width;
-    const double dy = (x1 * u2 - x2 * u1) / det * 2.0 / drawable.height;
-    const double width = 1.0 / hypot(dx, dy);
-    /* Metal's maximum 2D extent on supported Apple GPUs. Fail before passing
-     * invalid dimensions into a texture descriptor. */
-    if (!isfinite(width) || width < 0.5 || width > 16384.0) return 0;
-    return (int)lround(width);
+    if (det == 0.0) return extent;
+    double spans[2];
+    for (int axis = 0; axis < 2; axis++) {
+        const double t1 = v[1][axis + 2] - v[0][axis + 2];
+        const double t2 = v[2][axis + 2] - v[0][axis + 2];
+        const double dx = (t1 * y2 - t2 * y1) / det * 2.0 / drawable.width;
+        const double dy = (x1 * t2 - x2 * t1) / det * 2.0 / drawable.height;
+        spans[axis] = 1.0 / hypot(dx, dy);
+        if (!isfinite(spans[axis]) || spans[axis] < 0.5 || spans[axis] > 16384.0) return extent;
+    }
+    extent.width = spans[0];
+    extent.height = spans[1];
+    return extent;
 }
 
 /* Returns 0 when the pre-pass could not run; the caller skips the frame and
  * logs, because the fragment shader is already vertical-only.
- * On success the renderer's texture slots point at the intermediates, and the
- * caller must restore them: the host writes the next frame into those slots
- * with replaceRegion at the source size, which would land inside a
- * differently sized intermediate. */
-static int npa_prepass_run(void *renderer)
+ * On success the private snapshot's texture slots point at the intermediates.
+ * The real renderer's source slots are never changed. */
+static id npa_prepass_run(void *renderer, void *owner)
 {
     NPAPrepass *state = &npa_prepass;
-    if (!npa_prepass_active(renderer)) {
-        npa_hdr_log("separable pre-pass requires a scaling library", -1);
+    if (!npa_prepass_active_for(renderer, owner)) {
+        npa_hdr_log("pre-pass requires a processing library", -1);
         return 0;
     }
 
@@ -1156,108 +1292,135 @@ static int npa_prepass_run(void *renderer)
         return 0;
     }
 
-    id layer = npa_msg_id(view, "metalLayer");
-    CGSize drawable = {0, 0};
-    if (layer) {
-        drawable = ((CGSize (*)(id, SEL))objc_msgSend)(layer, npa_sel("drawableSize"));
-    }
-    if (drawable.width < 1.0 || drawable.height < 1.0) {
-        npa_hdr_log("separable pre-pass has no drawable size", -1);
-        return 0;
-    }
-
-    const int intermediate_width = npa_prepass_width(vertex_buffer, drawable);
-    if (!intermediate_width) {
-        npa_hdr_log("separable pre-pass has invalid horizontal geometry", -1);
-        return 0;
-    }
-    /* Complete horizontal reconstruction at the host's effective density;
-     * the final draw alone applies its aspect-fit, crop and zoom geometry. */
-    uint64_t formats[3] = {0, 0, 0};
-    int sizes[3][2] = {{0, 0}, {0, 0}, {0, 0}};
-    for (int index = 0; index < plane_count; index++) {
-        formats[index] = ((unsigned long (*)(id, SEL))objc_msgSend)(
-            sources[index], npa_sel("pixelFormat")
-        );
-        const int source_width = (int)((unsigned long (*)(id, SEL))objc_msgSend)(
-            sources[index], npa_sel("width")
-        );
-        const int source_height = (int)((unsigned long (*)(id, SEL))objc_msgSend)(
-            sources[index], npa_sel("height")
-        );
-        if (source_width < 1 || source_height < 1) {
-            npa_hdr_log("separable pre-pass source plane is empty", index);
+    const int scaling = state->active & 1;
+    const int debanding = state->active & 2;
+    int intermediate_width = 0;
+    float output_height = 0;
+    if (scaling) {
+        id layer = npa_msg_id(view, "metalLayer");
+        CGSize drawable = {0, 0};
+        if (layer) drawable = ((CGSize (*)(id, SEL))objc_msgSend)(layer, npa_sel("drawableSize"));
+        if (drawable.width < 1.0 || drawable.height < 1.0) {
+            npa_hdr_log("pre-pass has no drawable size", -1);
             return 0;
         }
-        sizes[index][0] = intermediate_width;
-        sizes[index][1] = source_height;
-        if (sizes[index][0] < 1) {
-            sizes[index][0] = 1;
+        const CGSize extent = npa_prepass_geometry(vertex_buffer, drawable);
+        intermediate_width = (int)lround(extent.width);
+        output_height = (float)extent.height;
+        if (!intermediate_width || output_height <= 0) {
+            npa_hdr_log("pre-pass has invalid video geometry", -1);
+            return 0;
         }
     }
-
+    uint64_t formats[3] = {0};
+    int sizes[3][2] = {{0}};
     int rebuild = state->plane_count != plane_count;
-    for (int index = 0; !rebuild && index < plane_count; index++) {
-        id plane = state->plane[index];
-        rebuild = !plane
-            || ((unsigned long (*)(id, SEL))objc_msgSend)(plane, npa_sel("width")) != (unsigned long)sizes[index][0]
-            || ((unsigned long (*)(id, SEL))objc_msgSend)(plane, npa_sel("height")) != (unsigned long)sizes[index][1]
-            || ((unsigned long (*)(id, SEL))objc_msgSend)(plane, npa_sel("pixelFormat")) != formats[index];
+    for (int index = 0; index < plane_count; index++) {
+        const unsigned long format = ((unsigned long (*)(id, SEL))objc_msgSend)(sources[index], npa_sel("pixelFormat"));
+        formats[index] = format;
+        if (debanding) {
+            /* R8/R16 and RG8/RG16 UNorm. The high-bit bridge packs MSBs into
+             * the same normalized signal domain (npa_highbit_copy.c). */
+            switch (format) {
+            case 10: case 20: formats[index] = 20; break;
+            case 30: case 60: formats[index] = 60; break;
+            default:
+                npa_hdr_log("Debanding source format is unsupported", (int)format);
+                return 0;
+            }
+        }
+        sizes[index][0] = (int)((unsigned long (*)(id, SEL))objc_msgSend)(sources[index], npa_sel("width"));
+        sizes[index][1] = (int)((unsigned long (*)(id, SEL))objc_msgSend)(sources[index], npa_sel("height"));
+        if (sizes[index][0] < 1 || sizes[index][1] < 1) {
+            npa_hdr_log("pre-pass source plane is empty", index);
+            return 0;
+        }
+        for (int stage = debanding ? 1 : 0; stage >= 0; stage--) {
+            if (!stage && !scaling) continue;
+            id target = stage ? state->deband_plane[index] : state->plane[index];
+            int width = stage ? sizes[index][0] : intermediate_width;
+            rebuild |= !target
+                || ((unsigned long (*)(id, SEL))objc_msgSend)(target, npa_sel("width")) != (unsigned long)width
+                || ((unsigned long (*)(id, SEL))objc_msgSend)(target, npa_sel("height")) != (unsigned long)sizes[index][1]
+                || ((unsigned long (*)(id, SEL))objc_msgSend)(target, npa_sel("pixelFormat")) != formats[index];
+        }
     }
     if (rebuild) {
         npa_prepass_reset(state);
         state->plane_count = plane_count;
-        for (int index = 0; index < plane_count; index++) {
-            state->plane[index] = npa_prepass_texture(
-                device, formats[index], sizes[index][0], sizes[index][1]
-            );
-            if (!state->plane[index]) {
-                npa_hdr_log("separable pre-pass texture allocation failed", index);
-                npa_prepass_reset(state);
-                return 0;
+        for (int stage = debanding ? 1 : 0; stage >= 0; stage--) {
+            if (!stage && !scaling) continue;
+            id *targets = stage ? state->deband_plane : state->plane;
+            for (int index = 0; index < plane_count; index++) {
+                targets[index] = npa_prepass_texture(device, formats[index],
+                    stage ? sizes[index][0] : intermediate_width, sizes[index][1]);
+                if (!targets[index]) {
+                    npa_hdr_log("pre-pass texture allocation failed", index);
+                    npa_prepass_reset(state);
+                    return 0;
+                }
             }
         }
     }
 
-    id command_buffer = npa_msg_id(queue, "commandBuffer");
-    if (!command_buffer) {
-        npa_hdr_log("separable pre-pass could not get a command buffer", -1);
-        return 0;
+    id controls = *(id *)((char *)renderer + NPA_RENDERER_COLOR_CONTROL);
+    if (scaling) {
+        const unsigned long length = ((unsigned long (*)(id, SEL))objc_msgSend)(controls, npa_sel("length"));
+        const void *values = ((const void *(*)(id, SEL))objc_msgSend)(controls, npa_sel("contents"));
+        if (!values || length < 3 * sizeof(float)) {
+            npa_hdr_log("scaling color-control buffer is unavailable", -1);
+            return 0;
+        }
+        if (!state->color_control) state->color_control = ((id (*)(id, SEL, unsigned long, unsigned long))objc_msgSend)(
+            device, npa_sel("newBufferWithLength:options:"), 4 * sizeof(float), 0UL);
+        float *extended = ((void *(*)(id, SEL))objc_msgSend)(state->color_control, npa_sel("contents"));
+        if (!extended) {
+            npa_hdr_log("scaling geometry buffer allocation failed", -1);
+            return 0;
+        }
+        memcpy(extended, values, 3 * sizeof(float));
+        extended[3] = output_height;
     }
 
-    for (int index = 0; index < plane_count; index++) {
-        id pipeline = npa_prepass_pipeline(state, device, formats[index]);
-        if (!pipeline) {
-            return 0;
+    id command_buffer = npa_msg_id(queue, "commandBuffer");
+    if (!command_buffer) {
+        npa_hdr_log("pre-pass could not get a command buffer", -1);
+        return 0;
+    }
+    id filtered[3] = {sources[0], sources[1], plane_count == 3 ? sources[2] : NULL};
+    for (int stage = debanding ? 1 : 0; stage >= 0; stage--) {
+        if (!stage && !scaling) continue;
+        id *targets = stage ? state->deband_plane : state->plane;
+        for (int index = 0; index < plane_count; index++) {
+            id pipeline = npa_prepass_pipeline(state, device, formats[index], stage);
+            if (!pipeline) return 0;
+            id descriptor = npa_msg_id((id)objc_getClass("MTLRenderPassDescriptor"), "renderPassDescriptor");
+            if (!descriptor) {
+                npa_hdr_log("pre-pass could not get a pass descriptor", -1);
+                return 0;
+            }
+            id attachment = ((id (*)(id, SEL, unsigned long))objc_msgSend)(
+                npa_msg_id(descriptor, "colorAttachments"), npa_sel("objectAtIndexedSubscript:"), 0UL);
+            ((void (*)(id, SEL, id))objc_msgSend)(attachment, npa_sel("setTexture:"), targets[index]);
+            ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setLoadAction:"), 2);
+            ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setStoreAction:"), 1);
+            id encoder = ((id (*)(id, SEL, id))objc_msgSend)(command_buffer,
+                npa_sel("renderCommandEncoderWithDescriptor:"), descriptor);
+            if (!encoder) {
+                npa_hdr_log("pre-pass could not get an encoder", -1);
+                return 0;
+            }
+            ((void (*)(id, SEL, id))objc_msgSend)(encoder, npa_sel("setRenderPipelineState:"), pipeline);
+            ((void (*)(id, SEL, id, unsigned long))objc_msgSend)(encoder,
+                npa_sel("setFragmentTexture:atIndex:"), filtered[index], 0);
+            const uint32_t parameter = stage ? state->frame : (uint32_t)intermediate_width;
+            ((void (*)(id, SEL, const void *, unsigned long, unsigned long))objc_msgSend)(encoder,
+                npa_sel("setFragmentBytes:length:atIndex:"), &parameter, sizeof(parameter), 0);
+            ((void (*)(id, SEL, unsigned long, unsigned long, unsigned long, unsigned long))objc_msgSend)(encoder,
+                npa_sel("drawPrimitives:vertexStart:vertexCount:instanceCount:"), 3, 0, 3, 1);
+            ((void (*)(id, SEL))objc_msgSend)(encoder, npa_sel("endEncoding"));
+            filtered[index] = targets[index];
         }
-        id descriptor = npa_msg_id((id)objc_getClass("MTLRenderPassDescriptor"), "renderPassDescriptor");
-        if (!descriptor) {
-            npa_hdr_log("separable pre-pass could not get a pass descriptor", -1);
-            return 0;
-        }
-        id attachment = ((id (*)(id, SEL, unsigned long))objc_msgSend)(
-            npa_msg_id(descriptor, "colorAttachments"), npa_sel("objectAtIndexedSubscript:"), 0UL
-        );
-        ((void (*)(id, SEL, id))objc_msgSend)(attachment, npa_sel("setTexture:"), state->plane[index]);
-        ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setLoadAction:"), 2);
-        ((void (*)(id, SEL, unsigned long))objc_msgSend)(attachment, npa_sel("setStoreAction:"), 1);
-
-        id encoder = ((id (*)(id, SEL, id))objc_msgSend)(
-            command_buffer, npa_sel("renderCommandEncoderWithDescriptor:"), descriptor
-        );
-        if (!encoder) {
-            npa_hdr_log("separable pre-pass could not get an encoder", -1);
-            return 0;
-        }
-        ((void (*)(id, SEL, id))objc_msgSend)(encoder, npa_sel("setRenderPipelineState:"), pipeline);
-        ((void (*)(id, SEL, id, unsigned long))objc_msgSend)(
-            encoder, npa_sel("setFragmentTexture:atIndex:"), sources[index], 0
-        );
-        ((void (*)(id, SEL, unsigned long, unsigned long, unsigned long, unsigned long))objc_msgSend)(
-            encoder, npa_sel("drawPrimitives:vertexStart:vertexCount:instanceCount:"),
-            3, 0, 3, 1
-        );
-        ((void (*)(id, SEL))objc_msgSend)(encoder, npa_sel("endEncoding"));
     }
     /* Nothing waits on this buffer. Metal holds a committed buffer until its
      * work completes, and the queue runs buffers in submission order, so the
@@ -1265,29 +1428,19 @@ static int npa_prepass_run(void *renderer)
      * would serialise the GPU with the CPU every frame. */
     ((void (*)(id, SEL))objc_msgSend)(command_buffer, npa_sel("commit"));
 
-    /* The second pass samples the intermediates. The host overwrites these
-     * slots on the next upload and never releases them, so they are swapped
-     * without a retain and restored by the caller before returning. */
-    npa_prepass_saved[0] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y);
-    npa_prepass_saved[1] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR);
-    npa_prepass_saved[2] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB);
-    npa_prepass_saved[3] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR);
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y) = state->plane[0];
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR) =
-        plane_count == 2 ? state->plane[1] : NULL;
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB) =
-        plane_count == 3 ? state->plane[1] : NULL;
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR) =
-        plane_count == 3 ? state->plane[2] : NULL;
-    return 1;
-}
+    if (debanding) state->frame++;
 
-static void npa_prepass_restore(void *renderer)
-{
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y) = npa_prepass_saved[0];
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR) = npa_prepass_saved[1];
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB) = npa_prepass_saved[2];
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR) = npa_prepass_saved[3];
+    /* These are private snapshot slots. Their original objects remain held
+     * separately until the synchronous host draw returns. */
+    if (scaling) *(id *)((char *)renderer + NPA_RENDERER_COLOR_CONTROL) = state->color_control;
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y) = filtered[0];
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR) =
+        plane_count == 2 ? filtered[1] : NULL;
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB) =
+        plane_count == 3 ? filtered[1] : NULL;
+    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR) =
+        plane_count == 3 ? filtered[2] : NULL;
+    return command_buffer;
 }
 
 /* Draw wrapper. The separable variant needs its horizontal pass to land in the
@@ -1303,17 +1456,33 @@ NPA_EXPORT __attribute__((noinline)) void npa_renderer_pp_hdr_draw(void *rendere
     if (!draw) {
         return;
     }
-    if (!renderer || !npa_prepass_active(renderer)) {
+    if (!renderer) { draw(renderer); return; }
+    pthread_mutex_lock(&npa_prepass_mutex);
+    NPADrawSnapshot snapshot = {0};
+    const int captured = npa_draw_snapshot(renderer, &snapshot);
+    if (captured < 0) {
         draw(renderer);
-        return;
+    } else if (captured > 0) {
+        id submitted = npa_prepass_run(snapshot.words, renderer);
+        if (submitted) {
+            npa_msg_id(submitted, "retain");
+            draw(snapshot.words);
+            /* nextDrawable can return nil, bypassing the host's usual GPU
+             * wait. Keep software uploads locked until our source reads end. */
+            unsigned long status = ((unsigned long (*)(id, SEL))objc_msgSend)(submitted, npa_sel("status"));
+            if (status < 4) {
+                npa_hdr_log("host draw returned before pre-pass completion; waiting", -1);
+                ((void (*)(id, SEL))objc_msgSend)(submitted, npa_sel("waitUntilCompleted"));
+                status = ((unsigned long (*)(id, SEL))objc_msgSend)(submitted, npa_sel("status"));
+            }
+            if (status == 5) npa_hdr_log("pre-pass GPU execution failed", (int)status);
+            npa_release(submitted);
+        } else {
+            npa_hdr_log("pre-pass failed; frame skipped", -1);
+        }
+        npa_draw_snapshot_release(&snapshot);
     }
-    /* A vertical-only shader cannot safely draw the unfiltered source planes. */
-    if (!npa_prepass_run(renderer)) {
-        npa_hdr_log("separable pre-pass failed; frame skipped", -1);
-        return;
-    }
-    draw(renderer);
-    npa_prepass_restore(renderer);
+    pthread_mutex_unlock(&npa_prepass_mutex);
 }
 
 NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
@@ -1334,6 +1503,7 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
 
     /* The scaling kernel is independent of the EDR fix: it is a sampling
      * choice, so it applies whether or not the layer can go extended-range. */
+    const int debanding = npa_int_preference(NPA_PREF_DEBAND) != 0;
     const int kernel = npa_scale_kernel_preference();
     const int kernel_up = npa_scale_kernel_up_preference();
     const int antiring_down = npa_int_preference(NPA_PREF_ANTIRING) != 0;
@@ -1342,7 +1512,7 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
      * value is passed through and the log shows what was actually stored. */
     const int antialiasing = npa_int_preference(NPA_PREF_ANTIALIASING);
     const int edr = npa_edr_available();
-    if (!edr && kernel == 0 && kernel_up == 0) {
+    if (!edr && kernel == 0 && kernel_up == 0 && !debanding) {
         /* Nothing to change: without CAEDRMetadata the layer stays SDR and the
          * host's tone-mapped shader is what that layer expects. */
         return source;
@@ -1360,9 +1530,10 @@ NPA_EXPORT __attribute__((noinline)) id npa_renderer_pp_hdr_shader_source(
 
     npa_hdr_log_kernel(kernel, kernel_up, antiring_down, antiring_up,
                        antialiasing, transfer, hdr, edr);
+    fprintf(stderr, "[npa-pp-hdr] debanding=%d\n", debanding);
     char *rewritten = npa_rewrite_shader(utf8, transfer, hdr, edr, kernel,
                                          kernel_up, antiring_down, antiring_up,
-                                         antialiasing);
+                                         antialiasing, debanding);
     if (!rewritten) {
         npa_hdr_log("shader was not rewritten; keeping the host shader", transfer);
         if (edr && hdr) {

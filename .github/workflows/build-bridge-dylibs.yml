@@ -248,6 +248,7 @@ jobs:
           for file in \
             LICENSE \
             THIRD-PARTY.md \
+            LICENSES/libplacebo-LGPL-2.1.txt \
             "${keystone_sources[0]}COPYING" \
             "${keystone_sources[0]}EXCEPTIONS-CLIENT" \
             "${keystone_sources[0]}llvm/LICENSE.TXT"
@@ -267,6 +268,7 @@ jobs:
             build/bridge/libass-font-mode.json
             LICENSE
             THIRD-PARTY.md
+            LICENSES/libplacebo-LGPL-2.1.txt
             build/sources/keystone-*/COPYING
             build/sources/keystone-*/EXCEPTIONS-CLIENT
             build/sources/keystone-*/llvm/LICENSE.TXT

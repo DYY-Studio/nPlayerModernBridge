@@ -20,14 +20,15 @@ KERNELS = {
 }
 
 
-def test_scaling_on_metal(tmp_path):
+@pytest.mark.parametrize("probe", ["pp_scale_render_probe.m", "pp_draw_concurrency_probe.m"])
+def test_scaling_on_metal(tmp_path, probe):
     """Read back the production two-pass output and each generated kernel."""
     generate_header(
         ROOT / 'manifests', tmp_path / 'renderer-pp-hdr-bindings.h', 'renderer-pp-hdr')
     output = tmp_path / 'render-probe'
     subprocess.run([
         'xcrun', 'clang', '-O1', '-I' + str(tmp_path),
-        str(ROOT / 'tests/pp_scale_render_probe.m'),
+        str(ROOT / 'tests' / probe),
         '-framework', 'Foundation', '-framework', 'QuartzCore',
         '-framework', 'CoreGraphics', '-framework', 'Metal', '-o', str(output),
     ], check=True)
@@ -78,7 +79,6 @@ def test_kernels_bake_into_the_shader(tmp_path):
         # The host sampler is replaced by the tap loop.
         assert '.sample(s,' not in source
         assert 'npa_scale1(' in source and 'npa_scale2(' in source
-        assert 'dfdx(texcoord)' in source and 'dfdy(texcoord)' in source
         # Every kernel is separable, so the generated MSL carries the
         # horizontal pre-pass entry point and one loop per axis.
         assert 'fragment float4 npaHorizontal(' in source
@@ -113,18 +113,19 @@ def test_antialiasing_and_antiringing_bake(tmp_path):
     ], check=True)
 
     cases = [
-        (5, 5, 0, 0, 0),
-        (5, 5, 1, 1, 1),
-        (5, 5, 1, 1, 2),
-        (5, 6, 1, 0, 2),
-        (6, 5, 1, 1, 1),
+        (5, 5, 0, 0, 0, 0),
+        (5, 5, 1, 1, 1, 0),
+        (5, 5, 1, 1, 2, 0),
+        (5, 6, 1, 0, 2, 0),
+        (6, 5, 1, 1, 1, 0),
     ]
-    for down, up, ar_down, ar_up, aa in cases:
-        name = f'aa{aa}-{down}-{up}-{ar_down}{ar_up}'
+    cases += [(0, 0, 0, 0, 2, 1), (5, 5, 0, 0, 2, 1), (8, 8, 0, 0, 2, 1)]
+    for down, up, ar_down, ar_up, aa, deband in cases:
+        name = f'aa{aa}-{down}-{up}-{ar_down}{ar_up}-deband{deband}'
         shader = tmp_path / f'{name}.metal'
         subprocess.run([
             str(driver), str(HOST_MSL), str(shader), '16', '1',
-            str(down), str(up), str(ar_down), str(ar_up), str(aa),
+            str(down), str(up), str(ar_down), str(ar_up), str(aa), str(deband),
         ], check=True)
         subprocess.run([
             'xcrun', '-sdk', 'iphoneos', 'metal', '-c', str(shader),

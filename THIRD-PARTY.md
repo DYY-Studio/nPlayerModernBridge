@@ -99,6 +99,18 @@ enabled.
 This bridge compiles against the pinned FFmpeg headers for ABI definitions but
 links no FFmpeg archive. Its runtime dependencies are Apple system frameworks.
 
+## `LibRendererPPHDRBridge.dylib`
+
+The Debanding MSL and PCG generator are adapted from libplacebo
+`bb4d5a48980458e65d44b3a98674a5cddeb85597`,
+[`src/shaders/sampling.c`](https://github.com/haasn/libplacebo/blob/bb4d5a48980458e65d44b3a98674a5cddeb85597/src/shaders/sampling.c)
+and [`src/shaders.c`](https://github.com/haasn/libplacebo/blob/bb4d5a48980458e65d44b3a98674a5cddeb85597/src/shaders.c),
+under LGPL-2.1-or-later. The port fixes one iteration, threshold 3, radius 16
+and disables grain. The corresponding port source is
+`bridge/npa_renderer_pp_hdr_bridge.c`; the license text is
+[`LICENSES/libplacebo-LGPL-2.1.txt`](LICENSES/libplacebo-LGPL-2.1.txt).
+No libplacebo runtime library is linked.
+
 ## Host patching tools
 
 | Tool | License | Version | Source |

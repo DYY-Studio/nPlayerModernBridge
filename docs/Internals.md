@@ -191,7 +191,32 @@ texels, and anti-aliasing widens the downscale kernel according to its footprint
 The kernel is read once per generated shader, so a change takes effect on the
 next video. A failed pre-pass logs an error and skips the frame.
 Pre-pass activation follows the compiled library, so changing preferences
-during playback cannot mismatch the two stages.
+during playback cannot mismatch the two stages. A mutex protects the shared
+cache when renderer display-link threads overlap. Processing draws retain a
+0x280-byte state snapshot under the host upload mutex and use private texture
+slots throughout. The original host slots retain their ARC ownership. The
+upload mutex stays held through both passes and the synchronous host draw,
+protecting software uploads that write existing textures in place. The frozen
+host draw's private guard represents this already-held lock without reentry;
+its original completion semaphore and GPU wait are preserved. If a missing
+drawable bypasses that wait, the wrapper waits for the submitted pre-pass and
+logs before allowing source uploads to resume.
+Scaling direction and support use source dimensions divided by the effective
+video extent, computed from the host vertices once per draw. The horizontal
+pass receives its integer target width; the final pass receives the fractional
+video height in an extended copy of the color-control buffer. Its original xyz
+values and the host buffer are preserved. This avoids per-quad derivative noise
+selecting different kernels at 1:1 without tolerances for real small resizes.
+
+`PPVideoDebanding` independently enables one libplacebo-style source-plane
+iteration before scaling and color conversion (threshold 3/1000, radius 16,
+no added grain). The default is off. Debanding works with the default bilinear
+sampler as well as the custom kernels. Its source-sized results and any
+horizontal intermediates use R16Unorm/RG16Unorm, retaining fractional 8-bit
+levels. A PCG seed combines each plane's pixel coordinate with one frame index
+shared across the planes. Both preprocessing stages use one command buffer;
+textures and pipelines are reused until their library, dimensions or format
+change. Dithering is not applied to the RGBA16Float output.
 
 Because the rewrite happens in the shader, the feature requires Post Processing
 to be on. With Post Processing off the app renders through
@@ -257,3 +282,8 @@ its own implementation for every call site of that unit, and its state word read
 a call site: removing one dylib turns off every unit it carries and nothing else.
 `dev/acceptance.json` records the whole-dylib A/B for each accepted selection, and
 `docs/Verification.md` states what the device runs proved.
+
+SDR sRGB decoding uses Apple's piecewise transfer function: values at or below
+0.04045 use `c / 12.92`; higher values use `((c + 0.055) / 1.055)^2.4`.
+This preserves zero and low-light values when writing linear output. See
+[Apple Metal Shading Language specification, sRGB texture conversions](https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf).

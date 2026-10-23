@@ -22,7 +22,7 @@ int main(int argc,char**argv){
   int ar_down=argc>7?atoi(argv[7]):0;
   int ar_up=argc>8?atoi(argv[8]):ar_down;
   int aa=argc>9?atoi(argv[9]):0;
-  char *r=npa_rewrite_shader(s,atoi(argv[3]),atoi(argv[4]),1,down,up,ar_down,ar_up,aa);
+  char *r=npa_rewrite_shader(s,atoi(argv[3]),atoi(argv[4]),1,down,up,ar_down,ar_up,aa,argc>10?atoi(argv[10]):0);
   if(!r){fprintf(stderr,"REWRITE FAILED\n");return 3;}
   FILE*f=fopen(argv[2],"wb");fputs(r,f);fclose(f);
   free(r);free(s);return 0;

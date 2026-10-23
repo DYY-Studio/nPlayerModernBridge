@@ -1473,7 +1473,9 @@ NPA_EXPORT __attribute__((noinline)) void npa_renderer_pp_hdr_draw(void *rendere
             if (status < 4) {
                 npa_hdr_log("host draw returned before pre-pass completion; waiting", -1);
                 ((void (*)(id, SEL))objc_msgSend)(submitted, npa_sel("waitUntilCompleted"));
+                status = ((unsigned long (*)(id, SEL))objc_msgSend)(submitted, npa_sel("status"));
             }
+            if (status == 5) npa_hdr_log("pre-pass GPU execution failed", (int)status);
             npa_release(submitted);
         } else {
             npa_hdr_log("pre-pass failed; frame skipped", -1);

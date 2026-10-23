@@ -79,7 +79,6 @@ def test_kernels_bake_into_the_shader(tmp_path):
         # The host sampler is replaced by the tap loop.
         assert '.sample(s,' not in source
         assert 'npa_scale1(' in source and 'npa_scale2(' in source
-        assert 'dfdx(texcoord)' in source and 'dfdy(texcoord)' in source
         # Every kernel is separable, so the generated MSL carries the
         # horizontal pre-pass entry point and one loop per axis.
         assert 'fragment float4 npaHorizontal(' in source

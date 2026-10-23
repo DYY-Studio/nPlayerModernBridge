@@ -191,7 +191,14 @@ texels, and anti-aliasing widens the downscale kernel according to its footprint
 The kernel is read once per generated shader, so a change takes effect on the
 next video. A failed pre-pass logs an error and skips the frame.
 Pre-pass activation follows the compiled library, so changing preferences
-during playback cannot mismatch the two stages.
+during playback cannot mismatch the two stages. A mutex protects the shared
+cache and host-slot restoration when renderer display-link threads overlap.
+Scaling direction and support use source dimensions divided by the effective
+video extent, computed from the host vertices once per draw. The horizontal
+pass receives its integer target width; the final pass receives the fractional
+video height in an extended copy of the color-control buffer. Its original xyz
+values and the host buffer are preserved. This avoids per-quad derivative noise
+selecting different kernels at 1:1 without tolerances for real small resizes.
 
 `PPVideoDebanding` independently enables one libplacebo-style source-plane
 iteration before scaling and color conversion (threshold 3/1000, radius 16,

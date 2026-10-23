@@ -22,7 +22,8 @@ static const char SOURCE[] =
     "vertex Varyings vertexPassthrough(const device Vertex *v [[buffer(0)]], uint i [[vertex_id]]) {\n"
     "  Varyings o; o.position=float4(float2(v[i].position),0,1); o.texcoord=v[i].texcoord; return o;\n}\n"
     "fragment float4 fragmentShader(Varyings in [[stage_in]],\n"
-    "  texture2d<float> textureY [[texture(0)]], texture2d<float> textureCbCr [[texture(1)]]) {\n"
+    "  texture2d<float> textureY [[texture(0)]], texture2d<float> textureCbCr [[texture(1)]],\n"
+    "  constant float3 &colorControl [[buffer(1)]]) {\n"
     NPA_SAMPLER_ANCHOR NPA_TEXCOORD_ANCHOR
     "  return float4(textureY.sample(s, texcoord).r, textureCbCr.sample(s, texcoord).rg, 1);\n}\n";
 
@@ -158,6 +159,9 @@ static int check_deband_pipeline(id<MTLDevice> device, int kernel, int planar)
     ScaleProbeView *view = [ScaleProbeView new];
     view->layer = [CAMetalLayer new]; view->layer.drawableSize = CGSizeMake(128,32);
     union { void *alignment; unsigned char bytes[0x240]; } renderer = {0};
+    const float controls[3] = {0, 1, 1};
+    id<MTLBuffer> control = [device newBufferWithBytes:controls length:sizeof(controls) options:MTLResourceStorageModeShared];
+    *(id *)(renderer.bytes+NPA_RENDERER_COLOR_CONTROL) = control;
     *(id *)(renderer.bytes+NPA_RENDERER_DEVICE) = device;
     *(id *)(renderer.bytes+NPA_RENDERER_QUEUE) = queue;
     *(id *)(renderer.bytes+NPA_RENDERER_LIBRARY) = library;
@@ -186,6 +190,7 @@ static int check_deband_pipeline(id<MTLDevice> device, int kernel, int planar)
     for (NSUInteger i = 0; i < result_y.width*height; i++) fractional += result[i]%(highbit ? 256 : 257) != 0;
     if (fractional < 100) failed = 1;
     npa_prepass_restore(renderer.bytes);
+    failed |= *(id *)(renderer.bytes+NPA_RENDERER_COLOR_CONTROL) != control;
     failed |= *(id *)(renderer.bytes+NPA_RENDERER_TEXTURE_Y) != y;
     failed |= *(id *)(renderer.bytes+(planar ? NPA_RENDERER_TEXTURE_CB : NPA_RENDERER_TEXTURE_CBCR)) != c;
     printf("Debanding pipeline: kernel=%d planar=%d fractional=%d %s\n",kernel,planar,fractional,failed ? "FAIL" : "passed");
@@ -196,7 +201,7 @@ static int check_deband_pipeline(id<MTLDevice> device, int kernel, int planar)
     failed |= completion.error != nil;
     npa_prepass_reset(&npa_prepass);
     [view->layer release]; [view release]; [y release]; [c release];
-    [vb release]; [queue release]; [library release];
+    [control release]; [vb release]; [queue release]; [library release];
     return failed;
 }
 
@@ -338,12 +343,12 @@ static int check_plane_changes(id<MTLDevice> device, void *renderer)
     return failed || completion.error != nil;
 }
 
-static int check_render(id<MTLDevice> device, int kernel, int antiring,
+static int check_render(id<MTLDevice> device, int kernel, int kernel_up, int antiring,
                         int source_width, int output_width, int ramp,
                         float scale_x, float scale_y)
 {
     char *source = strdup(SOURCE);
-    assert(npa_apply_scale(&source, kernel, kernel, antiring, antiring, NPA_AA_QUALITY));
+    assert(npa_apply_scale(&source, kernel, kernel_up, antiring, antiring, NPA_AA_QUALITY));
     NSError *error = nil;
     id<MTLLibrary> library = [device newLibraryWithSource:
         [NSString stringWithUTF8String:source] options:nil error:&error];
@@ -388,6 +393,9 @@ static int check_render(id<MTLDevice> device, int kernel, int antiring,
     view->layer = [CAMetalLayer new];
     view->layer.drawableSize = CGSizeMake(output_width, height);
     union { void *alignment; unsigned char bytes[0x240]; } renderer = {0};
+    const float controls[3] = {0, 1, 1};
+    id<MTLBuffer> control = [device newBufferWithBytes:controls length:sizeof(controls) options:MTLResourceStorageModeShared];
+    *(id *)(renderer.bytes + NPA_RENDERER_COLOR_CONTROL) = control;
     *(id *)(renderer.bytes + NPA_RENDERER_DEVICE) = device;
     *(id *)(renderer.bytes + NPA_RENDERER_QUEUE) = queue;
     *(id *)(renderer.bytes + NPA_RENDERER_LIBRARY) = library;
@@ -419,6 +427,7 @@ static int check_render(id<MTLDevice> device, int kernel, int antiring,
     id<MTLRenderCommandEncoder> encoder = [cb renderCommandEncoderWithDescriptor:pass];
     [encoder setRenderPipelineState:pipeline];
     [encoder setVertexBuffer:vb offset:0 atIndex:0];
+    [encoder setFragmentBuffer:*(id *)(renderer.bytes + NPA_RENDERER_COLOR_CONTROL) offset:0 atIndex:1];
     [encoder setFragmentTexture:*(id *)(renderer.bytes + NPA_RENDERER_TEXTURE_Y) atIndex:0];
     [encoder setFragmentTexture:*(id *)(renderer.bytes + NPA_RENDERER_TEXTURE_CBCR) atIndex:1];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
@@ -442,7 +451,7 @@ static int check_render(id<MTLDevice> device, int kernel, int antiring,
             if (u < 0.1f || u > 0.9f || v < 0.1f || v > 0.9f) continue;
             float expected = ramp ? (u * source_width / 2 - 0.5f)
                                       / (source_width / 2)
-                                  : source_width == output_width ? x % 2 : 0.5f;
+                                  : source_width == output_width ? (kernel_up == 6 ? (1.0f + x % 2) / 3.0f : x % 2) : 0.5f;
             float actual = result[(row * output_width + x) * 4 + (ramp ? 1 : 0)];
             if (!isfinite(actual)) { free(result); return 1; }
             max_error = fmaxf(max_error, fabsf(actual - expected));
@@ -458,8 +467,12 @@ static int check_render(id<MTLDevice> device, int kernel, int antiring,
     [pd.fragmentFunction release];
     [pd release]; [pipeline release]; [output release];
     [view->layer release]; [view release];
-    [y release]; [uv release]; [vb release]; [queue release]; [library release];
-    return cache_failed || max_error > 2e-4f;
+    [control release]; [y release]; [uv release]; [vb release]; [queue release]; [library release];
+    /* Mixed B-Spline uses a non-binary folded weight (4/5); texture filtering
+     * has finite fractional precision. This bound still rejects the 1/3
+     * error caused by selecting the wrong direction kernel. */
+    const float tolerance = kernel_up == 6 ? 1.0f / 512.0f : 2e-4f;
+    return cache_failed || max_error > tolerance;
 }
 
 int main(void)
@@ -467,13 +480,14 @@ int main(void)
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         if (!device) { fprintf(stderr, "Metal device required\n"); return 2; }
-        int failed = check_render(device, 5, 0, 256, 128, 0, 1, 1);
-        failed |= check_render(device, 5, 1, 128, 128, 0, 1, 1);
-        failed |= check_render(device, 1, 0, 256, 256, 1, 1, 1);
-        failed |= check_render(device, 1, 0, 256, 256, 1, 0.75f, 1);
-        failed |= check_render(device, 1, 0, 256, 256, 1, 0.77f, 1);
-        failed |= check_render(device, 1, 0, 256, 256, 1, 1, 0.5f);
-        failed |= check_render(device, 1, 0, 256, 256, 1, 1.25f, 1.25f);
+        int failed = check_render(device, 5, 5, 0, 256, 128, 0, 1, 1);
+        failed |= check_render(device, 5, 5, 1, 128, 128, 0, 1, 1);
+        failed |= check_render(device, 1, 1, 0, 256, 256, 1, 1, 1);
+        failed |= check_render(device, 1, 1, 0, 256, 256, 1, 0.75f, 1);
+        failed |= check_render(device, 1, 1, 0, 256, 256, 1, 0.77f, 1);
+        failed |= check_render(device, 1, 1, 0, 256, 256, 1, 1, 0.5f);
+        failed |= check_render(device, 1, 1, 0, 256, 256, 1, 1.25f, 1.25f);
+        failed |= check_render(device, 5, 6, 0, 1920, 1920, 0, 1, 1);
         failed |= check_deband(device);
         failed |= check_deband_pipeline(device, 0, 0);
         failed |= check_deband_pipeline(device, 5, 0);

@@ -5,6 +5,17 @@
 #include <assert.h>
 #include "../bridge/npa_renderer_pp_hdr_bridge.c"
 
+/* Direct pre-pass fixtures reuse their renderer storage between cases. */
+static id probe_original_slots[5];
+static const unsigned probe_slot_offsets[]={NPA_RENDERER_TEXTURE_Y,NPA_RENDERER_TEXTURE_CBCR,NPA_RENDERER_TEXTURE_CB,NPA_RENDERER_TEXTURE_CR,NPA_RENDERER_COLOR_CONTROL};
+static int probe_prepass_run(void *renderer){
+    for(int i=0;i<5;i++) probe_original_slots[i]=*(id *)((char *)renderer+probe_slot_offsets[i]);
+    return npa_prepass_run(renderer,renderer) != nil;
+}
+static void probe_prepass_restore(void *renderer){
+    for(int i=0;i<5;i++) *(id *)((char *)renderer+probe_slot_offsets[i])=probe_original_slots[i];
+}
+
 @interface ScaleProbeView : NSObject {
 @public
     CAMetalLayer *layer;
@@ -170,7 +181,7 @@ static int check_deband_pipeline(id<MTLDevice> device, int kernel, int planar)
     *(id *)(renderer.bytes+NPA_RENDERER_TEXTURE_Y) = y;
     *(id *)(renderer.bytes+(planar ? NPA_RENDERER_TEXTURE_CB : NPA_RENDERER_TEXTURE_CBCR)) = c;
     if (planar) *(id *)(renderer.bytes+NPA_RENDERER_TEXTURE_CR) = c;
-    if (!npa_prepass_run(renderer.bytes)) {
+    if (!probe_prepass_run(renderer.bytes)) {
         fprintf(stderr, "FAIL: Debanding pre-pass kernel=%d planar=%d did not run\n",kernel,planar);
         return 1;
     }
@@ -189,14 +200,14 @@ static int check_deband_pipeline(id<MTLDevice> device, int kernel, int planar)
     int fractional = 0;
     for (NSUInteger i = 0; i < result_y.width*height; i++) fractional += result[i]%(highbit ? 256 : 257) != 0;
     if (fractional < 100) failed = 1;
-    npa_prepass_restore(renderer.bytes);
+    probe_prepass_restore(renderer.bytes);
     failed |= *(id *)(renderer.bytes+NPA_RENDERER_COLOR_CONTROL) != control;
     failed |= *(id *)(renderer.bytes+NPA_RENDERER_TEXTURE_Y) != y;
     failed |= *(id *)(renderer.bytes+(planar ? NPA_RENDERER_TEXTURE_CB : NPA_RENDERER_TEXTURE_CBCR)) != c;
     printf("Debanding pipeline: kernel=%d planar=%d fractional=%d %s\n",kernel,planar,fractional,failed ? "FAIL" : "passed");
-    if (!npa_prepass_run(renderer.bytes)) return 1;
+    if (!probe_prepass_run(renderer.bytes)) return 1;
     failed |= *(id *)(renderer.bytes+NPA_RENDERER_TEXTURE_Y) != result_y;
-    npa_prepass_restore(renderer.bytes);
+    probe_prepass_restore(renderer.bytes);
     completion = [queue commandBuffer]; [completion commit]; [completion waitUntilCompleted];
     failed |= completion.error != nil;
     npa_prepass_reset(&npa_prepass);
@@ -326,14 +337,14 @@ static int check_plane_changes(id<MTLDevice> device, void *renderer)
     for (int i = 0; i < 2; i++) {
         id<MTLTexture> changed = texture(device, formats[i], 128, 8, MTLTextureUsageShaderRead);
         *slot = changed;
-        if (!npa_prepass_run(renderer)) return 1;
+        if (!probe_prepass_run(renderer)) return 1;
         id<MTLTexture> intermediate = *slot;
         if (intermediate.height != 8 || intermediate.pixelFormat != formats[i]) {
             fprintf(stderr, "FAIL: plane change %d cached height=%lu format=%lu\n", i,
                     (unsigned long)intermediate.height, (unsigned long)intermediate.pixelFormat);
             failed = 1;
         }
-        npa_prepass_restore(renderer);
+        probe_prepass_restore(renderer);
         *slot = original;
         [changed release];
     }
@@ -403,7 +414,7 @@ static int check_render(id<MTLDevice> device, int kernel, int kernel_up, int ant
     *(id *)(renderer.bytes + NPA_RENDERER_VIEW) = view;
     *(id *)(renderer.bytes + NPA_RENDERER_TEXTURE_Y) = y;
     *(id *)(renderer.bytes + NPA_RENDERER_TEXTURE_CBCR) = uv;
-    if (!npa_prepass_run(renderer.bytes)) {
+    if (!probe_prepass_run(renderer.bytes)) {
         fprintf(stderr, "FAIL: horizontal pre-pass did not run\n");
         return 1;
     }
@@ -432,7 +443,7 @@ static int check_render(id<MTLDevice> device, int kernel, int kernel_up, int ant
     [encoder setFragmentTexture:*(id *)(renderer.bytes + NPA_RENDERER_TEXTURE_CBCR) atIndex:1];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
     [encoder endEncoding];
-    npa_prepass_restore(renderer.bytes);
+    probe_prepass_restore(renderer.bytes);
     [cb commit];
     [cb waitUntilCompleted];
     if (cb.error) {

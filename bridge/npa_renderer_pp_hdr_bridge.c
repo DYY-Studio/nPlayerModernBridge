@@ -999,11 +999,10 @@ typedef struct {
     int plane_count;
 } NPAPrepass;
 
-/* The scratch cache and saved host slots form one draw transaction. Separate
+/* The scratch cache and private snapshot form one draw transaction. Separate
  * renderer display-link threads can overlap during startup/video handoff. */
 static pthread_mutex_t npa_prepass_mutex = PTHREAD_MUTEX_INITIALIZER;
 static NPAPrepass npa_prepass;
-static id npa_prepass_saved[5];
 
 static id npa_msg_id(id object, const char *selector)
 {
@@ -1037,15 +1036,15 @@ static void npa_prepass_reset(NPAPrepass *state)
 /* Preferences are baked when the host compiles its library, not per frame.
  * Retaining this one library also prevents pointer reuse from hitting the
  * cache after the host rebuilds it. A host-only library needs no pre-pass. */
-static int npa_prepass_active(void *renderer)
+static int npa_prepass_active_for(void *renderer, void *owner)
 {
     if (!renderer) return 0;
     NPAPrepass *state = &npa_prepass;
     id library = *(id *)((char *)renderer + NPA_RENDERER_LIBRARY);
-    if (state->renderer == renderer && state->library == library) return state->active;
+    if (state->renderer == owner && state->library == library) return state->active;
     npa_prepass_reset(state);
     npa_release(state->library);
-    state->renderer = renderer;
+    state->renderer = owner;
     state->library = library ? npa_msg_id(library, "retain") : NULL;
     state->frame = 0;
     state->active = 0;
@@ -1059,6 +1058,78 @@ static int npa_prepass_active(void *renderer)
         npa_release(function);
     }
     return state->active;
+}
+
+static int npa_prepass_active(void *renderer)
+{
+    return npa_prepass_active_for(renderer, renderer);
+}
+
+/* The frozen host draw only reads this 0x280-byte prefix and writes shared
+ * Metal objects. Its upload and library rebuild own the real texture slots
+ * through ARC. Never expose our scratch textures to those strong stores. */
+typedef struct {
+    uint64_t words[0x280 / sizeof(uint64_t)];
+    id held[14];
+    void *mutex;
+} NPADrawSnapshot;
+
+static const unsigned npa_draw_objects[] = {
+    NPA_RENDERER_VIEW, NPA_RENDERER_DEVICE, NPA_RENDERER_QUEUE,
+    NPA_RENDERER_LIBRARY, 0x200, NPA_RENDERER_VERTEX_BUFFER,
+    0x210, NPA_RENDERER_COLOR_CONTROL, NPA_RENDERER_TEXTURE_Y,
+    NPA_RENDERER_TEXTURE_CBCR, NPA_RENDERER_TEXTURE_CB,
+    NPA_RENDERER_TEXTURE_CR, 0x248, 0x278
+};
+
+static void npa_host_mutex_call(void *mutex, unsigned slot)
+{
+    void (**vtable)(void *) = *(void (***)(void *))mutex;
+    vtable[slot](mutex);
+}
+
+/* The real non-recursive upload mutex stays locked through pre-pass and host
+ * draw. The frozen draw's guard uses only retain/release/lock/unlock, so its
+ * private guard represents that already-held scope rather than locking twice. */
+static void npa_already_locked(void *guard) { (void)guard; }
+static void (*const npa_locked_guard_vtable[11])(void *) = {
+    [0] = npa_already_locked, [1] = npa_already_locked,
+    [7] = npa_already_locked, [10] = npa_already_locked
+};
+static void (*const *const npa_locked_guard)(void *) = npa_locked_guard_vtable;
+
+/* 1 = retained processing snapshot, -1 = host-only library, 0 = error. */
+static int npa_draw_snapshot(void *renderer, NPADrawSnapshot *snapshot)
+{
+    void *mutex = *(void **)((char *)renderer + 0x270);
+    if (!mutex) {
+        npa_hdr_log("draw snapshot has no host mutex", -1);
+        return 0;
+    }
+    npa_host_mutex_call(mutex, 0); /* core::RefCount::retain */
+    npa_host_mutex_call(mutex, 7); /* lock, vtable +0x38 */
+    const int active = npa_prepass_active(renderer);
+    if (active) {
+        memcpy(snapshot->words, renderer, sizeof(snapshot->words));
+        snapshot->mutex = mutex;
+        *(const void **)((char *)snapshot->words + 0x270) = &npa_locked_guard;
+        for (unsigned index = 0; index < 14; index++) {
+            id object = *(id *)((char *)snapshot->words + npa_draw_objects[index]);
+            snapshot->held[index] = npa_msg_id(object, "retain");
+        }
+    }
+    if (!active) {
+        npa_host_mutex_call(mutex, 10); /* unlock, vtable +0x50 */
+        npa_host_mutex_call(mutex, 1);
+    }
+    return active ? 1 : -1;
+}
+
+static void npa_draw_snapshot_release(NPADrawSnapshot *snapshot)
+{
+    for (unsigned index = 0; index < 14; index++) npa_release(snapshot->held[index]);
+    npa_host_mutex_call(snapshot->mutex, 10);
+    npa_host_mutex_call(snapshot->mutex, 1);
 }
 
 /* One pipeline per pixel format: the attachment format is part of the pipeline
@@ -1176,14 +1247,12 @@ static CGSize npa_prepass_geometry(id vertex_buffer, CGSize drawable)
 
 /* Returns 0 when the pre-pass could not run; the caller skips the frame and
  * logs, because the fragment shader is already vertical-only.
- * On success the renderer's texture slots point at the intermediates, and the
- * caller must restore them: the host writes the next frame into those slots
- * with replaceRegion at the source size, which would land inside a
- * differently sized intermediate. */
-static int npa_prepass_run(void *renderer)
+ * On success the private snapshot's texture slots point at the intermediates.
+ * The real renderer's source slots are never changed. */
+static id npa_prepass_run(void *renderer, void *owner)
 {
     NPAPrepass *state = &npa_prepass;
-    if (!npa_prepass_active(renderer)) {
+    if (!npa_prepass_active_for(renderer, owner)) {
         npa_hdr_log("pre-pass requires a processing library", -1);
         return 0;
     }
@@ -1361,14 +1430,8 @@ static int npa_prepass_run(void *renderer)
 
     if (debanding) state->frame++;
 
-    /* The final draw samples the intermediates. The host overwrites these
-     * slots on the next upload and never releases them, so they are swapped
-     * without a retain and restored by the caller before returning. */
-    npa_prepass_saved[0] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y);
-    npa_prepass_saved[1] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR);
-    npa_prepass_saved[2] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB);
-    npa_prepass_saved[3] = *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR);
-    npa_prepass_saved[4] = controls;
+    /* These are private snapshot slots. Their original objects remain held
+     * separately until the synchronous host draw returns. */
     if (scaling) *(id *)((char *)renderer + NPA_RENDERER_COLOR_CONTROL) = state->color_control;
     *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y) = filtered[0];
     *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR) =
@@ -1377,16 +1440,7 @@ static int npa_prepass_run(void *renderer)
         plane_count == 3 ? filtered[1] : NULL;
     *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR) =
         plane_count == 3 ? filtered[2] : NULL;
-    return 1;
-}
-
-static void npa_prepass_restore(void *renderer)
-{
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_Y) = npa_prepass_saved[0];
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CBCR) = npa_prepass_saved[1];
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CB) = npa_prepass_saved[2];
-    *(id *)((char *)renderer + NPA_RENDERER_TEXTURE_CR) = npa_prepass_saved[3];
-    *(id *)((char *)renderer + NPA_RENDERER_COLOR_CONTROL) = npa_prepass_saved[4];
+    return command_buffer;
 }
 
 /* Draw wrapper. The separable variant needs its horizontal pass to land in the
@@ -1402,19 +1456,30 @@ NPA_EXPORT __attribute__((noinline)) void npa_renderer_pp_hdr_draw(void *rendere
     if (!draw) {
         return;
     }
+    if (!renderer) { draw(renderer); return; }
     pthread_mutex_lock(&npa_prepass_mutex);
-    if (!renderer || !npa_prepass_active(renderer)) {
+    NPADrawSnapshot snapshot = {0};
+    const int captured = npa_draw_snapshot(renderer, &snapshot);
+    if (captured < 0) {
         draw(renderer);
-        goto done;
+    } else if (captured > 0) {
+        id submitted = npa_prepass_run(snapshot.words, renderer);
+        if (submitted) {
+            npa_msg_id(submitted, "retain");
+            draw(snapshot.words);
+            /* nextDrawable can return nil, bypassing the host's usual GPU
+             * wait. Keep software uploads locked until our source reads end. */
+            unsigned long status = ((unsigned long (*)(id, SEL))objc_msgSend)(submitted, npa_sel("status"));
+            if (status < 4) {
+                npa_hdr_log("host draw returned before pre-pass completion; waiting", -1);
+                ((void (*)(id, SEL))objc_msgSend)(submitted, npa_sel("waitUntilCompleted"));
+            }
+            npa_release(submitted);
+        } else {
+            npa_hdr_log("pre-pass failed; frame skipped", -1);
+        }
+        npa_draw_snapshot_release(&snapshot);
     }
-    /* A vertical-only shader cannot safely draw the unfiltered source planes. */
-    if (!npa_prepass_run(renderer)) {
-        npa_hdr_log("pre-pass failed; frame skipped", -1);
-        goto done;
-    }
-    draw(renderer);
-    npa_prepass_restore(renderer);
-done:
     pthread_mutex_unlock(&npa_prepass_mutex);
 }
 

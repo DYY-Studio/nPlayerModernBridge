@@ -192,7 +192,15 @@ The kernel is read once per generated shader, so a change takes effect on the
 next video. A failed pre-pass logs an error and skips the frame.
 Pre-pass activation follows the compiled library, so changing preferences
 during playback cannot mismatch the two stages. A mutex protects the shared
-cache and host-slot restoration when renderer display-link threads overlap.
+cache when renderer display-link threads overlap. Processing draws retain a
+0x280-byte state snapshot under the host upload mutex and use private texture
+slots throughout. The original host slots retain their ARC ownership. The
+upload mutex stays held through both passes and the synchronous host draw,
+protecting software uploads that write existing textures in place. The frozen
+host draw's private guard represents this already-held lock without reentry;
+its original completion semaphore and GPU wait are preserved. If a missing
+drawable bypasses that wait, the wrapper waits for the submitted pre-pass and
+logs before allowing source uploads to resume.
 Scaling direction and support use source dimensions divided by the effective
 video extent, computed from the host vertices once per draw. The horizontal
 pass receives its integer target width; the final pass receives the fractional
